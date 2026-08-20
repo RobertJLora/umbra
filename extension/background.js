@@ -4,7 +4,7 @@ import { SessionStateStore } from './session-state.js';
 
 const GROUP_COLORS = ['blue', 'green', 'yellow', 'pink', 'purple', 'cyan', 'orange'];
 const DEFAULT_GROUP_COLOR = 'cyan';
-const BRIDGE_WAKE_ALARM_NAME = 'codex_bridge_wake';
+const BRIDGE_WAKE_ALARM_NAME = 'umbra_bridge_wake';
 const BRIDGE_WAKE_PERIOD_MINUTES = 1;
 const DEDICATED_WINDOW_STORAGE_KEY = 'bridgeDedicatedWindowId';
 const TAB_COMPLETE_POLL_INTERVAL_MS = 750;
@@ -19,9 +19,23 @@ const CONSOLE_MESSAGE_CAP = 200;
 const SCREENSHOT_STITCH_SETTLE_MS = 120;
 const consoleBuffers = new Map();
 const sessionStore = new SessionStateStore();
+// One session-state read per worker lifetime, started at module scope so it is
+// already in flight before any message arrives. Everything that touches
+// sessionStore awaits this promise first, which is what stops a message-woken
+// worker from persisting an empty map over stored tab ownership and then
+// reading the wiped state back. A rejected load resolves here so callers are
+// never blocked; SessionStateStore refuses to persist until a load succeeded.
+const sessionStoreReady = sessionStore.load().catch((error) => {
+  console.error('[bridge] session state load failed', error);
+  return sessionStore;
+});
 const contentAgents = new Map();
+// tabId -> { refCount, attachPromise }. Chrome allows one debugger client per
+// target, so every Umbra call on a tab shares a single attachment.
+const tabDebuggerAttachments = new Map();
 const readCache = new Map();
 let initializePromise = null;
+let bootstrapped = false;
 let nextContentAgentRequestId = 1;
 
 function sessionLabel(sessionId) {
@@ -237,7 +251,39 @@ async function clearDedicatedWindowId(windowId = null) {
   }
 }
 
+async function bridgeIsConfigured() {
+  const config = await loadBridgeConfig();
+  return config.bridgeEnabled === true && Boolean(config.sharedKey);
+}
+
+async function closeOffscreenDocument() {
+  if (!chrome.offscreen?.closeDocument) {
+    return;
+  }
+  try {
+    await chrome.offscreen.closeDocument();
+  } catch {
+    // Already closed, or never created on this install.
+  }
+}
+
 async function ensureOffscreenDocument() {
+  // A fresh install has no shared key, so there is nothing for the scanner to
+  // connect to. Creating the document anyway left a permanently resident page
+  // ticking every two seconds, which pinned the service worker awake and wrote
+  // to chrome.storage.local continuously while doing no work.
+  if (!(await bridgeIsConfigured())) {
+    await closeOffscreenDocument();
+    await chrome.storage.local.set({
+      bridgeDebug: {
+        updatedAt: Date.now(),
+        state: 'bridge_not_configured',
+        message: 'Set a shared key in the Umbra options page to start the local bridge scanner.',
+      },
+    });
+    return;
+  }
+
   if (!chrome.offscreen?.createDocument) {
     await chrome.storage.local.set({
       bridgeDebug: {
@@ -261,6 +307,13 @@ async function ensureOffscreenDocument() {
   }
 
   try {
+    // No Reason enum value covers holding a raw WebSocket. DOM_SCRAPING is the
+    // closest available value and the justification below is the accurate
+    // description of what the document does. Moving the connection loop into a
+    // worker instead would put a postMessage relay on the round trip of every
+    // tool call, which is the opposite of what this document exists for.
+    // scripts/configure-extension-cdp.mjs repeats this declaration; keep both
+    // in step so the repository never states two different reasons.
     await chrome.offscreen.createDocument({
       url: 'offscreen.html',
       reasons: ['DOM_SCRAPING'],
@@ -345,16 +398,28 @@ async function restartOffscreenDocument() {
 
   const url = chrome.runtime.getURL('offscreen.html');
   if (chrome.offscreen?.closeDocument) {
-    try {
-      await chrome.offscreen.closeDocument();
-    } catch {
-      // Ignore if the document is already closed.
-    }
+    await closeOffscreenDocument();
     await waitForOffscreenDocumentClosed(url);
   }
 
+  // bridge_save_config reaches this on every save, including the save that
+  // cleared the key or unchecked the enable toggle. ensureOffscreenDocument
+  // reads the configuration again, so an unconfigured install ends up with the
+  // document closed instead of immediately recreated.
   await ensureOffscreenDocument();
 }
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') {
+    return;
+  }
+  if (!changes.sharedKey && !changes.bridgeEnabled) {
+    return;
+  }
+  bridgeIsConfigured()
+    .then((configured) => (configured ? undefined : closeOffscreenDocument()))
+    .catch((error) => console.error('[bridge] config change handling failed', error));
+});
 
 function tabUrlMatchesExpected(actualUrl, expectedUrl) {
   if (!expectedUrl) {
@@ -378,9 +443,23 @@ function clampTimeoutMs(value, fallback = 45_000, max = 180_000) {
   return Math.min(Math.max(parsed, 1_000), max);
 }
 
-async function waitForTabComplete(tabId, timeoutMs = 45_000, expectedUrl = '') {
+async function waitForTabComplete(tabId, timeoutMs = 45_000, expectedUrl = '', options = {}) {
   const existing = await safeGetTab(tabId);
-  if (!existing || (existing.status === 'complete' && tabUrlMatchesExpected(existing.url, expectedUrl))) {
+  if (!existing) {
+    return { timedOut: false, tabId };
+  }
+
+  // The URL the tab held before the navigation was requested. A load that ends
+  // anywhere other than here counts as arrived, which is what lets an http to
+  // https upgrade, an added tracking parameter, a login bounce, or a path
+  // normalization settle instead of burning the whole timeout on an
+  // href-identical match that never comes.
+  const preNavUrl = existing.url || '';
+  const arrived = (url) => tabUrlMatchesExpected(url, expectedUrl) || url !== preNavUrl;
+  // chrome.tabs.update resolves before the tab leaves `complete` on the old
+  // document, so a caller that just asked for the URL the tab already sits on
+  // would otherwise get pre-navigation state handed straight back.
+  if (existing.status === 'complete' && options.navigationPending !== true && tabUrlMatchesExpected(existing.url, expectedUrl)) {
     return { timedOut: false, tabId };
   }
 
@@ -404,7 +483,7 @@ async function waitForTabComplete(tabId, timeoutMs = 45_000, expectedUrl = '') {
     const poll = setInterval(() => {
       safeGetTab(tabId)
         .then((tab) => {
-          if (!tab || (tab.status === 'complete' && tabUrlMatchesExpected(tab.url, expectedUrl))) {
+          if (!tab || (tab.status === 'complete' && arrived(tab.url || ''))) {
             finish(() => resolve({ timedOut: false, tabId }));
           }
         })
@@ -418,7 +497,7 @@ async function waitForTabComplete(tabId, timeoutMs = 45_000, expectedUrl = '') {
 
       safeGetTab(tabId)
         .then((tab) => {
-          if (!tab || tabUrlMatchesExpected(tab.url, expectedUrl)) {
+          if (!tab || arrived(tab.url || '')) {
             finish(() => resolve({ timedOut: false, tabId }));
           }
         })
@@ -1287,7 +1366,7 @@ async function assertWindowOwnedExclusively(sessionId, windowId) {
   const tabs = await chrome.tabs.query({ windowId });
   const unowned = tabs.filter((tab) => sessionStore.findOwner(tab.id) !== sessionId);
   if (unowned.length > 0) {
-    const error = new Error('Window has mixed/unowned tabs. Resize is refused so Robert\'s everyday Chrome window is not changed.');
+    const error = new Error('Window has mixed/unowned tabs. Resize is refused so your everyday Chrome window is not changed.');
     error.code = 'mixed_window';
     throw error;
   }
@@ -1449,30 +1528,85 @@ function parseShortcutSpec(params = {}) {
   throw new Error('browser_shortcut requires name or keys.');
 }
 
+async function claimTabDebugger(target) {
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    return;
+  } catch (error) {
+    const message = error?.message || String(error);
+    if (!/already attached/i.test(message)) {
+      throw error;
+    }
+    // Chrome reports one client per target with the same message whether the
+    // holder is this extension or an open DevTools window, and only the owner
+    // can detach. A detach that succeeds therefore proves the leftover
+    // attachment was ours and it is safe to take the target again.
+    try {
+      await chrome.debugger.detach(target);
+    } catch {
+      const busy = new Error(
+        'Another debugger client is attached to this tab. Close DevTools on it, or dismiss the debugging banner, then run the command again.',
+      );
+      busy.code = 'debugger_busy';
+      throw busy;
+    }
+    await chrome.debugger.attach(target, '1.3');
+  }
+}
+
 async function withOwnedTabDebugger(tabId, fn) {
   if (!chrome.debugger || typeof chrome.debugger.attach !== 'function') {
     const error = new Error('Debugger API is missing.');
     error.code = 'debugger_unavailable';
     throw error;
   }
+
   const target = { tabId };
-  let attached = false;
-  try {
-    try {
-      await chrome.debugger.attach(target, '1.3');
-      attached = true;
-    } catch (error) {
-      if (!/already attached/i.test(error?.message || '')) {
-        throw error;
-      }
+  let entry = tabDebuggerAttachments.get(tabId);
+  if (!entry) {
+    entry = { refCount: 0, attachPromise: claimTabDebugger(target) };
+    entry.attachPromise.catch(() => {});
+    tabDebuggerAttachments.set(tabId, entry);
+  }
+  entry.refCount += 1;
+
+  const release = () => {
+    entry.refCount -= 1;
+    if (entry.refCount > 0 || tabDebuggerAttachments.get(tabId) !== entry) {
+      return false;
     }
+    tabDebuggerAttachments.delete(tabId);
+    return true;
+  };
+
+  try {
+    await entry.attachPromise;
+  } catch (error) {
+    release();
+    throw error;
+  }
+
+  try {
     return await fn(target);
   } finally {
-    if (attached) {
+    // Concurrent calls share one attachment, so only the last one out detaches.
+    // Detaching while another call was still issuing commands used to make every
+    // remaining chrome.debugger.sendCommand on that tab fail.
+    if (release()) {
       await chrome.debugger.detach(target).catch(() => {});
     }
   }
 }
+
+chrome.debugger?.onDetach?.addListener((source) => {
+  // A user dismissing the "being debugged" banner, a crashed tab, or Chrome
+  // itself can end the attachment without running the release above. Drop the
+  // cached entry so the next call attaches again instead of sending commands
+  // into a target nothing is attached to.
+  if (Number.isInteger(source?.tabId)) {
+    tabDebuggerAttachments.delete(source.tabId);
+  }
+});
 
 async function resolveFileInputSelector(tabId, selector, ref) {
   if (ref) {
@@ -1535,6 +1669,10 @@ async function setOwnedTabFileInput(tabId, selector, filePath) {
 
 function normalizeScreenshotFormat(value) {
   return String(value || 'png').toLowerCase() === 'jpeg' ? 'jpeg' : 'png';
+}
+
+function screenshotMimeType(format) {
+  return format === 'jpeg' ? 'image/jpeg' : 'image/png';
 }
 
 function normalizeScreenshotZoom(value) {
@@ -1674,16 +1812,12 @@ function waitForContentAgentReady(agent, timeoutMs = CONTENT_AGENT_READY_TIMEOUT
 async function ensureContentAgent(tabId) {
   const existing = contentAgents.get(tabId);
   if (existing && !existing.disconnected) {
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: [AX_TREE_SCRIPT],
-      });
-      existing.port.postMessage({ type: 'agent_probe' });
-      return await waitForContentAgentReady(existing);
-    } catch {
-      invalidateContentAgent(tabId, 'stale');
-    }
+    // A live agent is used as-is. Re-injecting ax-tree.js here reset the shared
+    // element ref store before every content-agent command, so any ref minted by
+    // browser_read_interactive failed on the very next call. Liveness is proved
+    // instead by the postMessage in sendContentAgentCommand, which invalidates
+    // this record and retries once when the port turns out to be dead.
+    return await waitForContentAgentReady(existing);
   }
 
   try {
@@ -1705,37 +1839,56 @@ async function ensureContentAgent(tabId) {
   return await waitForContentAgentReady(agent);
 }
 
-async function sendContentAgentCommand(tabId, action, params = {}, timeoutMs = CONTENT_AGENT_COMMAND_TIMEOUT_MS) {
+async function sendContentAgentCommand(tabId, action, params = {}, timeoutMs = CONTENT_AGENT_COMMAND_TIMEOUT_MS, options = {}) {
   const agent = await ensureContentAgent(tabId);
   const id = `content_agent_${Date.now()}_${nextContentAgentRequestId}`;
   nextContentAgentRequestId += 1;
 
-  return await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      agent.pending.delete(id);
-      reject(new Error(`Timed out waiting for content agent action: ${action}`));
-    }, timeoutMs);
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        agent.pending.delete(id);
+        reject(new Error(`Timed out waiting for content agent action: ${action}`));
+      }, timeoutMs);
 
-    agent.pending.set(id, { resolve, reject, timer, action });
-    try {
-      agent.port.postMessage({
-        type: 'agent_command',
-        id,
-        action,
-        params,
-      });
-    } catch (error) {
-      clearTimeout(timer);
-      agent.pending.delete(id);
-      reject(error);
+      agent.pending.set(id, { resolve, reject, timer, action });
+      try {
+        agent.port.postMessage({
+          type: 'agent_command',
+          id,
+          action,
+          params,
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        agent.pending.delete(id);
+        if (!error.code) {
+          error.code = 'content_agent_port_dead';
+        }
+        reject(error);
+      }
+    });
+  } catch (error) {
+    if (options.retried === true || error?.code !== 'content_agent_port_dead') {
+      throw error;
     }
-  });
+    // The port object outlived the document it belonged to, which raises
+    // "Attempting to use a disconnected port object" and matches no fallback
+    // pattern. Drop the cached agent, reinject, and run the command once more
+    // so the caller gets a result instead of a raw Chrome message.
+    invalidateContentAgent(tabId, 'stale');
+    return await sendContentAgentCommand(tabId, action, params, timeoutMs, { retried: true });
+  }
 }
 
 function useOneShotContentFallback(error) {
   if ([
     'content_agent_injection_failed',
     'content_agent_unavailable',
+    // A port that is dead but not yet disconnected. sendContentAgentCommand
+    // reinjects and retries once on its own; reaching a caller means the retry
+    // failed too, so the one-shot injection is the last thing left to try.
+    'content_agent_port_dead',
   ].includes(error?.code)) {
     return true;
   }
@@ -1840,16 +1993,35 @@ function requireJavascriptCode(code) {
   return code;
 }
 
-function isJavascriptCspError(error) {
-  return /content security policy|unsafe-eval|evaluating a string as javascript/i.test(String(error?.message || error || ''));
+function isDebuggerAccessFailure(error) {
+  // A page exception is the caller's own code throwing. It must never be
+  // retried anywhere, because re-running caller code submits the same form
+  // twice, and its text can contain the word "debugger" by coincidence.
+  if (error?.code === 'javascript_error') {
+    return false;
+  }
+  if (/Debugger API is missing/i.test(error?.message || '')) {
+    return true;
+  }
+  // debugger_busy and debugger_unavailable both land here, and so does any
+  // failure that carries no code at all, which is what a raw sendCommand
+  // rejection looks like.
+  return !error?.code || /debugger/i.test(String(error.code));
 }
 
+// Caller-supplied code runs only through chrome.debugger Runtime.evaluate, the
+// API Google sanctions for it. Compiling a string inside the page instead is a
+// catalogued eval-evasion pattern and contradicts the script-src 'self' CSP
+// declared in extension/manifest.json, so there is no second world to fall back
+// into. When the debugger cannot be reached the caller gets one actionable
+// error naming the fix rather than a raw Chrome message.
 async function executeJavascriptWithWorldFallback(tabId, code, timeoutMs) {
   try {
     const evaluated = await withOwnedTabDebugger(tabId, async (target) => chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
       expression: `(async () => {\n${String(code || '')}\n})()`,
       awaitPromise: true,
       returnByValue: true,
+      timeout: timeoutMs,
     }));
     if (evaluated?.exceptionDetails) {
       const thrown = new Error(evaluated.exceptionDetails.text || 'JavaScript threw.');
@@ -1858,19 +2030,15 @@ async function executeJavascriptWithWorldFallback(tabId, code, timeoutMs) {
     }
     return { value: { ok: true, value: evaluated?.result?.value ?? null }, world: 'debugger' };
   } catch (error) {
-    if (/debugger/i.test(error?.code || '') || /Debugger API is missing/i.test(error?.message || '')) {
-      try {
-        const result = await executeInTab(tabId, executeJavascriptInPage, [code, { timeoutMs }], { world: 'MAIN' });
-        return { value: result, world: 'main' };
-      } catch (mainError) {
-        if (!isJavascriptCspError(mainError)) {
-          throw mainError;
-        }
-        const result = await executeInTab(tabId, executeJavascriptInPage, [code, { timeoutMs }], { world: 'ISOLATED' });
-        return { value: result, world: 'isolated' };
-      }
+    if (!isDebuggerAccessFailure(error)) {
+      throw error;
     }
-    throw error;
+    const blocked = new Error(
+      `browser_javascript evaluates code through the Chrome debugger and could not attach to this tab: ${error?.message || String(error)}`,
+    );
+    blocked.code = error?.code || 'debugger_unavailable';
+    blocked.cause = error;
+    throw blocked;
   }
 }
 
@@ -1885,61 +2053,22 @@ function finalizeJavascriptResult(tabId, payload, extra = {}) {
   };
 }
 
+// Every caller-supplied script goes straight to the debugger. Asking the content
+// agent first was a round trip that executed nothing: the request always set
+// pageWorld, and the agent answers that flag by returning without running the
+// code, so the only effect was carrying the whole code string across a port and
+// paying a 24 KB script injection to be told to use the debugger anyway. The
+// agent version is read from the local record so the response keeps that field.
 async function executeJavascriptViaAgent(tabId, code, options = {}) {
   const timeoutMs = clampTimeoutMs(options.timeoutMs, 10_000, 120_000);
-  const existing = contentAgents.get(tabId);
-  if (existing && existing.ready && !existing.disconnected) {
-    try {
-      const agentResult = await sendContentAgentCommand(
-        tabId,
-        'execute_javascript',
-        { code, timeoutMs, pageWorld: true },
-        timeoutMs + 1_000,
-      );
-      if (agentResult?.__error) {
-        const error = new Error(agentResult.__error);
-        error.code = agentResult.__errorCode || agentResult.code;
-        throw error;
-      }
-      if (agentResult?.pageWorld) {
-        const result = await executeJavascriptWithWorldFallback(tabId, code, timeoutMs);
-        return finalizeJavascriptResult(tabId, result.value, {
-          world: result.world,
-          contentAgent: {
-            used: true,
-            version: agentResult?.contentAgent?.version || '',
-          },
-        });
-      }
-      return finalizeJavascriptResult(tabId, agentResult, {
-        contentAgent: {
-          used: true,
-          version: agentResult?.contentAgent?.version || '',
-        },
-      });
-    } catch (error) {
-      if (!useOneShotContentFallback(error)) {
-        throw error;
-      }
-      const result = await executeJavascriptWithWorldFallback(tabId, code, timeoutMs);
-      return finalizeJavascriptResult(tabId, result.value, {
-        world: result.world,
-        contentAgent: {
-          used: false,
-          fallback: true,
-          reason: error.code || 'content_agent_unavailable',
-        },
-      });
-    }
-  }
+  const agent = contentAgents.get(tabId);
+  const agentLive = Boolean(agent && agent.ready && !agent.disconnected);
   const result = await executeJavascriptWithWorldFallback(tabId, code, timeoutMs);
   return finalizeJavascriptResult(tabId, result.value, {
     world: result.world,
-    contentAgent: {
-      used: false,
-      fallback: true,
-      reason: 'content_agent_unavailable',
-    },
+    contentAgent: agentLive
+      ? { used: false, version: agent.version || '' }
+      : { used: false, fallback: true, reason: 'content_agent_unavailable' },
   });
 }
 
@@ -1960,8 +2089,8 @@ function readAxTreeInPage(options = {}) {
   if (!root) {
     return { __error: selector ? `Selector not found: ${selector}` : 'Page root was not found.' };
   }
-  const domVersion = Number.isInteger(globalThis.__codexChromeBridgeContentAgent?.domVersion)
-    ? globalThis.__codexChromeBridgeContentAgent.domVersion
+  const domVersion = Number.isInteger(globalThis.__umbraContentAgent?.domVersion)
+    ? globalThis.__umbraContentAgent.domVersion
     : 0;
   const walked = api.walkAxTree(root, {
     filter: options.filter,
@@ -1998,8 +2127,8 @@ function findAxNodesInPage(options = {}) {
   if (!root) {
     return { __error: selector ? `Selector not found: ${selector}` : 'Page root was not found.' };
   }
-  const domVersion = Number.isInteger(globalThis.__codexChromeBridgeContentAgent?.domVersion)
-    ? globalThis.__codexChromeBridgeContentAgent.domVersion
+  const domVersion = Number.isInteger(globalThis.__umbraContentAgent?.domVersion)
+    ? globalThis.__umbraContentAgent.domVersion
     : 0;
   const found = api.findAxNodes(root, {
     query,
@@ -2030,8 +2159,8 @@ function formInputInPage(params = {}) {
   const ref = String(params.ref || '').trim();
   let element = null;
   if (ref) {
-    const resolved = api.resolveElementRef(api.getSharedRefStore(), ref, Number.isInteger(globalThis.__codexChromeBridgeContentAgent?.domVersion)
-      ? globalThis.__codexChromeBridgeContentAgent.domVersion
+    const resolved = api.resolveElementRef(api.getSharedRefStore(), ref, Number.isInteger(globalThis.__umbraContentAgent?.domVersion)
+      ? globalThis.__umbraContentAgent.domVersion
       : api.getSharedRefStore().domVersion);
     if (resolved.__error) {
       return resolved;
@@ -2289,10 +2418,16 @@ function readPageContent(options = {}) {
       ? requestedMode
       : 'page';
   const includeImages = config.includeImages === true;
+  // Zero used to mean unbounded, and nothing downstream bounds a page read: the
+  // Rust broker frames responses with an unbounded line reader, so one runaway
+  // page could buffer a single unbounded line. Keep this number in step with
+  // readPageContent in extension/content-agent.js and with the maxChars
+  // description in mcp-server/tools.js.
+  const MAX_CHARS_LIMIT = 500_000;
   const rawMaxChars = Number(config.maxChars);
   const maxChars = Number.isFinite(rawMaxChars) && rawMaxChars > 0
-    ? Math.min(Math.floor(rawMaxChars), 500_000)
-    : 0;
+    ? Math.min(Math.floor(rawMaxChars), MAX_CHARS_LIMIT)
+    : MAX_CHARS_LIMIT;
   const normalize = (value) => String(value || '').trim().replace(/\s+/g, ' ');
   const absoluteUrl = (value) => {
     try {
@@ -2390,47 +2525,48 @@ function readPageContent(options = {}) {
     };
   };
 
-  if (format === 'html') {
-    const rawHtml = root === document.documentElement ? document.documentElement.outerHTML : root.outerHTML || '';
-    const html = truncate(rawHtml);
-    return {
-      title: document.title,
-      url: location.href,
-      format,
-      mode,
-      selector,
-      maxChars: maxChars || null,
-      truncated: html.truncated,
-      originalContentLength: html.originalLength,
-      contentLength: html.value.length,
-      includeImages,
-      html: html.value,
-      content: html.value,
-      renderedImages,
-      renderedImageSummary,
-    };
-  }
-
-  const rawBodyText = root.innerText || root.textContent || '';
-  const rawContent = renderedImageSummary ? `${rawBodyText}\n\n${renderedImageSummary}` : rawBodyText;
-  const bodyText = truncate(rawBodyText);
-  const content = truncate(rawContent);
-  return {
+  const base = {
     title: document.title,
     url: location.href,
     format,
     mode,
     selector,
-    maxChars: maxChars || null,
+    maxChars,
+    includeImages,
+    renderedImages,
+  };
+
+  if (format === 'html') {
+    const rawHtml = root === document.documentElement ? document.documentElement.outerHTML : root.outerHTML || '';
+    const html = truncate(rawHtml);
+    return {
+      ...base,
+      // The html branch never folds the image summary into content, so this is
+      // the only copy of it and it ships only when there is one. `html` used to
+      // carry a second byte-identical copy of `content` on every html read.
+      ...(renderedImageSummary ? { renderedImageSummary } : {}),
+      truncated: html.truncated,
+      originalContentLength: html.originalLength,
+      contentLength: html.value.length,
+      content: html.value,
+    };
+  }
+
+  const rawBodyText = root.innerText || root.textContent || '';
+  // content is body text plus the rendered-image summary when one exists. With
+  // no summary the two strings are identical, which is every read at the default
+  // includeImages: false, so bodyText ships only when it genuinely differs.
+  const rawContent = renderedImageSummary ? `${rawBodyText}\n\n${renderedImageSummary}` : rawBodyText;
+  const content = truncate(rawContent);
+  const bodyText = rawContent === rawBodyText ? null : truncate(rawBodyText);
+  return {
+    ...base,
+    ...(renderedImageSummary ? { renderedImageSummary } : {}),
     truncated: content.truncated,
     originalContentLength: content.originalLength,
     contentLength: content.value.length,
-    bodyText: bodyText.value,
-    bodyTextTruncated: bodyText.truncated,
+    ...(bodyText ? { bodyText: bodyText.value, bodyTextTruncated: bodyText.truncated } : {}),
     content: content.value,
-    includeImages,
-    renderedImages,
-    renderedImageSummary,
   };
 }
 
@@ -2439,8 +2575,8 @@ function readInteractive(options = {}) {
   const cssEscape = (value) => globalThis.CSS?.escape
     ? globalThis.CSS.escape(value)
     : String(value || '').replace(/["\\]/g, '\\$&');
-  const domVersion = Number.isInteger(globalThis.__codexChromeBridgeContentAgent?.domVersion)
-    ? globalThis.__codexChromeBridgeContentAgent.domVersion
+  const domVersion = Number.isInteger(globalThis.__umbraContentAgent?.domVersion)
+    ? globalThis.__umbraContentAgent.domVersion
     : 0;
   const selector = String(options.selector || '').trim() || [
     'button',
@@ -2641,69 +2777,33 @@ function toBridgeSafeValue(value, options = {}) {
   return convert(value, 0);
 }
 
-async function executeJavascriptInPage(code, options = {}) {
-  const timeoutMs = Math.max(100, Math.min(Number(options.timeoutMs) || 10_000, 120_000));
-  const jsonSafe = (value, depth = 0, seen = new WeakSet()) => {
-    if (value === null || value === undefined) {
-      return value ?? null;
-    }
-    const type = typeof value;
-    if (type === 'string') {
-      return value.length > 200_000 ? value.slice(0, 200_000) : value;
-    }
-    if (type === 'number') {
-      return Number.isFinite(value) ? value : String(value);
-    }
-    if (type === 'boolean') {
-      return value;
-    }
-    if (type === 'bigint' || type === 'function' || type === 'symbol') {
-      return String(value);
-    }
-    if (depth >= 8) {
-      return '[MaxDepth]';
-    }
-    if (typeof value === 'object') {
-      if (seen.has(value)) {
-        return '[Circular]';
-      }
-      seen.add(value);
-      if (typeof Element !== 'undefined' && value instanceof Element) {
-        return {
-          tagName: value.tagName.toLowerCase(),
-          id: value.id || '',
-          text: String(value.innerText || value.textContent || '').trim().slice(0, 500),
-        };
-      }
-      if (Array.isArray(value)) {
-        return value.slice(0, 200).map((item) => jsonSafe(item, depth + 1, seen));
-      }
-      const output = {};
-      for (const [key, item] of Object.entries(value).slice(0, 200)) {
-        output[key] = jsonSafe(item, depth + 1, seen);
-      }
-      return output;
-    }
-    return String(value);
-  };
+// Page actions whose implementation lives outside background.js, keyed by the
+// prefix of the action name. runPageAction is stringified into the tab by
+// chrome.scripting.executeScript, so its free identifiers resolve in the
+// injected world rather than in the service worker: the recipe has to be a file
+// injected into that same world, which is the default ISOLATED one, and cannot
+// be a module import.
+const PAGE_RECIPE_FILES = {
+  ahrefs: 'recipes/ahrefs-actions.js',
+};
 
-  let timer;
+async function ensurePageRecipe(tabId, action) {
+  const [namespace = ''] = String(action || '').split('_');
+  const file = Object.prototype.hasOwnProperty.call(PAGE_RECIPE_FILES, namespace)
+    ? PAGE_RECIPE_FILES[namespace]
+    : '';
+  if (!file) {
+    return { namespace: '', installed: false };
+  }
+
   try {
-    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-    const result = await Promise.race([
-      new AsyncFunction(String(code || ''))(),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`JavaScript timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-    return { ok: true, value: jsonSafe(result) };
+    await chrome.scripting.executeScript({ target: { tabId }, files: [file] });
+    return { namespace, installed: true };
   } catch (error) {
-    return {
-      __error: error?.message || 'JavaScript execution failed.',
-      __errorCode: 'javascript_error',
-    };
-  } finally {
-    clearTimeout(timer);
+    // The packaged public extension ships without recipe files. Reporting here
+    // would bury the reason, so the action runs and runPageAction names the
+    // missing recipe with the one error a caller can act on.
+    return { namespace, installed: false, reason: error?.message || 'recipe_injection_failed' };
   }
 }
 
@@ -2922,574 +3022,6 @@ async function runPageAction(action, params = {}, options = {}) {
       return { restored: true };
     }
 
-    const fireReact = (element, handlerName, extraEvent = {}) => {
-      if (!element) return false;
-      const makeEvent = (currentTarget) => ({
-        preventDefault() {},
-        stopPropagation() {},
-        nativeEvent: { preventDefault() {}, stopPropagation() {} },
-        currentTarget,
-        target: element,
-        ...extraEvent,
-      });
-      const callHandler = (props, currentTarget) => {
-        const handler = props?.[handlerName];
-        if (typeof handler !== 'function') return false;
-        handler(makeEvent(currentTarget));
-        return true;
-      };
-      const propsOf = (node) => {
-        if (!node) return null;
-        const propsKey = Object.keys(node).find((item) => item.startsWith('__reactProps$'));
-        if (propsKey) return node[propsKey];
-        const fiberKey = Object.keys(node).find((item) => item.startsWith('__reactFiber$'));
-        const fiber = fiberKey ? node[fiberKey] : null;
-        return fiber?.memoizedProps || fiber?.pendingProps || null;
-      };
-      let node = element;
-      for (let depth = 0; depth < 10 && node; depth += 1) {
-        if (callHandler(propsOf(node), node)) return true;
-        const fiberKey = Object.keys(node).find((item) => item.startsWith('__reactFiber$'));
-        let fiber = fiberKey ? node[fiberKey] : null;
-        for (let up = 0; up < 10 && fiber; up += 1) {
-          if (callHandler(fiber.memoizedProps || fiber.pendingProps, fiber.stateNode || node)) {
-            return true;
-          }
-          fiber = fiber.return;
-        }
-        node = node.parentElement;
-      }
-      return false;
-    };
-
-    const isVisibleElement = (element) => {
-      if (!element) return false;
-      const style = window.getComputedStyle(element);
-      if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) {
-        return false;
-      }
-      const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
-    };
-
-    const visibleExact = (root, selector, pattern) =>
-      [...root.querySelectorAll(selector)]
-        .filter((element) => pattern.test(String(element.innerText || element.textContent || '').trim()))
-        .filter((element) => isVisibleElement(element))
-        .sort((left, right) => left.getBoundingClientRect().y - right.getBoundingClientRect().y);
-
-    const clickElement = async (element, waitMsAfter = 400) => {
-      if (!element) return false;
-      element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-      await wait(80);
-      const eventInit = { bubbles: true, cancelable: true, view: window };
-      element.dispatchEvent(new MouseEvent('mouseover', eventInit));
-      element.dispatchEvent(new MouseEvent('mousedown', eventInit));
-      element.dispatchEvent(new MouseEvent('mouseup', eventInit));
-      element.dispatchEvent(new MouseEvent('click', eventInit));
-      try {
-        element.click();
-      } catch {
-        // some custom elements reject a second click
-      }
-      fireReact(element, 'onClick');
-      await wait(waitMsAfter);
-      return true;
-    };
-
-    const modalRoot = () => {
-      const candidates = [...document.querySelectorAll('dialog[open], dialog, [role="dialog"], [aria-modal="true"]')];
-      const exportModal = candidates.find((node) => /CSV \(UTF-8|Google Sheets/i.test(node.textContent || ''));
-      return exportModal || candidates.find((node) => node.matches?.('dialog[open]')) || candidates[0] || null;
-    };
-
-    const collectModalState = () => {
-      const root = modalRoot() || document;
-      const radios = [...document.querySelectorAll('input[type=radio]')];
-      const labels = [...root.querySelectorAll('label')].map((label) => (label.textContent || '').trim());
-      const allLabel = labels.find((text) => /^All\s+[\d,]+$/.test(text)) || null;
-      const dialog = modalRoot();
-      return {
-        ready: radios.length >= 2 && labels.some((text) => /CSV \(UTF-8/i.test(text)),
-        sheetsReady: radios.length === 5,
-        radioCount: radios.length,
-        allLabel,
-        hasDialog: Boolean(dialog),
-        utf8: labels.some((text) => /CSV \(UTF-8/i.test(text)),
-        sheets: labels.some((text) => /google sheets/i.test(text)),
-        includeTop10: labels.some((text) => /include top 10/i.test(text)),
-      };
-    };
-
-    const findColumnsButton = () =>
-      [...document.querySelectorAll('button')]
-        .find((button) => /^\s*Columns\s*$/i.test(button.textContent || ''));
-
-    const findColumnsAdjacentExport = () => {
-      const cols = findColumnsButton();
-      if (!cols) return { button: null, reason: 'columns_not_found' };
-      let scope = cols.parentElement;
-      for (let i = 0; i < 5 && scope; i += 1) {
-        const exportButton = [...scope.querySelectorAll('button,a')]
-          .find((button) => /^\s*Export\s*$/i.test(button.textContent || ''));
-        if (
-          exportButton
-          && Math.abs(exportButton.getBoundingClientRect().y - cols.getBoundingClientRect().y) < 40
-        ) {
-          return { button: exportButton, reason: 'columns_adjacent', columns: cols };
-        }
-        scope = scope.parentElement;
-      }
-      return { button: null, reason: 'columns_adjacent_export_not_found', columns: cols };
-    };
-
-    const findExportUnderHeading = (pattern) => {
-      const heading = [...document.querySelectorAll('h1,h2,h3,h4,h5,[role="heading"]')]
-        .filter((node) => {
-          const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
-          return text.length < 120 && pattern.test(text);
-        })
-        .at(-1);
-      if (!heading) return null;
-      const headingY = heading.getBoundingClientRect().y;
-      let scope = heading.parentElement;
-      for (let i = 0; i < 8 && scope; i += 1) {
-        const button = [...scope.querySelectorAll('button,a,[role="button"]')]
-          .find((item) => {
-            if (!/^\s*Export\s*$/i.test(item.textContent || '') || !isVisibleElement(item)) {
-              return false;
-            }
-            const exportY = item.getBoundingClientRect().y;
-            return exportY >= headingY - 8 && exportY - headingY < 72;
-          });
-        if (button) return button;
-        scope = scope.parentElement;
-      }
-      return null;
-    };
-
-    const findToolbarExportFallback = () => {
-      const exports = visibleExact(document, 'button,a,[role="button"]', /^\s*Export\s*$/i);
-      if (!exports.length) {
-        return { button: null, reason: 'toolbar_export_not_found', exportCount: 0 };
-      }
-      const serp = findExportUnderHeading(/^SERP overview/i);
-      if (serp) {
-        return { button: serp, reason: 'serp_overview_export', exportCount: exports.length };
-      }
-      const nearChart = (element) => {
-        const y = element.getBoundingClientRect().y;
-        return [...document.querySelectorAll('button,span,div')].some((node) => {
-          const text = String(node.textContent || '').trim();
-          if (!/^(Last \d+ (days|months|years)|Last year|All time|Daily|Weekly|Monthly)$/i.test(text)) {
-            return false;
-          }
-          return Math.abs(node.getBoundingClientRect().y - y) < 48;
-        });
-      };
-      const blocked = new Set(
-        [findExportUnderHeading(/^Position history$/i), findExportUnderHeading(/^Ads position history/i)]
-          .filter(Boolean),
-      );
-      const tableCandidates = exports.filter((button) => !blocked.has(button) && !nearChart(button));
-      const button = tableCandidates[0] || exports[0];
-      return {
-        button,
-        reason: tableCandidates.length ? (exports.length === 1 ? 'single_export' : 'toolbar_export_fallback') : 'chart_adjacent_export_fallback',
-        exportCount: exports.length,
-      };
-    };
-
-    const clickExportButton = async (button, reason, extra = {}) => {
-      if (!button) {
-        return { fired: false, reason, exportCount: extra.exportCount || 0, ...extra };
-      }
-      button.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-      await wait(200);
-      let fired = fireReact(button, 'onClick');
-      if (!fired) {
-        fired = await clickElement(button, 600);
-      } else {
-        await wait(600);
-      }
-      return {
-        fired,
-        reason,
-        y: Math.round(button.getBoundingClientRect().y),
-        ...extra,
-        exportCount: extra.exportCount || 1,
-      };
-    };
-
-    const openKeListExport = async () => {
-      const readyAt = Date.now();
-      while (!findColumnsButton() && Date.now() - readyAt < 12_000) {
-        await wait(300);
-      }
-      const columnsFound = findColumnsAdjacentExport();
-      const exportCount = visibleExact(document, 'button,a,[role="button"]', /^\s*Export\s*$/i).length;
-      if (!columnsFound.button) {
-        return {
-          fired: false,
-          reason: columnsFound.reason || 'ke_list_columns_not_found',
-          exportCount,
-        };
-      }
-      return await clickExportButton(columnsFound.button, 'ke_list_columns', { exportCount });
-    };
-
-    const openTableExport = async () => {
-      const onKeywordsExplorer = /keywords-explorer/i.test(location.pathname);
-      const onKeList = /keywords-explorer\/list\//i.test(location.pathname);
-      if (onKeList || params.includeTop10 === true) {
-        return await openKeListExport();
-      }
-      if (onKeywordsExplorer && !findColumnsButton()) {
-        const listKeExports = () => [...document.querySelectorAll('button,a,[role="button"]')]
-          .filter((button) => /^\s*Export\s*$/i.test(button.textContent || ''))
-          .filter((button) => {
-            const rect = button.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-          })
-          .sort((left, right) => left.getBoundingClientRect().y - right.getBoundingClientRect().y);
-        const readyAt = Date.now();
-        while (listKeExports().length < 3 && Date.now() - readyAt < 12_000) {
-          await wait(300);
-        }
-        const keExports = listKeExports();
-        const lastExport = keExports.at(-1);
-        if (lastExport) {
-          return await clickExportButton(lastExport, 'ke_last_export', { exportCount: keExports.length });
-        }
-      }
-      const columnsFound = onKeywordsExplorer ? { button: null, reason: 'ke_skip_columns' } : findColumnsAdjacentExport();
-      const found = columnsFound.button
-        ? { ...columnsFound, reason: 'columns_adjacent' }
-        : findToolbarExportFallback();
-      if (!found.button) {
-        return { fired: false, reason: found.reason, exportCount: found.exportCount || 0 };
-      }
-      return await clickExportButton(found.button, found.reason, { exportCount: found.exportCount || 1 });
-    };
-
-    const selectSheetsRadio = () => {
-      const root = modalRoot() || document;
-      const label = [...root.querySelectorAll('label')]
-        .find((item) => /google sheets/i.test(item.textContent || ''));
-      const radio = label && (
-        label.querySelector('input[type=radio]')
-        || document.getElementById(label.getAttribute('for'))
-      );
-      if (!radio) {
-        return { selected: false, reason: 'no-sheets-radio' };
-      }
-      radio.checked = true;
-      const fired = fireReact(radio, 'onChange')
-        || fireReact(radio, 'onClick')
-        || fireReact(label, 'onClick')
-        || fireReact(label, 'onChange');
-      return {
-        selected: fired || radio.checked,
-        reason: fired ? 'sheets-selected' : (radio.checked ? 'sheets-already-checked' : 'sheets_onchange_missing'),
-      };
-    };
-
-    const clickAllRows = () => {
-      const root = modalRoot() || document;
-      const allLabel = [...root.querySelectorAll('label')]
-        .find((label) => /^All\s+[\d,]+$/.test((label.textContent || '').trim()));
-      if (!allLabel) return false;
-      const input = allLabel.querySelector('input') || document.getElementById(allLabel.getAttribute('for'));
-      if (input) {
-        input.checked = true;
-        if (fireReact(input, 'onChange') || fireReact(input, 'onClick')) return true;
-      }
-      return fireReact(allLabel, 'onClick');
-    };
-
-    const includeTop10 = async () => {
-      const root = modalRoot() || document;
-      const label = [...root.querySelectorAll('label')]
-        .find((item) => /include top 10/i.test(item.textContent || ''));
-      if (!label) {
-        return { checked: false, reason: 'include_top10_not_found' };
-      }
-      const input = label.querySelector('input[type=checkbox]')
-        || document.getElementById(label.getAttribute('for'));
-      const target = input || label;
-      if (input) input.checked = true;
-      const fired = fireReact(target, 'onChange') || fireReact(target, 'onClick');
-      if (!fired) {
-        await clickElement(target, 200);
-      }
-      const allRowsRestored = clickAllRows();
-      return { checked: true, reason: 'include_top10', allRowsRestored };
-    };
-
-    const pageLooksEmpty = () => {
-      const text = String(document.body?.innerText || '');
-      return /No data for this keyword|SERP not found|No SERP data|Keyword difficulty unknown|Nothing found/i.test(text);
-    };
-
-    const updateIfEmpty = async () => {
-      if (!pageLooksEmpty()) {
-        return { clicked: false, reason: 'has_data' };
-      }
-      const button = [...document.querySelectorAll('button,a,[role="button"]')]
-        .find((item) => /^\s*Update(\s+SERP)?\s*$/i.test(String(item.textContent || '').trim()) && isVisibleElement(item));
-      if (!button) {
-        return { clicked: false, reason: 'update_not_found', empty: true };
-      }
-      const fired = fireReact(button, 'onClick') || await clickElement(button, 800);
-      return { clicked: Boolean(fired), reason: 'updated_empty_serp', empty: true };
-    };
-
-    const unhideColumns = async () => {
-      const columnsBtn = findColumnsButton();
-      if (!columnsBtn) {
-        return { unhidden: [], reason: 'columns_not_found' };
-      }
-      fireReact(columnsBtn, 'onClick') || await clickElement(columnsBtn, 300);
-      await wait(400);
-      const wanted = [
-        /^cpc$/i,
-        /^organic traffic$/i,
-        /^traffic$/i,
-        /^value$/i,
-        /^organic value$/i,
-        /^page type$/i,
-        /^ai content level$/i,
-        /^status$/i,
-      ];
-      const enabled = [];
-      const nodes = [...document.querySelectorAll('label, [role="menuitemcheckbox"], [role="checkbox"]')];
-      for (const node of nodes) {
-        const text = String(node.textContent || '').trim();
-        if (!wanted.some((pattern) => pattern.test(text))) continue;
-        const input = node.querySelector('input[type=checkbox]');
-        const checked = node.getAttribute('aria-checked') === 'true' || input?.checked === true;
-        if (checked) continue;
-        const target = input || node;
-        if (input) input.checked = true;
-        if (!fireReact(target, 'onChange')) {
-          fireReact(target, 'onClick');
-        }
-        enabled.push(text);
-      }
-      fireReact(columnsBtn, 'onClick');
-      return {
-        unhidden: enabled,
-        reason: enabled.length ? 'unhidden' : 'none_or_already_visible',
-      };
-    };
-
-    const findKeywordTextarea = () => {
-      const areas = [...document.querySelectorAll('textarea')].filter((element) => isVisibleElement(element));
-      return areas.find((element) => /enter keywords/i.test(element.placeholder || element.getAttribute('aria-label') || ''))
-        || areas.find((element) => !/ask ai/i.test(element.placeholder || ''))
-        || areas[0]
-        || null;
-    };
-
-    const pasteKeywords = async (rawKeywords) => {
-      const list = Array.isArray(rawKeywords)
-        ? rawKeywords.map((item) => String(item || '').trim()).filter(Boolean)
-        : String(rawKeywords || '').split(/[\n,]+/).map((item) => item.trim()).filter(Boolean);
-      const waitLimit = Math.max(2_000, Math.min(Number(params.timeoutMs) || 15_000, 30_000));
-      const startedAt = Date.now();
-      let textarea = findKeywordTextarea();
-      while (!textarea && Date.now() - startedAt < waitLimit) {
-        await wait(300);
-        textarea = findKeywordTextarea();
-      }
-      if (!textarea) {
-        return {
-          pasted: false,
-          reason: 'textarea_not_found',
-          count: list.length,
-          waitedMs: Date.now() - startedAt,
-          textareaCount: document.querySelectorAll('textarea').length,
-        };
-      }
-      textarea.focus();
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-      if (setter) setter.call(textarea, list.join('\n'));
-      else textarea.value = list.join('\n');
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.dispatchEvent(new Event('change', { bubbles: true }));
-      fireReact(textarea, 'onChange');
-      fireReact(textarea, 'onInput');
-      const search = [...document.querySelectorAll('button')]
-        .find((button) => /^\s*Search\s*$/i.test(button.textContent || '') && isVisibleElement(button));
-      let searched = false;
-      if (search) {
-        searched = fireReact(search, 'onClick');
-        if (!searched) searched = await clickElement(search, 400);
-      }
-      return {
-        pasted: true,
-        count: list.length,
-        searched,
-        placeholder: textarea.placeholder || null,
-      };
-    };
-
-    const submitSheetsExport = async () => {
-      const dialog = modalRoot();
-      if (!dialog) {
-        return { submitted: false, reason: 'no-dialog' };
-      }
-      const buttons = [...dialog.querySelectorAll('button,[role="button"]')]
-        .filter((button) => /^\s*Export\s*$/i.test(String(button.textContent || '').trim()))
-        .filter((button) => isVisibleElement(button));
-      if (!buttons.length) {
-        return { submitted: false, reason: 'no-export-button' };
-      }
-      const button = buttons[buttons.length - 1];
-      if (fireReact(button, 'onClick')) {
-        await wait(600);
-        return { submitted: true, reason: 'submitted' };
-      }
-      const clicked = await clickElement(button, 600);
-      return {
-        submitted: Boolean(clicked),
-        reason: clicked ? 'submitted_click' : 'export_onclick_missing',
-      };
-    };
-
-    const readToast = () => {
-      const nodes = [...document.querySelectorAll('[role="status"], [role="alert"], [class*="toast"], [class*="Toast"]')];
-      const fromNode = nodes.map((node) => String(node.textContent || '').trim()).find(Boolean);
-      if (fromNode) return fromNode.slice(0, 240);
-      const body = document.body?.innerText || '';
-      const match = body.match(/Export successful[^\n]{0,120}/i);
-      return match ? match[0].trim() : null;
-    };
-
-    const submitTableExport = async () => {
-      const dialog = modalRoot();
-      const scope = dialog || document;
-      const utf8Label = [...scope.querySelectorAll('label')]
-        .find((label) => /CSV \(UTF-8/i.test(label.textContent || ''));
-      let utf8 = 'missing';
-      if (utf8Label) {
-        await clickElement(utf8Label, 200);
-        utf8 = 'clicked';
-      }
-      const allLabel = [...scope.querySelectorAll('label')]
-        .find((label) => /^All\s+[\d,]+$/.test((label.textContent || '').trim()));
-      let allRows = 'missing';
-      if (allLabel) {
-        await clickElement(allLabel, 200);
-        allRows = 'clicked';
-      }
-      const exportButtons = visibleExact(scope, 'button,[role="button"]', /^\s*Export\s*$/i);
-      const submitButton = exportButtons.at(-1) || null;
-      let submitted = false;
-      if (submitButton) {
-        submitted = fireReact(submitButton, 'onClick');
-        if (!submitted) {
-          submitted = await clickElement(submitButton, 600);
-        } else {
-          await wait(600);
-        }
-      }
-      return {
-        utf8,
-        allRows,
-        exportButtonCount: exportButtons.length,
-        submitted,
-        reason: submitted ? 'modal_export_click' : 'export_button_not_found',
-      };
-    };
-
-    const exportPositionHistory = async () => {
-      const rangeWanted = String(params.range || params.chartRange || '2 years').trim();
-      const addDomain = String(params.addDomain || params.domain || '').trim();
-      const heading = [...document.querySelectorAll('h1,h2,h3,h4,h5')]
-        .find((node) => /^Position history$/i.test(String(node.textContent || '').trim()));
-      if (!heading) {
-        return { exported: false, reason: 'position_history_heading_not_found' };
-      }
-      heading.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-      await wait(250);
-
-      const headingY = heading.getBoundingClientRect().y;
-      const nearHeading = (element) => {
-        const y = element.getBoundingClientRect().y;
-        return y >= headingY - 12 && y - headingY < 220;
-      };
-      const rangeButton = [...document.querySelectorAll('button,[role="button"]')]
-        .find((button) => {
-          if (!isVisibleElement(button) || !nearHeading(button)) return false;
-          const text = String(button.textContent || '').trim();
-          return /^(Last \d+ (days|months|years)|All time|2 years|24 months)$/i.test(text);
-        });
-      let rangeClicked = null;
-      if (rangeButton && !new RegExp(rangeWanted.replace(/\s+/g, '\\s+'), 'i').test(rangeButton.textContent || '')) {
-        fireReact(rangeButton, 'onClick') || await clickElement(rangeButton, 400);
-        await wait(250);
-        const optionLabels = ['All time', 'Last 2 years', '2 years', 'Last year', 'Last 12 months'];
-        const option = optionLabels
-          .map((label) => [...document.querySelectorAll('button,[role="menuitem"],[role="option"],li')]
-            .find((item) => isVisibleElement(item) && new RegExp(`^${label}$`, 'i').test(String(item.textContent || '').trim())))
-          .find(Boolean);
-        if (option) {
-          fireReact(option, 'onClick') || await clickElement(option, 400);
-          rangeClicked = String(option.textContent || '').trim();
-          await wait(400);
-        }
-      }
-
-      let domainAdded = null;
-      if (addDomain) {
-        const addButton = [...document.querySelectorAll('button,[role="button"]')]
-          .find((button) => {
-            if (!isVisibleElement(button) || !nearHeading(button)) return false;
-            return /Add domain to compare|Add domain/i.test(button.textContent || '');
-          });
-        if (addButton) {
-          fireReact(addButton, 'onClick') || await clickElement(addButton, 400);
-          await wait(300);
-        }
-        const input = [...document.querySelectorAll('input')]
-          .find((field) => {
-            if (!isVisibleElement(field)) return false;
-            const rect = field.getBoundingClientRect();
-            return rect.y >= headingY - 12 && rect.y - headingY < 260;
-          });
-        if (input) {
-          input.focus();
-          input.value = addDomain;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-          domainAdded = addDomain;
-          await wait(500);
-        }
-      }
-
-      const exportButton = findExportUnderHeading(/^Position history$/i);
-      if (!exportButton) {
-        return {
-          exported: false,
-          reason: 'position_history_export_not_found',
-          rangeClicked,
-          domainAdded,
-        };
-      }
-      exportButton.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-      await wait(150);
-      const fired = fireReact(exportButton, 'onClick') || await clickElement(exportButton, 500);
-      return {
-        exported: Boolean(fired),
-        reason: fired ? 'position_history_export' : 'position_history_export_click_failed',
-        rangeClicked,
-        domainAdded,
-        y: Math.round(exportButton.getBoundingClientRect().y),
-      };
-    };
-
     if (action === 'wait_for_text') {
       const needle = String(params.text || '').trim();
       const waitLimit = Math.max(250, Math.min(Number(params.timeoutMs) || 20_000, 90_000));
@@ -3504,143 +3036,16 @@ async function runPageAction(action, params = {}, options = {}) {
       return { found: false, elapsedMs: waitLimit, text: needle };
     }
 
-    if (action === 'ahrefs_open_table_export') {
-      return await openTableExport();
-    }
-
-    if (action === 'ahrefs_modal_state') {
-      return collectModalState();
-    }
-
-    if (action === 'ahrefs_submit_export') {
-      return await submitTableExport();
-    }
-
-    if (action === 'ahrefs_select_sheets') {
-      return selectSheetsRadio();
-    }
-
-    if (action === 'ahrefs_unhide_columns') {
-      return await unhideColumns();
-    }
-
-    if (action === 'ahrefs_include_top10') {
-      return await includeTop10();
-    }
-
-    if (action === 'ahrefs_update_if_empty') {
-      return await updateIfEmpty();
-    }
-
-    if (action === 'ahrefs_paste_keywords') {
-      return await pasteKeywords(params.keywords ?? params.value ?? params.text);
-    }
-
-    if (action === 'ahrefs_export_position_history') {
-      return await exportPositionHistory();
-    }
-
-    if (action === 'ahrefs_export_csv') {
-      const destination = params.destination === 'sheets' ? 'sheets' : 'csv';
-      const waitLimit = Math.max(1_000, Math.min(Number(params.timeoutMs) || 20_000, 90_000));
-      const waitUntil = async (predicate, limitMs = waitLimit, tickMs = 250) => {
-        const startedAt = Date.now();
-        while (Date.now() - startedAt < limitMs) {
-          if (predicate()) return true;
-          await wait(tickMs);
-        }
-        return predicate();
-      };
-
-      if (params.unhideColumns) {
-        await unhideColumns();
-        await wait(300);
+    // Ahrefs page automation lives in extension/recipes/ahrefs-actions.js, which
+    // background.js injects into this world before calling runPageAction. The
+    // packaged public extension ships without that file, so this reports what is
+    // missing instead of throwing an unresolved-identifier error.
+    if (typeof action === 'string' && action.startsWith('ahrefs_')) {
+      const recipe = globalThis.__umbraPageRecipes?.ahrefs?.[action];
+      if (typeof recipe !== 'function') {
+        throw new Error(`Page recipe not installed in this build: ${action}. Load Umbra unpacked from a checkout that includes extension/recipes/ahrefs-actions.js to use it.`);
       }
-
-      if (!(await waitUntil(() => Boolean(findColumnsButton()) || visibleExact(document, 'button,a,[role="button"]', /^\s*Export\s*$/i).length > 0))) {
-        return { exported: false, destination, reason: 'toolbar_export_not_found', modal: collectModalState() };
-      }
-
-      let modal = collectModalState();
-      let openResult = null;
-      const modalOpen = () => {
-        const next = collectModalState();
-        return destination === 'sheets'
-          ? next.radioCount === 5
-          : next.ready || next.utf8;
-      };
-      if (!modalOpen()) {
-        openResult = await openTableExport();
-        await wait(400);
-        modal = collectModalState();
-        if (!modalOpen()) {
-          await waitUntil(modalOpen, destination === 'sheets' ? 20_000 : waitLimit, destination === 'sheets' ? 1_000 : 250);
-          modal = collectModalState();
-        }
-      }
-
-      if (destination === 'sheets' ? modal.radioCount !== 5 : (!modal.ready && !modal.utf8)) {
-        return {
-          exported: false,
-          destination,
-          reason: 'modal_did_not_open',
-          openResult,
-          modal,
-        };
-      }
-
-      if (params.includeTop10 && !modal.includeTop10) {
-        await waitUntil(() => collectModalState().includeTop10, 8_000, 250);
-        modal = collectModalState();
-      }
-      if (params.includeTop10 && !modal.includeTop10 && !/keywords-explorer\/list\//i.test(location.pathname)) {
-        const serp = findExportUnderHeading(/^SERP overview/i);
-        if (serp && openResult?.reason !== 'serp_overview_export') {
-          openResult = {
-            fired: fireReact(serp, 'onClick') || await clickElement(serp, 500),
-            reason: 'serp_overview_retry',
-            y: Math.round(serp.getBoundingClientRect().y),
-            exportCount: visibleExact(document, 'button,a,[role="button"]', /^\s*Export\s*$/i).length,
-          };
-          await waitUntil(modalOpen, 12_000, 400);
-          modal = collectModalState();
-        }
-      }
-      if (params.includeTop10) {
-        await includeTop10();
-      }
-
-      if (destination === 'sheets') {
-        const selected = selectSheetsRadio();
-        const submitResult = await submitSheetsExport();
-        await wait(800);
-        const nextModal = collectModalState();
-        return {
-          exported: Boolean(submitResult.submitted),
-          submitted: Boolean(submitResult.submitted),
-          destination: 'sheets',
-          allLabel: nextModal.allLabel,
-          toast: readToast(),
-          reason: submitResult.reason,
-          openResult,
-          selected,
-          submitResult,
-          modal: nextModal,
-        };
-      }
-
-      const submitResult = await submitTableExport();
-      const nextModal = collectModalState();
-      return {
-        exported: Boolean(submitResult.submitted),
-        submitted: Boolean(submitResult.submitted),
-        destination: 'csv',
-        allLabel: nextModal.allLabel,
-        reason: submitResult.reason,
-        openResult,
-        submitResult,
-        modal: nextModal,
-      };
+      return await recipe(params);
     }
 
     throw new Error(`Unsupported page action: ${action}`);
@@ -3671,14 +3076,21 @@ function getTechnicalSnapshot(options = {}) {
   const text = (selector) => document.querySelector(selector)?.getAttribute('content')?.trim() || '';
   const attr = (selector, name) => document.querySelector(selector)?.getAttribute(name)?.trim() || '';
   const navigation = performance.getEntriesByType('navigation')?.[0] || null;
-  const headings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map((heading) => ({
+  // Only the first 80 headings and links are ever returned, but every heading
+  // level and every href, rel, and sameHost flag feeds the counts below, so the
+  // full pass stays and only the text read is capped. Measured on a page with
+  // 6,567 anchors, reading innerText for all of them costs 25.2 ms against
+  // 0.1 ms for the first 80.
+  const SAMPLE_LIMIT = 80;
+  const elementText = (element, maxLength) => String(element.innerText || '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
+  const headings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].map((heading, index) => ({
     level: heading.tagName.toLowerCase(),
-    text: heading.innerText.trim().replace(/\s+/g, ' ').slice(0, 240),
+    text: index < SAMPLE_LIMIT ? elementText(heading, 240) : '',
   }));
   const anchors = [...document.querySelectorAll('a[href]')];
   const images = [...document.querySelectorAll('img')];
   const pageUrl = new URL(location.href);
-  const linkData = anchors.map((link) => {
+  const linkData = anchors.map((link, index) => {
     const href = absoluteUrl(link.getAttribute('href'));
     let sameHost = false;
     try {
@@ -3688,7 +3100,7 @@ function getTechnicalSnapshot(options = {}) {
     }
     return {
       href,
-      text: link.innerText.trim().replace(/\s+/g, ' ').slice(0, 160),
+      text: index < SAMPLE_LIMIT ? elementText(link, 160) : '',
       rel: link.getAttribute('rel') || '',
       sameHost,
     };
@@ -3730,7 +3142,10 @@ function getTechnicalSnapshot(options = {}) {
       };
     }
   });
-  const html = options.includeHtml ? document.documentElement.outerHTML : '';
+  // One serialization, whether or not the caller wants the markup back. The
+  // previous shape serialized the whole document twice when includeHtml was set
+  // and once even when it was not, purely to read a length off it.
+  const html = document.documentElement.outerHTML;
 
   return {
     url: location.href,
@@ -3739,7 +3154,7 @@ function getTechnicalSnapshot(options = {}) {
     readyState: document.readyState,
     statusCode: Number.isInteger(navigation?.responseStatus) ? navigation.responseStatus : null,
     statusSource: Number.isInteger(navigation?.responseStatus) ? 'performance.navigation.responseStatus' : 'unavailable',
-    htmlLength: document.documentElement.outerHTML.length,
+    htmlLength: html.length,
     html: options.includeHtml ? html : undefined,
     document: {
       lang: document.documentElement.getAttribute('lang') || '',
@@ -3761,21 +3176,21 @@ function getTechnicalSnapshot(options = {}) {
         counts[heading.level] = (counts[heading.level] || 0) + 1;
         return counts;
       }, {}),
-      items: headings.slice(0, 80),
+      items: headings.slice(0, SAMPLE_LIMIT),
     },
     links: {
       total: linkData.length,
       internal: linkData.filter((link) => link.sameHost).length,
       external: linkData.filter((link) => !link.sameHost).length,
       nofollow: linkData.filter((link) => /\bnofollow\b/i.test(link.rel)).length,
-      samples: linkData.slice(0, 80),
+      samples: linkData.slice(0, SAMPLE_LIMIT),
     },
     images: {
       total: images.length,
       missingAlt: images.filter((image) => !image.hasAttribute('alt')).length,
       emptyAlt: images.filter((image) => image.hasAttribute('alt') && image.getAttribute('alt') === '').length,
       lazy: images.filter((image) => image.loading === 'lazy' || image.getAttribute('loading') === 'lazy').length,
-      samples: images.slice(0, 80).map((image) => ({
+      samples: images.slice(0, SAMPLE_LIMIT).map((image) => ({
         src: absoluteUrl(image.getAttribute('src') || image.currentSrc || ''),
         alt: image.getAttribute('alt'),
         loading: image.getAttribute('loading') || '',
@@ -3989,15 +3404,27 @@ function resolveInteractiveRef(ref, selector = '') {
   if (parsed.__error) {
     return parsed;
   }
-  const currentDomVersion = Number.isInteger(globalThis.__codexChromeBridgeContentAgent?.domVersion)
-    ? globalThis.__codexChromeBridgeContentAgent.domVersion
+  const currentDomVersion = Number.isInteger(globalThis.__umbraContentAgent?.domVersion)
+    ? globalThis.__umbraContentAgent.domVersion
     : null;
   if (currentDomVersion !== null && currentDomVersion !== parsed.domVersion) {
     return { __error: 'Stale interactive ref. Run browser_read_interactive again.', code: 'stale_interactive_ref' };
   }
   const options = selector ? { selector, maxItems: parsed.index + 1 } : { maxItems: parsed.index + 1 };
   const current = readInteractive(options);
-  const element = document.querySelectorAll(current.selector)[parsed.index];
+  // readInteractive numbers its controls after filtering for visibility, so the
+  // index has to be applied to the same filtered list. Indexing the raw node
+  // list meant any hidden element earlier in document order shifted the answer
+  // by one, which returned a real but wrong element and left the guard below
+  // almost never firing. Keep this filter identical to readInteractive's.
+  const isVisible = (element) => {
+    const style = window.getComputedStyle(element);
+    if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) {
+      return false;
+    }
+    return [...element.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0);
+  };
+  const element = [...document.querySelectorAll(current.selector)].filter(isVisible)[parsed.index];
   if (!element) {
     return { __error: 'Interactive ref no longer resolves. Run browser_read_interactive again.', code: 'stale_interactive_ref' };
   }
@@ -4362,7 +3789,7 @@ function setWindowScroll(x, y) {
 }
 
 function installAndReadPageConsole() {
-  const key = '__codexChromeBridgePageConsole';
+  const key = '__umbraPageConsole';
   const cap = 200;
   const formatArg = (value) => {
     if (value === null) {
@@ -4631,18 +4058,29 @@ async function getBridgePressure(sessionId, params = {}) {
   };
 }
 
-async function encodeCanvasDataUrl(canvas, format = 'png') {
-  const type = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+function base64FromBytes(bytes) {
+  // A per-byte string append costs 389 ms on a 10 MB image because each step
+  // grows a rope V8 has to flatten. Fixed windows joined once cost 54 ms for
+  // byte-identical output, which matters because a full-page stitch can reach a
+  // 2880 by 32000 canvas once device pixel ratio multiplies the capture height.
+  const chunkSize = 32_768;
+  const chunks = [];
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    chunks.push(String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunkSize)));
+  }
+  return btoa(chunks.join(''));
+}
+
+// Returns the bare base64 payload, not a data URL. Every consumer either hands
+// it straight to the caller or decodes it again, so wrapping it in a prefix here
+// only to strip that prefix back off later copied the whole image twice more.
+async function encodeCanvasBase64(canvas, format = 'png') {
   const blob = await canvas.convertToBlob({
-    type,
+    type: screenshotMimeType(format),
     quality: format === 'jpeg' ? 0.8 : undefined,
   });
   const buffer = await blob.arrayBuffer();
-  let binary = '';
-  for (const byte of new Uint8Array(buffer)) {
-    binary += String.fromCharCode(byte);
-  }
-  return `data:${type};base64,${btoa(binary)}`;
+  return base64FromBytes(new Uint8Array(buffer));
 }
 
 async function captureSilentScreenshot(tab, { format, fullPage }) {
@@ -4664,8 +4102,9 @@ async function captureSilentScreenshot(tab, { format, fullPage }) {
       error.code = 'silent_screenshot_empty';
       throw error;
     }
-    const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
-    return `data:${mime};base64,${result.data}`;
+    // Page.captureScreenshot already returns base64, so it is passed along as
+    // it is rather than wrapped in a data URL prefix that the next step strips.
+    return result.data;
   };
 
   try {
@@ -4720,23 +4159,38 @@ async function captureSilentScreenshot(tab, { format, fullPage }) {
   }
 }
 
-function dataUrlToBlob(dataUrl) {
+// Accepts either a full data URL, which is what the visible-tab capture API
+// returns, or the bare base64 payload that Page.captureScreenshot already hands
+// back. Taking both means the debugger path never wraps a prefix on just to
+// have it stripped off again one line later.
+function dataUrlToBlob(dataUrl, fallbackMime = 'image/png') {
   const raw = String(dataUrl || '');
-  const comma = raw.indexOf(',');
-  if (comma < 0) {
+  if (!raw) {
     const error = new Error('Screenshot data URL is missing payload.');
     error.code = 'screenshot_data_url_invalid';
     throw error;
   }
-  const header = raw.slice(0, comma);
-  const payload = raw.slice(comma + 1);
-  const mimeMatch = header.match(/^data:([^;,]+)/i);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/png';
-  if (!/;base64/i.test(header)) {
-    const error = new Error('Screenshot data URL must be base64.');
-    error.code = 'screenshot_data_url_invalid';
-    throw error;
+
+  let payload = raw;
+  let mime = fallbackMime;
+  if (raw.startsWith('data:')) {
+    const comma = raw.indexOf(',');
+    if (comma < 0) {
+      const error = new Error('Screenshot data URL is missing payload.');
+      error.code = 'screenshot_data_url_invalid';
+      throw error;
+    }
+    const header = raw.slice(0, comma);
+    if (!/;base64/i.test(header)) {
+      const error = new Error('Screenshot data URL must be base64.');
+      error.code = 'screenshot_data_url_invalid';
+      throw error;
+    }
+    payload = raw.slice(comma + 1);
+    const mimeMatch = header.match(/^data:([^;,]+)/i);
+    mime = mimeMatch ? mimeMatch[1] : fallbackMime;
   }
+
   // MV3 connect-src rejects data URLs. Decode locally.
   const binary = atob(payload);
   const bytes = new Uint8Array(binary.length);
@@ -4746,10 +4200,11 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([bytes], { type: mime });
 }
 
-async function imageBitmapFromDataUrl(dataUrl) {
-  return await createImageBitmap(dataUrlToBlob(dataUrl));
+async function imageBitmapFromDataUrl(dataUrl, fallbackMime = 'image/png') {
+  return await createImageBitmap(dataUrlToBlob(dataUrl, fallbackMime));
 }
 
+// Takes a data URL or a bare base64 payload and returns bare base64.
 async function cropScreenshotDataUrl(dataUrl, region = null, devicePixelRatio = 1, format = 'png') {
   if (!region) {
     return dataUrl;
@@ -4759,7 +4214,7 @@ async function cropScreenshotDataUrl(dataUrl, region = null, devicePixelRatio = 
     error.code = 'screenshot_crop_unavailable';
     throw error;
   }
-  const image = await imageBitmapFromDataUrl(dataUrl);
+  const image = await imageBitmapFromDataUrl(dataUrl, screenshotMimeType(format));
   const dpr = Math.max(1, Number(devicePixelRatio) || 1);
   const sourceX = Math.max(0, Math.round(Number(region.x || 0) * dpr));
   const sourceY = Math.max(0, Math.round(Number(region.y || 0) * dpr));
@@ -4770,9 +4225,10 @@ async function cropScreenshotDataUrl(dataUrl, region = null, devicePixelRatio = 
   const canvas = new OffscreenCanvas(clampedW, clampedH);
   const context = canvas.getContext('2d');
   context.drawImage(image, sourceX, sourceY, clampedW, clampedH, 0, 0, clampedW, clampedH);
-  return await encodeCanvasDataUrl(canvas, format);
+  return await encodeCanvasBase64(canvas, format);
 }
 
+// Takes slices holding data URLs or bare base64 payloads, returns bare base64.
 async function stitchScreenshotSlices(slices, { widthCss, heightCss, dpr, format }) {
   if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') {
     const error = new Error('Full page screenshot stitch is unavailable in this Chrome context.');
@@ -4787,7 +4243,7 @@ async function stitchScreenshotSlices(slices, { widthCss, heightCss, dpr, format
   context.fillStyle = '#ffffff';
   context.fillRect(0, 0, canvasW, canvasH);
   for (const slice of slices) {
-    const image = await imageBitmapFromDataUrl(slice.dataUrl);
+    const image = await imageBitmapFromDataUrl(slice.dataUrl, screenshotMimeType(format));
     const destY = Math.round(Number(slice.destY || 0) * scale);
     const sourceY = Math.max(0, Math.round(Number(slice.sourceY || 0) * scale));
     const drawH = Math.min(image.height - sourceY, canvasH - destY);
@@ -4796,7 +4252,26 @@ async function stitchScreenshotSlices(slices, { widthCss, heightCss, dpr, format
     }
     context.drawImage(image, 0, sourceY, image.width, drawH, 0, destY, image.width, drawH);
   }
-  return await encodeCanvasDataUrl(canvas, format);
+  return await encodeCanvasBase64(canvas, format);
+}
+
+// Ref resolution goes through the content agent only, exactly as browser_scroll
+// and browser_click do, because the agent owns the shared ref store the ref was
+// minted from. There is no one-shot fallback here on purpose: chrome.scripting
+// serializes an injected function without its scope, so a one-shot copy of the
+// resolver cannot reach the helpers it is built from and would replace a clear
+// agent error with an unresolved-identifier one.
+async function resolveScreenshotRefRect(tabId, ref, selector = '') {
+  const result = await sendContentAgentCommand(tabId, 'scroll_interactive_ref', {
+    ref,
+    options: selector ? { selector } : {},
+  });
+  if (result?.__error) {
+    const error = new Error(result.__error);
+    error.code = result.__errorCode || result.code;
+    throw error;
+  }
+  return result;
 }
 
 async function buildScreenshotPreflight(tab) {
@@ -5025,7 +4500,9 @@ async function handleBridgeCommand(message) {
       tab.id,
       activate ? { url, active: true } : { url },
     );
-    const waited = await waitForTabComplete(tab.id, clampTimeoutMs(params.timeoutMs), url);
+    const waited = await waitForTabComplete(tab.id, clampTimeoutMs(params.timeoutMs), url, {
+      navigationPending: true,
+    });
     const updated = await safeGetTab(tab.id);
     return {
       ...(await serializeTab(updated || tab)),
@@ -5078,10 +4555,11 @@ async function handleBridgeCommand(message) {
     const zoom = normalizeScreenshotZoom(params.zoom);
     let region = !fullPage && params.region && typeof params.region === 'object' ? params.region : null;
     if (!fullPage && !region && typeof params.ref === 'string' && params.ref.trim()) {
-      const refResult = await executeInTab(tab.id, scrollInteractiveRef, [params.ref, params.selector || '']);
-      if (refResult?.__error) {
-        throw new Error(refResult.__error);
-      }
+      // Resolve through the content agent, the same path browser_scroll and
+      // browser_click use, because the agent owns the shared ref store the ref
+      // was minted from. The one-shot injection resolves refs by re-deriving an
+      // index, so it can only ever approximate what the agent already knows.
+      const refResult = await resolveScreenshotRefRect(tab.id, params.ref, params.selector || '');
       region = refResult?.rect || null;
     }
     if (!fullPage && zoom > 1 && !region) {
@@ -5159,7 +4637,7 @@ async function handleBridgeCommand(message) {
       activated: !silent,
       silent,
       zoom,
-      mimeType: format === 'jpeg' ? 'image/jpeg' : 'image/png',
+      mimeType: screenshotMimeType(format),
       cropped: Boolean(region),
       region: region || null,
       fullPage,
@@ -5299,6 +4777,7 @@ async function handleBridgeCommand(message) {
       createIfMissing: false,
       activate: params.activate === true,
     });
+    await ensurePageRecipe(tab.id, params.action);
     return await executeInTabWithRetry(tab.id, runPageAction, [
       params.action,
       params.params && typeof params.params === 'object' ? params.params : {},
@@ -5677,6 +5156,11 @@ async function handleBridgeCommand(message) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
+    // bridge_command, bridge_session_connected, and bridge_session_disconnected
+    // all write session state, and a message can wake a cold worker. Await the
+    // one-time load rather than all of initialize(), which would put offscreen
+    // document creation on the critical path of every command.
+    await sessionStoreReady;
     switch (message?.type) {
       case 'bridge_command':
         return await handleBridgeCommand(message);
@@ -5758,16 +5242,24 @@ async function initialize(reason = 'initialize') {
   }
 
   initializePromise = (async () => {
-    await chrome.storage.local.set({
-      bridgeDebug: {
-        updatedAt: Date.now(),
-        state: 'initializing',
-        message: `Ensuring Umbra scanner (${reason}).`,
-      },
-    });
+    // The one-minute wake alarm calls this on every tick. Only the alarm itself
+    // and the offscreen document are re-ensured, because resurrecting a dead
+    // offscreen document is the alarm's whole purpose. Re-reading session state
+    // on a tick would replace the live map and discard any tab an in-flight
+    // command just claimed, leaving that tab in Chrome and owned by nobody.
+    if (!bootstrapped) {
+      await chrome.storage.local.set({
+        bridgeDebug: {
+          updatedAt: Date.now(),
+          state: 'initializing',
+          message: `Ensuring Umbra scanner (${reason}).`,
+        },
+      });
+      await ensureInstallId();
+      await sessionStoreReady;
+      bootstrapped = true;
+    }
     await ensureBridgeWakeAlarm();
-    await ensureInstallId();
-    await sessionStore.load();
     await ensureOffscreenDocument();
   })();
 
@@ -5786,8 +5278,19 @@ chrome.alarms?.onAlarm.addListener((alarm) => {
   initialize('alarm').catch((error) => console.error('[bridge] alarm init failed', error));
 });
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   initialize('installed').catch((error) => console.error('[bridge] install init failed', error));
+  if (details?.reason !== 'install') {
+    return;
+  }
+  // A first install lands on a popup asking for a shared key it has never
+  // explained. The options page is where the key gets generated and where the
+  // rest of the setup is written down, so open it once, on install only.
+  try {
+    chrome.runtime.openOptionsPage();
+  } catch (error) {
+    console.error('[bridge] could not open the options page on install', error);
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {

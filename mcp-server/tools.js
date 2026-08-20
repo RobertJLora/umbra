@@ -285,7 +285,7 @@ export const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         tabId: { type: 'number', description: 'Owned tab ID to capture. Defaults to the active owned tab.' },
-        outputPath: { type: 'string', description: 'Optional local filesystem path where the image should be written. jpeg is inferred from .jpg or .jpeg.' },
+        outputPath: { type: 'string', description: 'Optional local filesystem path where the image should be written. Must be absolute, or start with ~ for the home directory of the account running the companion server. A relative path is refused, and so is a path whose parent folder does not already exist. jpeg is inferred from .jpg or .jpeg.' },
         region: {
           type: 'object',
           description: 'Optional CSS-pixel crop region {x,y,width,height} or {x,y,w,h}.'
@@ -317,7 +317,7 @@ export const TOOL_DEFINITIONS = [
           description: 'Content root to read when selector is not supplied. Defaults to page.'
         },
         selector: { type: 'string', description: 'Optional CSS selector to scope the content read.' },
-        maxChars: { type: 'number', description: 'Maximum characters to return from text or HTML content. Defaults to the extension limit.' },
+        maxChars: { type: 'number', description: 'Maximum characters to return from text or HTML content. Defaults to 500000, which is also the hard ceiling: a larger value is clamped down to it. Content longer than the limit is truncated, and the result reports truncated: true with the full originalLength.' },
         includeImages: { type: 'boolean', description: 'When true, include the compact visible rendered-image inventory. Defaults to false for text-only reads.' }
       }
     }
@@ -637,7 +637,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_wait_click_read',
-    description: 'MCP-local recipe: wait for a selector, click selector/ref, then read page content.',
+    description: 'MCP-local recipe: wait for a selector, click selector/ref, then read page content. The result carries an ok flag: when a step fails, ok is false, stopIndex and the last labelled entry in results name the step that stopped the recipe, and the MCP response is marked as an error.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -654,7 +654,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_navigate_wait_read',
-    description: 'MCP-local recipe: navigate, wait for a selector, then read page content.',
+    description: 'MCP-local recipe: navigate, wait for a selector, then read page content. The result carries an ok flag: when a step fails, ok is false, stopIndex and the last labelled entry in results name the step that stopped the recipe, and the MCP response is marked as an error.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -670,7 +670,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_click_wait_selector_read',
-    description: 'MCP-local recipe: click selector/ref, wait for a selector, then read page content.',
+    description: 'MCP-local recipe: click selector/ref, wait for a selector, then read page content. The result carries an ok flag: when a step fails, ok is false, stopIndex and the last labelled entry in results name the step that stopped the recipe, and the MCP response is marked as an error.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -691,7 +691,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        target: { type: 'string', description: 'Domain, URL, or seed keyword to export, such as travelbagexperts.com.' },
+        target: { type: 'string', description: 'Domain, URL, or seed keyword to export, such as example.com.' },
         report: {
           type: 'string',
           enum: ['organic-keywords', 'top-pages', 'refdomains', 'backlinks', 'organic-competitors', 'backlinks-internal', 'linked-anchors-internal', 'keywords-explorer', 'batch-analysis', 'content-gap', 'position-history'],
@@ -729,6 +729,7 @@ export const TOOL_DEFINITIONS = [
           description: 'Content Gap competitor list. Accepts a string or an array. Only the first competitor is applied in the URL.'
         },
         out: { type: 'string', description: 'Optional absolute path to copy the CSV to.' },
+        downloadDir: { type: 'string', description: 'Absolute path to the folder Chrome saves the CSV into, which is where the file is watched for. Defaults to UMBRA_DOWNLOAD_DIR when that variable is set, otherwise the Downloads folder inside the home directory of the account running the companion server. Set this per call when Chrome saves downloads somewhere else. This is where the file lands; out is where it is copied afterwards.' },
         keepTabs: { type: 'boolean', description: 'When true, leave the owned Ahrefs tab open. Defaults to false.' },
         groupTitle: { type: 'string', description: 'Chrome tab group title. Defaults to Ahrefs Export.' },
         navigateTimeoutMs: { type: 'number', description: 'Navigation wait in milliseconds. Defaults to 45000.' },
@@ -755,6 +756,7 @@ export const TOOL_DEFINITIONS = [
         pattern: { type: 'string', description: 'Case-insensitive filename substring to wait for.' },
         extension: { type: 'string', description: 'Optional file extension filter such as .csv.' },
         createdAfterMs: { type: 'number', description: 'Only match files modified after this epoch millisecond timestamp.' },
+        dir: { type: 'string', description: 'Absolute path to the folder to watch for the new file. Defaults to UMBRA_DOWNLOAD_DIR when that variable is set, otherwise the Downloads folder inside the home directory of the account running the companion server. Set this per call when Chrome saves downloads somewhere else.' },
         timeoutMs: { type: 'number', description: 'Maximum wait time in milliseconds. Defaults to 30000.' }
       }
     }
@@ -778,7 +780,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_batch',
-    description: 'Run a bounded sequence of non-batch browser tools within one MCP call and return per-step results.',
+    description: 'Run a bounded sequence of non-batch browser tools within one MCP call and return per-step results. The result carries an ok flag: when a child call fails, ok is false, the failing step is reported in the results array with its own ok false and an error code, stopIndex names it when the batch stops early, and the MCP response is marked as an error. With stopOnError true the remaining calls are skipped; with it false the batch runs to the end and ok is still false.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -831,4 +833,31 @@ export function getToolDefinition(name) {
 
 export function isMcpLocalTool(name) {
   return MCP_LOCAL_TOOL_NAMES.has(name);
+}
+
+// Tools that only work when the local Ahrefs export plugin is installed alongside
+// the server. The published package omits that file, so a build without it must
+// not advertise these tools at all.
+export const AHREFS_PLUGIN_TOOL_NAMES = new Set(['browser_export_ahrefs']);
+
+// Build the advertised tool list for one server build. Pass ahrefs: false when
+// the Ahrefs export plugin is absent, which drops browser_export_ahrefs from the
+// list the MCP client sees. The ahrefs_ values in the browser_run_page_action
+// enum stay in either build: those actions live in the extension, and the
+// extension reports a clear error when its recipe file is not installed.
+export function buildToolDefinitions({ ahrefs = true } = {}) {
+  if (ahrefs) {
+    return TOOL_DEFINITIONS.slice();
+  }
+  return TOOL_DEFINITIONS.filter((tool) => !AHREFS_PLUGIN_TOOL_NAMES.has(tool.name));
+}
+
+// The MCP-local tool names for one server build, matching buildToolDefinitions.
+// A tool that is not advertised can never be dispatched, so dropping its
+// membership here keeps the two lists describing the same surface.
+export function buildMcpLocalToolNames({ ahrefs = true } = {}) {
+  if (ahrefs) {
+    return new Set(MCP_LOCAL_TOOL_NAMES);
+  }
+  return new Set([...MCP_LOCAL_TOOL_NAMES].filter((name) => !AHREFS_PLUGIN_TOOL_NAMES.has(name)));
 }

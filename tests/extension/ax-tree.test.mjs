@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFileSync } from 'node:fs';
 import { describe, it, beforeEach } from 'node:test';
 import '../../extension/ax-tree.js';
 
 const Ax = globalThis.UmbraAxTree;
+const AX_TREE_SOURCE = readFileSync(new URL('../../extension/ax-tree.js', import.meta.url), 'utf8');
 
 function matchesSimple(node, selector) {
   if (!selector || !node?.tagName) {
@@ -200,6 +203,30 @@ class FakeNode {
   }
 }
 
+class CountingNode extends FakeNode {
+  constructor(tag, attrs = {}, children = []) {
+    super(tag, attrs, children);
+    this.rectReads = 0;
+    this.closestCalls = 0;
+    this.innerTextReads = 0;
+  }
+
+  get innerText() {
+    this.innerTextReads += 1;
+    return super.innerText;
+  }
+
+  getBoundingClientRect() {
+    this.rectReads += 1;
+    return super.getBoundingClientRect();
+  }
+
+  closest(selector) {
+    this.closestCalls += 1;
+    return super.closest(selector);
+  }
+}
+
 function createPage(children) {
   const body = new FakeNode('body', {}, children);
   const document = new FakeNode('html', {}, [body]);
@@ -364,5 +391,101 @@ describe('AX tree helpers', () => {
 
     const missing = Ax.applyFormInput(select, { value: 'France' });
     assert.match(missing.__error, /No matching select option/);
+  });
+
+  it('leaves no text field on walked nodes', () => {
+    const { document, body } = createPage([
+      new FakeNode('nav', { 'aria-label': 'Primary' }, [new FakeNode('a', { href: '/' }, ['Home'])]),
+      new FakeNode('main', {}, [
+        new FakeNode('h1', {}, ['Keyword report']),
+        new FakeNode('button', {}, ['Export CSV']),
+      ]),
+    ]);
+
+    const walked = Ax.walkAxTree(body, { filter: 'all', maxNodes: 50 }, { document, refStore: Ax.createRefStore(), domVersion: 1 });
+
+    assert.ok(walked.nodes.length > 0);
+    for (const node of walked.nodes) {
+      assert.equal(Object.prototype.hasOwnProperty.call(node, 'text'), false);
+    }
+  });
+
+  it('resolves label[for] names from one document sweep per walk', () => {
+    const input = new FakeNode('input', { id: 'q', type: 'text' });
+    const { document, body } = createPage([
+      new FakeNode('label', { for: 'q' }, ['Search keywords']),
+      input,
+    ]);
+
+    let labelSweeps = 0;
+    const originalAll = document.querySelectorAll.bind(document);
+    document.querySelectorAll = (selector) => {
+      if (selector === 'label[for]') {
+        labelSweeps += 1;
+      }
+      return originalAll(selector);
+    };
+    document.querySelector = () => {
+      throw new Error('per-element label lookup should not run during a walk');
+    };
+
+    const walked = Ax.walkAxTree(body, { filter: 'all', maxNodes: 50 }, { document, refStore: Ax.createRefStore(), domVersion: 1 });
+    const field = walked.nodes.find((node) => node.tag === 'input');
+
+    assert.equal(field.name, 'Search keywords');
+    assert.equal(labelSweeps, 1);
+  });
+
+  it('skips value, checked, disabled, rect, and name work on excluded nodes', () => {
+    const wrapper = new CountingNode('div', {}, []);
+    const button = new CountingNode('button', {}, ['Export CSV']);
+    const { document, body } = createPage([wrapper, button]);
+
+    const walked = Ax.walkAxTree(body, { filter: 'interactive', maxNodes: 50 }, { document, refStore: Ax.createRefStore(), domVersion: 1 });
+
+    assert.deepEqual(walked.nodes.map((node) => node.name), ['Export CSV']);
+    assert.equal(wrapper.rectReads, 0);
+    assert.equal(wrapper.closestCalls, 0);
+    assert.equal(wrapper.innerTextReads, 0);
+    assert.equal(button.rectReads, 1);
+  });
+});
+
+describe('AX tree injection guard', () => {
+  it('keeps the shared ref store when the same version is injected twice', () => {
+    const context = vm.createContext({});
+    vm.runInContext(AX_TREE_SOURCE, context);
+
+    const first = context.UmbraAxTree;
+    assert.equal(typeof first.version, 'string');
+    const store = first.getSharedRefStore();
+    const button = new FakeNode('button', {}, ['Export CSV']);
+    const ref = first.assignElementRef(store, button, 7);
+    assert.equal(store.domVersion, 7);
+
+    vm.runInContext(AX_TREE_SOURCE, context);
+
+    const second = context.UmbraAxTree;
+    assert.equal(second, first);
+    assert.equal(second.getSharedRefStore(), store);
+    assert.equal(store.domVersion, 7);
+
+    const resolved = second.resolveElementRef(second.getSharedRefStore(), ref, 7);
+    assert.equal(resolved.__error, undefined);
+    assert.equal(resolved.element, button);
+  });
+
+  it('replaces the helpers when the injected version differs', () => {
+    const context = vm.createContext({});
+    vm.runInContext(AX_TREE_SOURCE, context);
+    const first = context.UmbraAxTree;
+
+    const bumped = AX_TREE_SOURCE.replace(/const AX_TREE_VERSION = '[^']*';/, "const AX_TREE_VERSION = '99.0.0';");
+    assert.notEqual(bumped, AX_TREE_SOURCE);
+    vm.runInContext(bumped, context);
+
+    assert.notEqual(context.UmbraAxTree, first);
+    assert.equal(context.UmbraAxTree.version, '99.0.0');
+    assert.notEqual(context.UmbraAxTree.getSharedRefStore(), first.getSharedRefStore());
   });
 });

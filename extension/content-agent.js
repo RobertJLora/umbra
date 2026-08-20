@@ -1,10 +1,17 @@
 (() => {
-  const AGENT_KEY = '__codexChromeBridgeContentAgent';
-  const CONSOLE_STORE_KEY = '__codexChromeBridgeConsole';
+  const AGENT_KEY = '__umbraContentAgent';
+  const CONSOLE_STORE_KEY = '__umbraConsole';
   const VERSION = '0.1.0';
   const DOM_VERSION_THROTTLE_MS = 250;
   const IDLE_DISCONNECT_MS = 45_000;
   const CONSOLE_CAP = 200;
+  // Ceiling for a caller-supplied maxChars, and the value used when a caller
+  // supplies none. Zero used to mean unbounded, which let one runaway page
+  // buffer a single unbounded line in the broker. Keep this number in step
+  // with readPageContent in extension/background.js and with the maxChars
+  // description in mcp-server/tools.js.
+  const MAX_CHARS_LIMIT = 500_000;
+  const DEFAULT_MAX_CHARS = 500_000;
 
   const existing = globalThis[AGENT_KEY];
   if (existing?.connected && existing?.announce) {
@@ -223,8 +230,8 @@
     const includeImages = config.includeImages === true;
     const rawMaxChars = Number(config.maxChars);
     const maxChars = Number.isFinite(rawMaxChars) && rawMaxChars > 0
-      ? Math.min(Math.floor(rawMaxChars), 500_000)
-      : 0;
+      ? Math.min(Math.floor(rawMaxChars), MAX_CHARS_LIMIT)
+      : DEFAULT_MAX_CHARS;
 
     const resolveRoot = () => {
       if (selector) {
@@ -252,10 +259,9 @@
       format,
       mode,
       selector,
-      maxChars: maxChars || null,
+      maxChars,
       includeImages,
       renderedImages,
-      renderedImageSummary,
       contentAgent: {
         used: true,
         version: VERSION,
@@ -268,25 +274,30 @@
       const html = truncate(rawHtml, maxChars);
       return {
         ...base,
+        // The html branch never folds the image summary into content, so this
+        // is the only copy of it and it is emitted only when there is one.
+        ...(renderedImageSummary ? { renderedImageSummary } : {}),
         truncated: html.truncated,
         originalContentLength: html.originalLength,
         contentLength: html.value.length,
-        html: html.value,
         content: html.value,
       };
     }
 
     const rawBodyText = root.innerText || root.textContent || '';
+    // content is body text plus the rendered-image summary when one exists.
+    // With no summary the two strings are identical, which is every read at
+    // the default includeImages: false, so bodyText is emitted only when it
+    // genuinely differs from content instead of doubling the payload.
     const rawContent = renderedImageSummary ? `${rawBodyText}\n\n${renderedImageSummary}` : rawBodyText;
-    const bodyText = truncate(rawBodyText, maxChars);
     const content = truncate(rawContent, maxChars);
+    const bodyText = rawContent === rawBodyText ? null : truncate(rawBodyText, maxChars);
     return {
       ...base,
       truncated: content.truncated,
       originalContentLength: content.originalLength,
       contentLength: content.value.length,
-      bodyText: bodyText.value,
-      bodyTextTruncated: bodyText.truncated,
+      ...(bodyText ? { bodyText: bodyText.value, bodyTextTruncated: bodyText.truncated } : {}),
       content: content.value,
     };
   }
@@ -446,7 +457,12 @@
       if (!resolved.__error) {
         return { element: resolved.element, control: null, snapshot: null };
       }
-      if (resolved.code === 'stale_interactive_ref' || !/^cic:\d+:\d+$/.test(String(ref || '').trim())) {
+      // Return the shared-store error only when the ref is not the cic:N:M
+      // shape the index fallback below can parse. A stale_interactive_ref used
+      // to short-circuit here, which made the index fallback unreachable for
+      // the one error code both ref-loss paths produce. The fallback re-checks
+      // domVersion itself, so a genuinely stale ref still fails there.
+      if (!/^cic:\d+:\d+$/.test(String(ref || '').trim())) {
         return resolved;
       }
     }
@@ -875,6 +891,13 @@
     });
   }
 
+  // The content agent never compiles caller-supplied code. Every browser_javascript
+  // call is routed to the page world by extension/background.js, which runs the code
+  // through the Chrome DevTools Protocol Runtime.evaluate. The `code` argument is kept
+  // in the signature so the execute_javascript command shape stays stable, and it is
+  // deliberately never evaluated here. The dynamic-function constructor this branch
+  // used to reach for was unreachable in practice and is a catalogued eval-evasion
+  // pattern that Chrome Web Store scanners flag on presence.
   async function executeJavascript(code, options = {}) {
     if (options.pageWorld === true) {
       return {
@@ -886,71 +909,15 @@
         },
       };
     }
-    const timeoutMs = Math.max(100, Math.min(Number(options.timeoutMs) || 10_000, 120_000));
-    const jsonSafe = (value, depth = 0, seen = new WeakSet()) => {
-      if (value === null || value === undefined) {
-        return value ?? null;
-      }
-      const type = typeof value;
-      if (type === 'string') {
-        return value.length > 200_000 ? value.slice(0, 200_000) : value;
-      }
-      if (type === 'number') {
-        return Number.isFinite(value) ? value : String(value);
-      }
-      if (type === 'boolean') {
-        return value;
-      }
-      if (type === 'bigint' || type === 'function' || type === 'symbol') {
-        return String(value);
-      }
-      if (depth >= 8) {
-        return '[MaxDepth]';
-      }
-      if (typeof value === 'object') {
-        if (seen.has(value)) {
-          return '[Circular]';
-        }
-        seen.add(value);
-        if (value instanceof Element) {
-          return {
-            tagName: value.tagName.toLowerCase(),
-            id: value.id || '',
-            text: String(value.innerText || value.textContent || '').trim().slice(0, 500),
-          };
-        }
-        if (Array.isArray(value)) {
-          return value.slice(0, 200).map((item) => jsonSafe(item, depth + 1, seen));
-        }
-        const output = {};
-        for (const [key, item] of Object.entries(value).slice(0, 200)) {
-          output[key] = jsonSafe(item, depth + 1, seen);
-        }
-        return output;
-      }
-      return String(value);
+    return {
+      __error: 'The content agent does not run caller-supplied JavaScript. Send pageWorld: true so the page-world debugger path handles it.',
+      code: 'page_world_required',
+      contentAgent: {
+        used: true,
+        version: VERSION,
+        domVersion: state.domVersion,
+      },
     };
-    let timer;
-    try {
-      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-      const result = await Promise.race([
-        new AsyncFunction(String(code || ''))(),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`JavaScript timed out after ${timeoutMs}ms`)), timeoutMs);
-        }),
-      ]);
-      return {
-        ok: true,
-        value: jsonSafe(result),
-        contentAgent: {
-          used: true,
-          version: VERSION,
-          domVersion: state.domVersion,
-        },
-      };
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   function resolveAxRoot(selector) {

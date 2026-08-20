@@ -8,6 +8,7 @@ import {
   AHREFS_REPORTS,
   ahrefsDownloadNeedle,
   encodeBatchAnalysisTargets,
+  isAvailable,
   isChartKebabCsv,
   makeAhrefsReportUrl,
   pageActionResult,
@@ -204,6 +205,41 @@ describe('Umbra Ahrefs export contract', () => {
       { pasted: false, reason: 'textarea_not_found' },
     );
     assert.deepEqual(pageActionResult({ result: null }), { result: null });
+  });
+
+  it('parses CSV in Node, with quoting, on any machine', () => {
+    const runner = fs.readFileSync(path.join(repoRoot, 'mcp-server', 'ahrefs-export.js'), 'utf8');
+    assert.doesNotMatch(runner, /spawnSync/);
+    assert.doesNotMatch(runner, /opt\/homebrew/);
+    assert.doesNotMatch(runner, /python/i);
+    assert.doesNotMatch(runner, /\/Users\//);
+
+    const multiline = parseDelimitedTable(
+      path.join(repoRoot, 'tests', 'fixtures', 'quoted-multiline-sample.csv'),
+    );
+    assert.equal(multiline.rowCount, 2, 'a quoted embedded newline is one record, not two');
+    assert.deepEqual(multiline.columns, ['Keyword', 'Volume, monthly', 'SF']);
+    assert.equal(multiline.columns.length, 3, 'a quoted comma in a header is one column');
+
+    const trailing = parseDelimitedTable(
+      path.join(repoRoot, 'tests', 'fixtures', 'trailing-blank-line-sample.csv'),
+    );
+    assert.equal(trailing.rowCount, 1, 'a trailing blank line is not a row');
+    assert.deepEqual(trailing.columns, ['Keyword', 'Volume'], 'tab delimiter detected');
+  });
+
+  it('returns the file location even when the parse rejects the file', () => {
+    const runner = fs.readFileSync(path.join(repoRoot, 'mcp-server', 'ahrefs-export.js'), 'utf8');
+    const parseAt = runner.indexOf('const parsed = parseDelimitedTable(destPath);');
+    assert.ok(parseAt > 0);
+    assert.ok(runner.indexOf('result.destPath = destPath;') < parseAt);
+    assert.ok(runner.indexOf('result.sourceDownloadPath = sourcePath;') < parseAt);
+    assert.match(runner, /resolveDownloadDir/);
+    assert.doesNotMatch(runner, /UMBRA_DOWNLOAD_DIR \|\|/);
+
+    const availability = isAvailable();
+    assert.equal(typeof availability.ok, 'boolean');
+    assert.equal(typeof availability.reason, 'string');
   });
 
   it('rejects a chart kebab CSV that has Date and no Keyword', () => {

@@ -1,5 +1,4 @@
 use umbra_rust_broker::{BrokerConfig, PressureCounters, RustBroker};
-use serde_json::json;
 
 #[test]
 fn pressure_counters_track_requests_and_saturate_on_end() {
@@ -52,24 +51,15 @@ async fn broker_health_reports_sessions_and_pressure() {
         .await
         .expect("tab should be owned by session");
 
-    let command = broker
-        .route_tab_command(
-            "sess_a",
-            101,
-            "browser_get_page_content",
-            json!({ "tabId": 101 }),
-        )
+    let target = broker
+        .route_tab_command("sess_a", 101)
         .await
         .expect("owned tab command should route");
-    assert_eq!(command.target.channel_id, "chan_a");
+    assert_eq!(target.channel_id, "chan_a");
+    assert_eq!(target.tab_id, Some(101));
 
     let rejected = broker
-        .route_tab_command(
-            "sess_a",
-            202,
-            "browser_get_page_content",
-            json!({ "tabId": 202 }),
-        )
+        .route_tab_command("sess_a", 202)
         .await
         .expect_err("unowned tab should reject");
     assert!(rejected.to_string().contains("not owned"));

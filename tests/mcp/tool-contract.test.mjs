@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -172,20 +173,25 @@ describe('CiC MCP tool contract', () => {
     assert.equal(schema.properties.fullPage.type, 'boolean');
     assert.deepEqual(schema.properties.format.enum, ['png', 'jpeg']);
 
-    const outputPath = path.join(repoRoot, 'reports', 'test-screenshot-output.png');
-    fs.rmSync(outputPath, { force: true });
-    const response = buildMcpResponse('browser_screenshot', {
-      tabId: 123,
-      activated: true,
-      mimeType: 'image/png',
-      data: Buffer.from('png-bytes').toString('base64'),
-    }, { outputPath });
+    // Write into a temporary directory the test creates itself: an absolute path
+    // whose parent already exists, which is what the server accepts.
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'umbra-tool-contract-'));
+    const outputPath = path.join(outputDir, 'test-screenshot-output.png');
+    try {
+      const response = buildMcpResponse('browser_screenshot', {
+        tabId: 123,
+        activated: true,
+        mimeType: 'image/png',
+        data: Buffer.from('png-bytes').toString('base64'),
+      }, { outputPath });
 
-    assert.equal(response.structuredContent.outputPath, outputPath);
-    assert.equal(response.structuredContent.bytes, 9);
-    assert.equal(response.content[0].type, 'text');
-    assert.equal(fs.readFileSync(outputPath, 'utf8'), 'png-bytes');
-    fs.rmSync(outputPath, { force: true });
+      assert.equal(response.structuredContent.outputPath, outputPath);
+      assert.equal(response.structuredContent.bytes, 9);
+      assert.equal(response.content[0].type, 'text');
+      assert.equal(fs.readFileSync(outputPath, 'utf8'), 'png-bytes');
+    } finally {
+      fs.rmSync(outputDir, { recursive: true, force: true });
+    }
   });
 
   it('keeps group colors constrained to Chrome-supported values', () => {

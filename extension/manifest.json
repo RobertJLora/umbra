@@ -2,7 +2,8 @@
   "manifest_version": 3,
   "name": "Umbra",
   "version": "0.4.7",
-  "description": "Drive signed-in Chrome from the shadow. Ahrefs exports, owned tabs, no focus theft.",
+  "description": "Give a local agent scripted control of tabs it owns in your signed-in Chrome. No focus theft. Requires a local companion server.",
+  "homepage_url": "https://github.com/umbra-bridge/umbra",
   "permissions": [
     "storage",
     "tabs",
@@ -13,10 +14,8 @@
     "alarms",
     "debugger"
   ],
-  "host_permissions": [
-    "<all_urls>",
-    "http://127.0.0.1/*",
-    "http://localhost/*"
+  "optional_host_permissions": [
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js",

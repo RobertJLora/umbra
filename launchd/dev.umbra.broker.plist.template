@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template for the optional launchd job that keeps the Umbra Rust broker running.
+
+  Render it by replacing every occurrence of __HOME__ with the running user's
+  home directory, then write the result to
+  ~/Library/LaunchAgents/dev.umbra.broker.plist. The filename has to match the
+  Label below, because `launchctl bootstrap gui/$UID` resolves the job by the
+  Label it finds inside the file and a mismatched name makes the job hard to
+  target later.
+
+  Create __HOME__/.umbra/logs before bootstrapping. launchd refuses to start a
+  job whose StandardOutPath or StandardErrorPath directory does not exist, and
+  it reports that as a generic spawn failure rather than a missing directory.
+
+  Also confirm __HOME__/.umbra/bin/umbra-rust-broker exists and is executable.
+  Build it with `cargo build --release --manifest-path rust-broker/Cargo.toml`
+  and copy rust-broker/target/release/umbra-rust-broker to that path. Point
+  ProgramArguments straight at the build output instead if you would rather not
+  keep a copy, and set UMBRA_BROKER_BIN to the same path so
+  mcp-server/ensure-rust-broker.mjs looks in the same place.
+
+  Bootstrap:  launchctl bootstrap gui/$UID ~/Library/LaunchAgents/dev.umbra.broker.plist
+  Stop:       launchctl bootout gui/$UID/dev.umbra.broker
+
+  The Label matches resolveLaunchdLabel() in mcp-server/config.js and the socket
+  path matches resolveBrokerSocketPath(). Change either one here and set the
+  matching UMBRA_BROKER_LAUNCHD_LABEL or UMBRA_BROKER_SOCKET variable for the
+  companion server too, or the server will look for a broker that is not there.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.umbra.broker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.umbra/bin/umbra-rust-broker</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__HOME__/.umbra</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>UMBRA_SHARED_KEY_FILE</key>
+    <string>__HOME__/.umbra/shared-key</string>
+    <key>UMBRA_BROKER_SOCKET</key>
+    <string>__HOME__/.umbra/run/broker.sock</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/.umbra/logs/broker.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.umbra/logs/broker.err.log</string>
+</dict>
+</plist>

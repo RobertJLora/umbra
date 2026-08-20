@@ -10,7 +10,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 #[tokio::test]
 #[ignore = "binds loopback TCP and Unix sockets; run explicitly for live broker parity"]
-async fn runtime_routes_shim_commands_through_one_extension_socket_and_denies_cross_session_tabs() {
+async fn runtime_routes_shim_commands_and_survives_a_replacement_extension_socket() {
     let shared_key = "runtime-test-key";
     let socket_path = format!(
         "/tmp/umbra-runtime-test-{}-{}.sock",
@@ -68,8 +68,7 @@ async fn runtime_routes_shim_commands_through_one_extension_socket_and_denies_cr
     });
     let command_result = tokio::spawn(async move { send_shim(&mut shim, command).await });
 
-    let routed = read_ws_json(&mut extension).await;
-    assert_eq!(routed["type"], "command");
+    let routed = read_ws_json_of_type(&mut extension, "command").await;
     assert_eq!(routed["sessionId"], "sess_a");
     assert_eq!(routed["tool"], "browser_create_tab");
     let request_id = routed["id"].as_str().unwrap();
@@ -140,24 +139,114 @@ async fn runtime_routes_shim_commands_through_one_extension_socket_and_denies_cr
     assert_eq!(impersonated_disconnect["ok"], false);
     assert_eq!(impersonated_disconnect["error"]["code"], "session_mismatch");
 
-    let denied = send_shim(
-        &mut shim_b,
+    // Tab ownership is enforced in the extension, which holds the authoritative
+    // map in chrome.storage.session, so a command naming another session's tab
+    // is forwarded and refused there. The broker's own tab map is in-memory only
+    // and empty after a restart, so refusing on it rejected commands for tabs the
+    // extension still owned.
+    let cross_session_command = json!({
+        "type": "command",
+        "id": "cmd_cross",
+        "session_id": "sess_b",
+        "tool": "browser_get_page_content",
+        "params": { "tabId": 44 }
+    });
+    let cross_session_result =
+        tokio::spawn(async move { send_shim(&mut shim_b, cross_session_command).await });
+
+    let forwarded = read_ws_json_of_type(&mut extension, "command").await;
+    assert_eq!(forwarded["sessionId"], "sess_b");
+    assert_eq!(forwarded["tool"], "browser_get_page_content");
+    assert_eq!(forwarded["params"]["tabId"], 44);
+    let forwarded_id = forwarded["id"].as_str().unwrap();
+    extension
+        .send(Message::Text(
+            json!({
+                "type": "error",
+                "id": forwarded_id,
+                "error": {
+                    "code": "tab_not_owned",
+                    "message": "Tab 44 is not owned by this session."
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let denied = cross_session_result.await.unwrap();
+    assert_eq!(denied["ok"], false);
+    assert!(denied["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("not owned by this session"));
+
+    // The keepalive the offscreen document depends on. Browser JavaScript cannot
+    // send a protocol ping, so a dead-but-OPEN socket is only detectable through
+    // this application-level exchange.
+    extension
+        .send(Message::Text(
+            json!({ "type": "ping" }).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let pong = read_ws_json_of_type(&mut extension, "pong").await;
+    assert_eq!(pong["type"], "pong");
+
+    // A second Chrome profile pasted with the same key binds a replacement
+    // socket. The displaced socket's teardown must not clear the live handle:
+    // before the generation guard it did, and every session on the machine then
+    // failed with "extension is not connected" until a human clicked Reconnect.
+    let mut replacement_extension = connect_extension(shared_key, port as u16).await;
+    time::sleep(Duration::from_millis(200)).await;
+    let health_after_replacement = send_shim(
+        &mut health_shim,
+        json!({ "type": "health", "id": "health_after_replacement" }),
+    )
+    .await;
+    assert_eq!(
+        health_after_replacement["result"]["extension_connected"], true,
+        "the displaced socket's exit must leave the replacement registered"
+    );
+
+    let mut shim_c = connect_shim(&socket_path, &broker_task).await;
+    let _ = send_shim(
+        &mut shim_c,
         json!({
-            "type": "command",
-            "id": "cmd_cross",
-            "session_id": "sess_b",
-            "tool": "browser_get_page_content",
-            "params": { "tabId": 44 }
+            "type": "register_session",
+            "id": "register_c",
+            "session_id": "sess_c"
         }),
     )
     .await;
-    assert_eq!(denied["ok"], false);
-    let denial_message = denied["error"]["message"].as_str().unwrap();
-    assert!(denial_message.contains("tab 44"));
-    assert!(
-        denial_message.contains("already owned by session sess_a")
-            || denial_message.contains("not owned by session sess_b")
-    );
+    let post_replacement_command = json!({
+        "type": "command",
+        "id": "cmd_after_replacement",
+        "session_id": "sess_c",
+        "tool": "browser_create_tab",
+        "params": { "url": "https://example.org", "activate": false }
+    });
+    let post_replacement_result =
+        tokio::spawn(async move { send_shim(&mut shim_c, post_replacement_command).await });
+    let routed_to_replacement =
+        read_ws_json_of_type(&mut replacement_extension, "command").await;
+    assert_eq!(routed_to_replacement["sessionId"], "sess_c");
+    let replacement_request_id = routed_to_replacement["id"].as_str().unwrap();
+    replacement_extension
+        .send(Message::Text(
+            json!({
+                "type": "result",
+                "id": replacement_request_id,
+                "result": { "tabId": 77, "url": "https://example.org" }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let created_after_replacement = post_replacement_result.await.unwrap();
+    assert_eq!(created_after_replacement["ok"], true);
+    assert_eq!(created_after_replacement["result"]["tabId"], 77);
 
     broker_task.abort();
     let _ = tokio::fs::remove_file(socket_path).await;
@@ -241,6 +330,26 @@ where
         panic!("expected text websocket message");
     };
     serde_json::from_str(&text).unwrap()
+}
+
+/// Read the next frame of a given type, skipping the broker's unsolicited
+/// notifications. A shim socket closing sends `session_disconnected` down the
+/// extension channel at a moment the test does not control, so a bare read can
+/// pick that up instead of the frame under assertion.
+async fn read_ws_json_of_type<S>(
+    websocket: &mut tokio_tungstenite::WebSocketStream<S>,
+    expected_type: &str,
+) -> Value
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    for _ in 0..10 {
+        let message = read_ws_json(websocket).await;
+        if message["type"] == expected_type {
+            return message;
+        }
+    }
+    panic!("no {expected_type} frame arrived on the extension socket");
 }
 
 fn now_ms() -> i64 {

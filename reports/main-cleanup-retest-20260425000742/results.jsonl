@@ -1,2 +1,0 @@
-{"runId":"20260424220742","timestamp":"2026-04-24T22:07:42.946Z","suite":"cleanup","task":"listeners-and-stdio-shutdown","status":"pass","portsBefore":[47821],"portsAfter":[47821],"elapsedMs":175,"note":"Stdio probe exited=true; 47821 is allowed if it is the registered MCP listener.","failureText":""}
-{"runId":"20260424220742","timestamp":"2026-04-24T22:07:42.947Z","suite":"cleanup","task":"suite-complete","status":"pass","elapsedMs":305}

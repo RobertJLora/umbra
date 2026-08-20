@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
 import { resolveBrokerRequestTimeoutMs, RustBrokerClient } from '../../mcp-server/rust-broker-client.js';
+
+const CLIENT_SOURCE_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'mcp-server',
+  'rust-broker-client.js',
+);
+const CLIENT_SOURCE = fs.readFileSync(CLIENT_SOURCE_PATH, 'utf8');
 
 function createFakeBrokerSocket(handler) {
   class FakeSocket extends EventEmitter {
@@ -50,6 +62,25 @@ function createFakeBrokerSocket(handler) {
   }
 
   return new FakeSocket();
+}
+
+function createOfflineClient(overrides = {}) {
+  return new RustBrokerClient({
+    sessionId: 'sess_offline',
+    socketFactory: async () => createFakeBrokerSocket(() => null),
+    ...overrides,
+  });
+}
+
+function capturePending(client, id) {
+  const settled = { resolved: [], rejected: [] };
+  client.pending.set(id, {
+    type: 'command',
+    timer: setTimeout(() => {}, 60_000),
+    resolve: (value) => settled.resolved.push(value),
+    reject: (error) => settled.rejected.push(error),
+  });
+  return settled;
 }
 
 describe('resolveBrokerRequestTimeoutMs', () => {
@@ -194,6 +225,190 @@ describe('RustBrokerClient', () => {
       assert.equal(result.tabId, 99);
       assert.equal(seen.filter((request) => request.type === 'register_session').length, 2);
       assert.equal(seen.filter((request) => request.type === 'command').length, 2);
+    });
+  });
+});
+
+describe('RustBrokerClient framing', () => {
+  it('accepts a Buffer chunk and settles the pending request', () => {
+    const client = createOfflineClient();
+    const settled = capturePending(client, 'buffered_1');
+
+    client.handleData(Buffer.from('{"id":"buffered_1","ok":true,"result":{"tabId":41}}\n', 'utf8'));
+
+    assert.equal(settled.rejected.length, 0);
+    assert.deepEqual(settled.resolved, [{ tabId: 41 }]);
+  });
+
+  it('still accepts a string chunk, which is what the fake socket emits', () => {
+    const client = createOfflineClient();
+    const settled = capturePending(client, 'string_1');
+
+    client.handleData('{"id":"string_1","ok":true,"result":{"tabId":42}}\n');
+
+    assert.deepEqual(settled.resolved, [{ tabId: 42 }]);
+  });
+
+  it('frames several lines out of one chunk and holds a partial line back', () => {
+    const client = createOfflineClient();
+    const first = capturePending(client, 'multi_1');
+    const second = capturePending(client, 'multi_2');
+    const third = capturePending(client, 'multi_3');
+
+    client.handleData(Buffer.from(
+      '{"id":"multi_1","ok":true,"result":1}\n{"id":"multi_2","ok":true,"result":2}\n{"id":"multi_3",',
+      'utf8',
+    ));
+
+    assert.deepEqual(first.resolved, [1]);
+    assert.deepEqual(second.resolved, [2]);
+    assert.deepEqual(third.resolved, []);
+
+    client.handleData(Buffer.from('"ok":true,"result":3}\n', 'utf8'));
+    assert.deepEqual(third.resolved, [3]);
+    assert.equal(client.chunks.length, 0);
+  });
+
+  it('decodes a multi-byte character split across two chunks', () => {
+    const client = createOfflineClient();
+    const settled = capturePending(client, 'utf8_1');
+    const line = Buffer.from('{"id":"utf8_1","ok":true,"result":{"text":"café ok"}}\n', 'utf8');
+    const splitAt = line.indexOf(Buffer.from('é', 'utf8')) + 1;
+
+    client.handleData(line.subarray(0, splitAt));
+    client.handleData(line.subarray(splitAt));
+
+    assert.deepEqual(settled.resolved, [{ text: 'café ok' }]);
+  });
+
+  it('parses a 5 MB single-line response in under 20 ms', () => {
+    const client = createOfflineClient();
+    const settled = capturePending(client, 'big_1');
+    const line = Buffer.from(
+      `${JSON.stringify({ id: 'big_1', ok: true, result: { data: 'a'.repeat(5 * 1024 * 1024) } })}\n`,
+      'utf8',
+    );
+    const chunks = [];
+    for (let offset = 0; offset < line.length; offset += 8192) {
+      chunks.push(line.subarray(offset, offset + 8192));
+    }
+    assert.ok(chunks.length > 600, `expected a chunked payload, saw ${chunks.length} chunks`);
+
+    const startedAt = process.hrtime.bigint();
+    for (const chunk of chunks) {
+      client.handleData(chunk);
+    }
+    const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+
+    assert.equal(settled.resolved.length, 1);
+    assert.equal(settled.resolved[0].data.length, 5 * 1024 * 1024);
+    assert.ok(elapsedMs < 20, `framing a 5 MB line took ${elapsedMs.toFixed(1)}ms`);
+  });
+});
+
+describe('RustBrokerClient broker startup', () => {
+  it('starts the broker through an awaited child process, never spawnSync', () => {
+    assert.doesNotMatch(CLIENT_SOURCE, /spawnSync/);
+    assert.match(CLIENT_SOURCE, /import \{ spawn \} from 'node:child_process'/);
+    assert.match(CLIENT_SOURCE, /child\.once\('exit'/);
+  });
+
+  it('shares one deadline across connect attempts and never ensures after the last one', () => {
+    assert.match(CLIENT_SOURCE, /const deadlineAt = Date\.now\(\) \+ this\.connectDeadlineMs;/);
+    assert.match(CLIENT_SOURCE, /attempt === MAX_CONNECT_ATTEMPTS - 1/);
+  });
+
+  it('resolves its socket and download directory from config.js, with no author paths', () => {
+    assert.match(CLIENT_SOURCE, /from '\.\/config\.js'/);
+    assert.doesNotMatch(CLIENT_SOURCE, /\/Users\//);
+    assert.doesNotMatch(CLIENT_SOURCE, /\/tmp\/umbra/);
+    const client = createOfflineClient();
+    assert.ok(client.socketPath.length > 0);
+    assert.doesNotMatch(client.socketPath, /^\/tmp\//);
+  });
+});
+
+describe('RustBrokerClient batch budgets', () => {
+  it('gives every composite child its own slice, strictly below the batch budget', async () => {
+    const commands = [];
+    await withFakeBroker((request) => {
+      if (request.type === 'register_session') {
+        return { type: 'response', id: request.id, ok: true, result: {} };
+      }
+      if (request.type === 'command') {
+        commands.push(request);
+        return { type: 'response', id: request.id, ok: true, result: { tabId: 7 } };
+      }
+      return { type: 'response', id: request.id, ok: true, result: {} };
+    }, async (socketFactory) => {
+      const client = new RustBrokerClient({
+        sessionId: 'sess_composite',
+        socketFactory,
+        requestTimeoutMs: 500,
+      });
+      await client.start();
+      const result = await client.sendCommand('browser_navigate_wait_read', {
+        url: 'https://example.com',
+        waitSelector: 'main',
+        timeoutMs: 15_000,
+      });
+      await client.stop();
+
+      assert.equal(result.ok, true);
+      const navigate = commands.find((command) => command.tool === 'browser_navigate');
+      const wait = commands.find((command) => command.tool === 'browser_wait');
+      const read = commands.find((command) => command.tool === 'browser_get_page_content');
+
+      assert.ok(navigate.params.timeoutMs > 0, 'the navigate child must carry an explicit budget');
+      assert.ok(
+        navigate.params.timeoutMs < 15_000,
+        `navigate budget ${navigate.params.timeoutMs} must stay below the 15000ms composite budget`,
+      );
+      assert.ok(wait.params.timeoutMs > 0 && wait.params.timeoutMs < 15_000);
+      assert.notEqual(navigate.params.timeoutMs, wait.params.timeoutMs);
+      // browser_get_page_content declares no timeoutMs, so the budget stays on
+      // the transport instead of being invented as a schema parameter.
+      assert.equal(read.params.timeoutMs, undefined);
+    });
+  });
+
+  it('fills an absent child timeout and clamps a child that asks for more than the batch has', async () => {
+    const commands = [];
+    await withFakeBroker((request) => {
+      if (request.type === 'register_session') {
+        return { type: 'response', id: request.id, ok: true, result: {} };
+      }
+      if (request.type === 'command') {
+        commands.push(request);
+        return { type: 'response', id: request.id, ok: true, result: { ok: true } };
+      }
+      return { type: 'response', id: request.id, ok: true, result: {} };
+    }, async (socketFactory) => {
+      const client = new RustBrokerClient({
+        sessionId: 'sess_budget',
+        socketFactory,
+        requestTimeoutMs: 60_000,
+      });
+      await client.start();
+      const result = await client.sendCommand('browser_batch', {
+        timeoutMs: 5_000,
+        calls: [
+          { tool: 'browser_wait', label: 'greedy', params: { selector: 'main', timeoutMs: 90_000 } },
+          { tool: 'browser_wait', label: 'silent', params: { selector: 'footer' } },
+        ],
+      });
+      await client.stop();
+
+      assert.equal(result.ok, true);
+      const [greedy, silent] = commands;
+      assert.ok(
+        greedy.params.timeoutMs <= 5_000 && greedy.params.timeoutMs > 0,
+        `a 90000ms child inside a 5000ms batch was left at ${greedy.params.timeoutMs}`,
+      );
+      assert.ok(
+        silent.params.timeoutMs > 0 && silent.params.timeoutMs <= 5_000,
+        'a child that omits timeoutMs is filled from the remaining budget',
+      );
     });
   });
 });

@@ -75,7 +75,8 @@ describe('extension bridge lifecycle', () => {
     assert.match(background, /TAB_COMPLETE_POLL_INTERVAL_MS = 750/);
     assert.match(background, /const poll = setInterval/);
     assert.match(background, /safeGetTab\(tabId\)/);
-    assert.match(background, /tabUrlMatchesExpected\(tab\.url, expectedUrl\)/);
+    assert.match(background, /tabUrlMatchesExpected\(url, expectedUrl\) \|\| url !== preNavUrl/);
+    assert.match(background, /arrived\(tab\.url \|\| ''\)/);
     assert.match(background, /clearInterval\(poll\)/);
   });
 

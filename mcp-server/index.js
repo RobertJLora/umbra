@@ -1,18 +1,22 @@
 import process from 'node:process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Server } from './node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js';
-import { StdioServerTransport } from './node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-} from './node_modules/@modelcontextprotocol/sdk/dist/esm/types.js';
+} from '@modelcontextprotocol/sdk/types.js';
 import { createSessionId } from './auth.js';
 import { LocalBridgeServer, parseEnvNumber } from './bridge-core.js';
 import { RustBrokerClient } from './rust-broker-client.js';
-import { TOOL_DEFINITIONS, getToolDefinition } from './tools.js';
+import { resolveSharedKeyPath } from './config.js';
+// Namespace import on purpose: `buildToolDefinitions` is added by the tool-schema
+// work and a named import of a not-yet-present export fails at module link time.
+import * as toolCatalog from './tools.js';
 
 const DEFAULT_PORT_START = 47821;
 const DEFAULT_PORT_END = 47852;
@@ -20,6 +24,13 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_BIND_TIMEOUT_MS = 5_000;
 const DEFAULT_PARENT_WATCH_MS = 5_000;
 const DEFAULT_SHUTDOWN_CLOSE_TIMEOUT_MS = 3_000;
+
+// Above this serialized size the summary key is hoisted to the front of the
+// payload so a client that truncates a long text block still reads it.
+export const COMPACT_SUMMARY_THRESHOLD_BYTES = 30_000;
+
+const AHREFS_TOOL_NAME = 'browser_export_ahrefs';
+const AHREFS_PLUGIN_SPECIFIER = './ahrefs-export.js';
 
 function resolveScreenshotMimeType(result, args = {}) {
   const reported = typeof result?.mimeType === 'string' ? result.mimeType.trim().toLowerCase() : '';
@@ -47,13 +58,55 @@ function resolveScreenshotMimeType(result, args = {}) {
   return reported || 'image/png';
 }
 
+// The screenshot `outputPath` is the only value that makes this server write to
+// disk, so it is validated instead of resolved blindly. A relative path lands in
+// whatever working directory the MCP client happened to launch with, a literal
+// '~/...' string creates a directory named '~', and '../../..' escapes the
+// working directory entirely. The parent directory must already exist: creating
+// it recursively turns a typo into a tree of empty directories the caller never
+// asked for.
+export function resolveOutputPath(outputPath) {
+  const raw = typeof outputPath === 'string' ? outputPath.trim() : '';
+  if (!raw) {
+    throw new Error('outputPath must be a non-empty absolute path.');
+  }
+
+  let expanded = raw;
+  if (raw === '~') {
+    expanded = os.homedir();
+  } else if (raw.startsWith('~/')) {
+    expanded = path.join(os.homedir(), raw.slice(2));
+  }
+
+  if (!path.isAbsolute(expanded)) {
+    throw new Error(
+      `outputPath must be an absolute path or start with "~/". Received: ${raw}`,
+    );
+  }
+
+  const resolved = path.resolve(expanded);
+  const parent = path.dirname(resolved);
+  let parentStat = null;
+  try {
+    parentStat = fs.statSync(parent);
+  } catch {
+    throw new Error(
+      `outputPath directory does not exist: ${parent}. Create it first, or pass a path inside an existing directory.`,
+    );
+  }
+  if (!parentStat.isDirectory()) {
+    throw new Error(`outputPath parent is not a directory: ${parent}`);
+  }
+
+  return resolved;
+}
+
 export function buildMcpResponse(toolName, result, args = {}) {
   if (toolName === 'browser_screenshot' && result?.data) {
     const outputPath = typeof args.outputPath === 'string' ? args.outputPath.trim() : '';
     const mimeType = resolveScreenshotMimeType(result, args);
     if (outputPath) {
-      const resolvedOutputPath = path.resolve(outputPath);
-      fs.mkdirSync(path.dirname(resolvedOutputPath), { recursive: true });
+      const resolvedOutputPath = resolveOutputPath(outputPath);
       const imageBuffer = Buffer.from(result.data, 'base64');
       fs.writeFileSync(resolvedOutputPath, imageBuffer);
       const structuredContent = {
@@ -96,15 +149,208 @@ export function buildMcpResponse(toolName, result, args = {}) {
     };
   }
 
-  const serialized = JSON.stringify(result, null, 2);
-  const compactSummary = result?._compactSummary || result?.summary || '';
-  return {
-    content: [{
-      type: 'text',
-      text: compactSummary && serialized.length > 30_000 ? compactSummary : serialized,
-    }],
-    structuredContent: result,
+  // One copy on the wire. No tool declares an outputSchema, so structured
+  // content is optional, and the spec wants the serialized JSON in a text block
+  // whenever structured content is present. Sending both meant every result
+  // crossed the transport twice and the compact escape below saved nothing.
+  const serialized = JSON.stringify(result ?? null);
+  const compactSummary = typeof result?._compactSummary === 'string' ? result._compactSummary : '';
+  const text = compactSummary && serialized.length > COMPACT_SUMMARY_THRESHOLD_BYTES
+    ? JSON.stringify({ _compactSummary: compactSummary, ...result })
+    : serialized;
+
+  const response = {
+    content: [{ type: 'text', text }],
   };
+
+  // Batches, composites, and the Ahrefs export runner report their own failures
+  // as `{ ok: false }` and resolve normally, so without this flag the same
+  // failing step arrives as an error when run alone and as a success when run
+  // inside a batch.
+  if (result?.ok === false) {
+    response.isError = true;
+  }
+
+  return response;
+}
+
+function describeValue(value) {
+  if (value === null) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return 'array';
+  }
+  return typeof value;
+}
+
+function matchesSchemaType(value, type) {
+  switch (type) {
+    case 'object':
+      return typeof value === 'object' && value !== null && !Array.isArray(value);
+    case 'array':
+      return Array.isArray(value);
+    case 'string':
+      return typeof value === 'string';
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'integer':
+      return Number.isInteger(value);
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'null':
+      return value === null;
+    default:
+      return true;
+  }
+}
+
+function collectSchemaIssues(value, schema, label, issues, limit) {
+  if (issues.length >= limit || !schema || typeof schema !== 'object') {
+    return;
+  }
+
+  const types = Array.isArray(schema.type) ? schema.type : (schema.type ? [schema.type] : []);
+  if (types.length > 0 && !types.some((type) => matchesSchemaType(value, type))) {
+    issues.push(`${label} expected ${types.join(' or ')}, received ${describeValue(value)}`);
+    return;
+  }
+
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    issues.push(`${label} expected one of [${schema.enum.join(', ')}], received ${JSON.stringify(value)}`);
+  }
+
+  if (matchesSchemaType(value, 'object')) {
+    for (const key of Array.isArray(schema.required) ? schema.required : []) {
+      if (value[key] === undefined) {
+        issues.push(`${label}.${key} is required and missing`);
+      }
+    }
+    const properties = schema.properties && typeof schema.properties === 'object' ? schema.properties : {};
+    const declared = Object.keys(properties);
+    for (const key of declared) {
+      if (value[key] !== undefined) {
+        collectSchemaIssues(value[key], properties[key], `${label}.${key}`, issues, limit);
+      }
+    }
+    if (declared.length > 0) {
+      const known = new Set(declared);
+      for (const key of Object.keys(value)) {
+        if (!known.has(key)) {
+          issues.push(`${label}.${key} is not a declared property`);
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(value) && schema.items) {
+    for (let index = 0; index < value.length && issues.length < limit; index += 1) {
+      collectSchemaIssues(value[index], schema.items, `${label}[${index}]`, issues, limit);
+    }
+  }
+}
+
+// Staged validation: the low-level SDK validates nothing per tool, and these
+// schemas have never been enforced while the extension coerces parameters ad
+// hoc, so a mismatch is reported and the call still runs. Enforcement is a
+// separate decision that needs real traffic behind it first.
+export function compileSchemaValidator(inputSchema, { maxIssues = 5 } = {}) {
+  return function validate(args) {
+    const issues = [];
+    collectSchemaIssues(args ?? {}, inputSchema, 'arguments', issues, maxIssues);
+    return issues;
+  };
+}
+
+export function createSchemaValidators(definitions = []) {
+  const validators = new Map();
+  for (const definition of definitions) {
+    if (definition?.name && definition.inputSchema) {
+      validators.set(definition.name, compileSchemaValidator(definition.inputSchema));
+    }
+  }
+  return validators;
+}
+
+function createSchemaMismatchLogger() {
+  // Set UMBRA_SCHEMA_WARN=0 to silence the staged report.
+  const enabled = process.env.UMBRA_SCHEMA_WARN !== '0';
+  const seen = new Set();
+  return function report(toolName, issues) {
+    if (!enabled || issues.length === 0) {
+      return;
+    }
+    for (const issue of issues) {
+      const signature = `${toolName}|${issue}`;
+      if (seen.has(signature)) {
+        continue;
+      }
+      if (seen.size < 200) {
+        seen.add(signature);
+      }
+      console.error(`[umbra] schema mismatch (not enforced) ${toolName}: ${issue}`);
+    }
+  };
+}
+
+function readPluginAvailability(module) {
+  const marker = module?.isAvailable;
+  if (marker === undefined || marker === null) {
+    return { available: true, reason: '' };
+  }
+  const value = typeof marker === 'function' ? marker() : marker;
+  if (value === true || value === undefined || value === null) {
+    return { available: true, reason: '' };
+  }
+  if (value === false) {
+    return { available: false, reason: 'the plugin reported itself unavailable' };
+  }
+  if (typeof value === 'object') {
+    const available = value.ok ?? value.available ?? true;
+    return { available: Boolean(available), reason: String(value.reason || '') };
+  }
+  return { available: Boolean(value), reason: '' };
+}
+
+// The Ahrefs orchestration is a local-only plugin: the published package omits
+// `ahrefs-export.js` through the files allowlist, so this import resolves to
+// null there and the tool never appears in the list. A checkout that has the
+// file keeps the capability untouched.
+export async function loadAhrefsPlugin(specifier = AHREFS_PLUGIN_SPECIFIER) {
+  let module = null;
+  try {
+    module = await import(specifier);
+  } catch (error) {
+    if (error?.code !== 'ERR_MODULE_NOT_FOUND') {
+      console.error(`[umbra] Ahrefs export plugin failed to load: ${error?.message || error}`);
+    }
+    return null;
+  }
+
+  if (typeof module?.runAhrefsExport !== 'function') {
+    console.error('[umbra] Ahrefs export plugin is present but exports no runAhrefsExport; disabling the tool.');
+    return null;
+  }
+
+  const { available, reason } = readPluginAvailability(module);
+  if (!available) {
+    console.error(
+      `[umbra] Ahrefs export plugin is present but unavailable${reason ? `: ${reason}` : ''}; disabling the tool.`,
+    );
+    return null;
+  }
+
+  return module;
+}
+
+export function resolveToolDefinitions({ ahrefs } = {}) {
+  if (typeof toolCatalog.buildToolDefinitions === 'function') {
+    return toolCatalog.buildToolDefinitions({ ahrefs: Boolean(ahrefs) });
+  }
+  if (ahrefs) {
+    return toolCatalog.TOOL_DEFINITIONS;
+  }
+  return toolCatalog.TOOL_DEFINITIONS.filter((tool) => tool.name !== AHREFS_TOOL_NAME);
 }
 
 function loadSharedKey() {
@@ -118,7 +364,15 @@ function loadSharedKey() {
     return fs.readFileSync(keyFile, 'utf8').trim();
   }
 
-  throw new Error('Missing UMBRA_SHARED_KEY or UMBRA_SHARED_KEY_FILE.');
+  throw new Error(
+    [
+      'No shared key configured. The extension and this server pair on one key, so set either:',
+      '  UMBRA_SHARED_KEY=<key>            the key itself',
+      `  UMBRA_SHARED_KEY_FILE=<path>      a file holding it, canonically ${resolveSharedKeyPath()}`,
+      'Get a key from the Generate button on the Umbra extension options page, which prints the',
+      'full environment line to paste into your MCP client config, or run: umbra pair <key>',
+    ].join('\n'),
+  );
 }
 
 export async function main() {
@@ -150,6 +404,13 @@ export async function main() {
     throw new Error('UMBRA_PORT_END must be >= UMBRA_PORT_START.');
   }
 
+  const ahrefsPlugin = await loadAhrefsPlugin();
+  const runAhrefsExport = ahrefsPlugin?.runAhrefsExport || null;
+  const toolDefinitions = resolveToolDefinitions({ ahrefs: Boolean(runAhrefsExport) });
+  const toolsByName = new Map(toolDefinitions.map((definition) => [definition.name, definition]));
+  const schemaValidators = createSchemaValidators(toolDefinitions);
+  const reportSchemaMismatch = createSchemaMismatchLogger();
+
   const sessionId = process.env.UMBRA_SESSION_ID || createSessionId();
   const useRustBroker =
     process.env.UMBRA_MCP_SHIM_MODE === 'rust' ||
@@ -158,6 +419,7 @@ export async function main() {
     ? new RustBrokerClient({
         sessionId,
         requestTimeoutMs,
+        runAhrefsExport,
       })
     : new LocalBridgeServer({
         sharedKey,
@@ -166,6 +428,7 @@ export async function main() {
         portEnd,
         requestTimeoutMs,
         bindTimeoutMs,
+        runAhrefsExport,
       });
 
   if (useRustBroker) {
@@ -189,16 +452,26 @@ export async function main() {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_DEFINITIONS,
+    tools: toolDefinitions,
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const toolName = request.params.name;
     const args = request.params.arguments || {};
-    const definition = getToolDefinition(toolName);
+    const definition = toolsByName.get(toolName);
 
     if (!definition) {
+      if (toolName === AHREFS_TOOL_NAME) {
+        throw new Error(
+          `${AHREFS_TOOL_NAME} is not available in this install: the Ahrefs export plugin (ahrefs-export.js) is not present.`,
+        );
+      }
       throw new Error(`Unknown tool: ${toolName}`);
+    }
+
+    const validate = schemaValidators.get(toolName);
+    if (validate) {
+      reportSchemaMismatch(toolName, validate(args));
     }
 
     const result = await bridge.sendCommand(toolName, args);

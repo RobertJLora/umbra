@@ -48,10 +48,32 @@ describe('browser_javascript tool', () => {
     assert.match(background, /world: 'MAIN'/);
     assert.match(background, /executeJavascriptWithWorldFallback/);
     assert.match(background, /Runtime\.evaluate/);
-    assert.match(background, /async function executeJavascriptInPage/);
     assert.match(agent, /execute_javascript/);
     assert.match(agent, /async function executeJavascript/);
     assert.doesNotMatch(agent, /eval\(|new Function/);
+  });
+
+  it('evaluates caller-supplied code only through the debugger', () => {
+    const background = read('extension/background.js');
+    const agent = read('extension/content-agent.js');
+
+    // Compiling a code string inside the page is a catalogued eval-evasion
+    // pattern and contradicts the script-src 'self' CSP in the manifest, so
+    // Runtime.evaluate is the only route and there is no second world to fall
+    // back into.
+    assert.doesNotMatch(background, /AsyncFunction/);
+    assert.doesNotMatch(agent, /AsyncFunction/);
+    assert.doesNotMatch(background, /executeJavascriptInPage/);
+
+    // A page exception is the caller's own code throwing. Retrying it anywhere
+    // would submit the same form twice.
+    const guard = background.slice(
+      background.indexOf('function isDebuggerAccessFailure'),
+      background.indexOf('async function executeJavascriptWithWorldFallback'),
+    );
+    assert.match(guard, /error\?\.code === 'javascript_error'/);
+    assert.match(guard, /debugger/i);
+    assert.match(background, /debugger_busy/);
   });
 
   it('blocks cookie headers, Set-Cookie, and long query-string secrets', () => {

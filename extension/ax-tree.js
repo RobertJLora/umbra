@@ -1,4 +1,14 @@
 (() => {
+  // Bump AX_TREE_VERSION whenever anything in this file changes. The helpers are injected
+  // into a page's isolated world on demand, so a page that was visited before an extension
+  // update still holds the previous copy. Matching on the version replaces stale helpers on
+  // the next injection while leaving a same-version copy, and the element ref store it owns,
+  // untouched. A bare truthiness guard would pin the old code until the page navigated.
+  const AX_TREE_VERSION = '0.2.0';
+  if (globalThis.UmbraAxTree?.version === AX_TREE_VERSION) {
+    return globalThis.UmbraAxTree;
+  }
+
   const DEFAULT_MAX_NODES = 200;
   const ABSOLUTE_MAX_NODES = 500;
   const DEFAULT_FIND_LIMIT = 10;
@@ -301,9 +311,34 @@
       .join(' ');
   }
 
-  function labelText(element, documentRef) {
-    if (element.id && documentRef?.querySelector) {
-      const explicit = documentRef.querySelector(`label[for="${cssEscape(element.id)}"]`);
+  // One `label[for]` sweep per walk replaces a per-element `document.querySelector`. Document
+  // order is preserved by querySelectorAll, so keeping the first label registered for an id
+  // returns what querySelector returned. Returns null when the document cannot be swept, which
+  // sends labelText back to the per-element query rather than to an empty answer.
+  function buildLabelForMap(documentRef) {
+    const labels = documentRef?.querySelectorAll?.('label[for]');
+    if (!labels) {
+      return null;
+    }
+    const map = new Map();
+    for (const label of labels) {
+      const forId = label?.getAttribute?.('for');
+      if (!forId || map.has(forId)) {
+        continue;
+      }
+      map.set(forId, label);
+    }
+    return map;
+  }
+
+  function labelText(element, documentRef, labelForMap) {
+    if (element.id) {
+      let explicit = null;
+      if (labelForMap) {
+        explicit = labelForMap.get(element.id) || null;
+      } else if (documentRef?.querySelector) {
+        explicit = documentRef.querySelector(`label[for="${cssEscape(element.id)}"]`);
+      }
       const text = normalize(explicit?.innerText || explicit?.textContent || '');
       if (text) {
         return text;
@@ -316,12 +351,15 @@
     return '';
   }
 
-  function computeAccessibleName(element, documentRef) {
+  function computeAccessibleName(element, documentRef, labelForMap) {
     return accessibleName({
       ariaLabel: element.getAttribute?.('aria-label') || '',
       labelledByText: labelledByText(element, documentRef),
-      labelText: labelText(element, documentRef),
+      labelText: labelText(element, documentRef, labelForMap),
       alt: element.getAttribute?.('alt') || '',
+      // innerText, not textContent, on purpose. innerText skips display:none subtrees, so
+      // hidden menu, tooltip, and screen-reader-only copy stays out of the accessible names
+      // that agents match against. Swapping it would change results, not just cost.
       text: element.innerText || element.textContent || '',
       title: element.getAttribute?.('title') || '',
       placeholder: element.getAttribute?.('placeholder') || '',
@@ -368,13 +406,19 @@
     return Boolean(element?.closest?.('[disabled], [aria-disabled="true"]'));
   }
 
-  function elementRect(element) {
-    const rect = element?.getBoundingClientRect?.() || {};
+  // Split measuring from rounding so one getBoundingClientRect call feeds both the box test
+  // and the reported rect. hasBox reads the raw values, so a sub-pixel element is judged on
+  // what it actually measures rather than on the rounded copy.
+  function measureElementRect(element) {
+    return element?.getBoundingClientRect?.() || null;
+  }
+
+  function roundRect(rect) {
     return {
-      x: Math.round(rect.x || 0),
-      y: Math.round(rect.y || 0),
-      width: Math.round(rect.width || 0),
-      height: Math.round(rect.height || 0),
+      x: Math.round(rect?.x || 0),
+      y: Math.round(rect?.y || 0),
+      width: Math.round(rect?.width || 0),
+      height: Math.round(rect?.height || 0),
     };
   }
 
@@ -408,8 +452,9 @@
     return false;
   }
 
-  function hasBox(element) {
-    const rect = element?.getBoundingClientRect?.();
+  // Takes an already measured rect. A null rect means the element could not be measured at
+  // all, which keeps the node rather than dropping it.
+  function hasBox(rect) {
     if (!rect) {
       return true;
     }
@@ -441,6 +486,12 @@
     }
     const name = normalize(node?.name).toLowerCase();
     const role = normalize(node?.role).toLowerCase();
+    // Walked nodes carry neither text nor description, so this term is empty for every node
+    // rankFindMatches receives from walkAxTree, and it was empty before the unread `text`
+    // field was deleted too. Ranking rides on name, role, and tag by decision, not accident:
+    // computeAccessibleName already falls back to inner text, so any element without an
+    // aria-label, aria-labelledby, associated label, or alt has its inner text in `name`.
+    // The term stays here because callers may hand rankFindMatches nodes from another source.
     const text = normalize(node?.text || node?.description || '').toLowerCase();
     const tag = normalize(node?.tag).toLowerCase();
     let score = 0;
@@ -570,6 +621,7 @@
     const documentRef = env.document || root?.ownerDocument || globalThis.document;
     const store = env.refStore || sharedRefStore;
     const domVersion = Number.isInteger(env.domVersion) ? env.domVersion : store.domVersion || 0;
+    const labelForMap = buildLabelForMap(documentRef);
     const nodes = [];
     let truncated = false;
 
@@ -586,31 +638,40 @@
       }
       const attrs = attrMap(element);
       const role = implicitRole(tag, attrs, context);
-      const name = computeAccessibleName(element, documentRef);
-      const candidate = {
-        tag,
-        role,
-        name,
-        attrs,
-        value: elementValue(element),
-        checked: elementChecked(element, role),
-        disabled: elementDisabled(element),
-        rect: elementRect(element),
-        text: normalize(element.innerText || element.textContent || '').slice(0, 500),
-      };
-      const include = shouldIncludeAxNode(candidate, filter)
-        && (filter !== 'interactive' || hasBox(element) || isLandmarkRole(role));
+      // The `all` filter falls back to the accessible name to decide inclusion, so that name
+      // has to exist before shouldIncludeAxNode runs. The interactive and landmark filters
+      // decide on role, tag, and attributes alone, so they compute the name only for nodes
+      // they keep. Everything else an included node reports, value, checked, disabled, and
+      // the rect, is computed inside the include branch for the same reason.
+      const nameDecidesInclusion = filter === 'all';
+      let name = nameDecidesInclusion ? computeAccessibleName(element, documentRef, labelForMap) : '';
+      let include = shouldIncludeAxNode({ tag, role, name, attrs }, filter);
+      let measuredRect = null;
+      let rectMeasured = false;
+      if (include && filter === 'interactive') {
+        measuredRect = measureElementRect(element);
+        rectMeasured = true;
+        if (!hasBox(measuredRect) && !isLandmarkRole(role)) {
+          include = false;
+        }
+      }
       let axNode = null;
       if (include && nodes.length < maxNodes) {
+        if (!nameDecidesInclusion) {
+          name = computeAccessibleName(element, documentRef, labelForMap);
+        }
+        if (!rectMeasured) {
+          measuredRect = measureElementRect(element);
+        }
         const ref = assignElementRef(store, element, domVersion);
         axNode = {
           ref,
           role,
           name,
-          value: candidate.value,
-          checked: candidate.checked,
-          disabled: candidate.disabled,
-          rect: candidate.rect,
+          value: elementValue(element),
+          checked: elementChecked(element, role),
+          disabled: elementDisabled(element),
+          rect: roundRect(measuredRect),
           tag,
           childrenRefs: [],
         };
@@ -830,6 +891,7 @@
   }
 
   const api = {
+    version: AX_TREE_VERSION,
     DEFAULT_MAX_NODES,
     ABSOLUTE_MAX_NODES,
     DEFAULT_FIND_LIMIT,

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { LocalBridgeServer, parseEnvNumber } from '../../mcp-server/bridge-core.js';
 import { SessionRegistry } from '../../mcp-server/session-registry.js';
 import { MAX_BROWSER_BATCH_CALLS } from '../../mcp-server/tools.js';
+import { resolveBrokerRequestTimeoutMs } from '../../mcp-server/timeouts.js';
 
 function fakeOpenSocket() {
   return {
@@ -211,5 +212,151 @@ describe('CiC bridge hardening', () => {
       }),
       /at most 25 child calls/,
     );
+  });
+
+  it('arms the timeout the caller asked for instead of the fixed request timeout', async () => {
+    const bridge = new LocalBridgeServer({
+      sharedKey: 'test-shared-key',
+      sessionId: 'sess_per_call_timeout',
+      portStart: 47821,
+      portEnd: 47821,
+      requestTimeoutMs: 60_000,
+    });
+    bridge.registry.setChannel({ socket: fakeOpenSocket(), port: 47821 });
+    bridge.registry.markAuthenticated({ extensionInstanceId: 'install_a' });
+
+    // The extension clamps browser_run_page_action waits to 90,000 ms, so an
+    // Ahrefs export legitimately asks for 95,000 ms. Record what the bridge arms
+    // and fire it immediately so the call settles inside the test.
+    const armedDelays = [];
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (handler, delay, ...args) => {
+      armedDelays.push(delay);
+      return realSetTimeout(handler, 0, ...args);
+    };
+
+    try {
+      await assert.rejects(
+        bridge.sendCommand('browser_run_page_action', { action: 'ahrefs_wait_ready', timeoutMs: 95_000 }),
+        /Timed out waiting for browser_run_page_action result/,
+      );
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+
+    const expected = resolveBrokerRequestTimeoutMs(60_000, { timeoutMs: 95_000 });
+    assert.ok(expected >= 95_000, `the resolved timeout ${expected}ms must cover the 95,000ms request`);
+    assert.ok(
+      armedDelays.includes(expected),
+      `armed delays ${JSON.stringify(armedDelays)} should include ${expected}`,
+    );
+    assert.ok(
+      !armedDelays.includes(60_000),
+      'the fixed request timeout must not be armed once the caller supplies a longer one',
+    );
+  });
+
+  it('fills a batch child budget from the remaining time and never raises one the caller set', async () => {
+    const bridge = new LocalBridgeServer({
+      sharedKey: 'test-shared-key',
+      sessionId: 'sess_child_budget',
+      portStart: 47821,
+      portEnd: 47821,
+    });
+    const forwarded = [];
+    bridge.sendExtensionCommand = async (tool, params) => {
+      forwarded.push({ tool, params });
+      return { ok: true };
+    };
+
+    const result = await bridge.sendCommand('browser_batch', {
+      timeoutMs: 8_000,
+      calls: [
+        { tool: 'browser_wait', label: 'short', params: { selector: 'main', timeoutMs: 500 } },
+        { tool: 'browser_navigate', label: 'unbudgeted', params: { url: 'https://example.com' } },
+        { tool: 'browser_list_tabs', label: 'no-timeout-parameter' },
+      ],
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(forwarded[0].params.timeoutMs, 500);
+    assert.ok(
+      forwarded[1].params.timeoutMs > 0 && forwarded[1].params.timeoutMs <= 8_000,
+      `browser_navigate should inherit the batch budget, got ${forwarded[1].params.timeoutMs}`,
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(forwarded[2].params, 'timeoutMs'),
+      false,
+      'a tool whose schema declares no timeoutMs must not receive one',
+    );
+  });
+
+  it('gives each navigate_wait_read child its own slice of the composite budget', async () => {
+    const bridge = new LocalBridgeServer({
+      sharedKey: 'test-shared-key',
+      sessionId: 'sess_composite_slices',
+      portStart: 47821,
+      portEnd: 47821,
+    });
+    const forwarded = [];
+    bridge.sendExtensionCommand = async (tool, params) => {
+      forwarded.push({ tool, params });
+      return tool === 'browser_navigate' ? { tabId: 42 } : { ok: true };
+    };
+
+    const result = await bridge.sendCommand('browser_navigate_wait_read', {
+      url: 'https://example.com',
+      waitSelector: 'main',
+      timeoutMs: 15_000,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.timeoutMs, 15_000);
+
+    const navigate = forwarded.find((call) => call.tool === 'browser_navigate');
+    const wait = forwarded.find((call) => call.tool === 'browser_wait');
+    assert.ok(
+      navigate.params.timeoutMs > 0 && navigate.params.timeoutMs < 15_000,
+      `navigate needs an explicit budget below the batch deadline, got ${navigate.params.timeoutMs}`,
+    );
+    assert.ok(
+      wait.params.timeoutMs > 0 && wait.params.timeoutMs < 15_000,
+      `wait needs its own slice rather than the whole deadline, got ${wait.params.timeoutMs}`,
+    );
+    assert.ok(
+      navigate.params.timeoutMs + wait.params.timeoutMs < 15_000,
+      'the waiting steps together must leave room for the read step',
+    );
+  });
+
+  it('gives the two single-wait composites an explicit wait slice', async () => {
+    const bridge = new LocalBridgeServer({
+      sharedKey: 'test-shared-key',
+      sessionId: 'sess_single_wait_slices',
+      portStart: 47821,
+      portEnd: 47821,
+    });
+    const forwarded = [];
+    bridge.sendExtensionCommand = async (tool, params) => {
+      forwarded.push({ tool, params });
+      return { ok: true };
+    };
+
+    for (const tool of ['browser_wait_click_read', 'browser_click_wait_selector_read']) {
+      forwarded.length = 0;
+      const result = await bridge.sendCommand(tool, {
+        tabId: 7,
+        waitSelector: 'main',
+        clickSelector: 'button',
+        timeoutMs: 20_000,
+      });
+
+      assert.equal(result.ok, true, `${tool} should complete`);
+      const wait = forwarded.find((call) => call.tool === 'browser_wait');
+      assert.ok(
+        wait.params.timeoutMs > 0 && wait.params.timeoutMs < 20_000,
+        `${tool} wait step needs its own slice, got ${wait.params.timeoutMs}`,
+      );
+    }
   });
 });

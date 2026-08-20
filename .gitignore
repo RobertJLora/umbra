@@ -1,4 +1,24 @@
 .DS_Store
 *.log
 .local/
+node_modules/
 mcp-server/node_modules/
+
+# Test and benchmark output. mcp-server/full-suite-runner.mjs writes run folders
+# here and mcp-server/benchmark-performance.mjs writes reports/performance/,
+# both of which capture whatever pages the run drove, including signed-in ones.
+# Keep every run local.
+reports/
+
+# Everything moved out of the public tree: the author's own report archive, the
+# personal launchd plist, the source artwork, and the one-off client job
+# scripts. Mirrors the public layout, so .private/mcp-server/x.mjs is the file
+# that used to sit at mcp-server/x.mjs.
+.private/
+
+# The local record of one machine's real paths, keys, and launchd label. Written
+# by hand, never published. Ships as a template only in docs/install.md.
+docs/private-setup.md
+
+# Built extension packages from scripts/package-extension.sh.
+dist/

@@ -3,19 +3,34 @@ import fsp from 'node:fs/promises';
 import crypto from 'node:crypto';
 import http from 'node:http';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { resolveBrokerSocketPath } from './config.js';
 import { TOOL_DEFINITIONS } from './tools.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
-const activeExtensionDir = '/Users/RobertLora/Documents/Workspaces/Projects/Active/umbra/extension';
-const defaultChromeProfilePrefs = '/Users/RobertLora/Library/Application Support/Google/Chrome/Profile 12/Secure Preferences';
-const legacyExtensionId = 'kkfedeeiobahmhcgpffcelpepiljiomk';
+
+// The extension a browser actually loaded. The default is this checkout's own
+// `extension/` folder, because loading unpacked from the repository is the
+// documented setup. Anyone who loaded a copy from somewhere else points
+// UMBRA_EXTENSION_DIR at it and gets a real drift comparison back.
+const activeExtensionDirFromEnv = process.env.UMBRA_EXTENSION_DIR?.trim() || '';
+const activeExtensionDir = activeExtensionDirFromEnv
+  ? path.resolve(activeExtensionDirFromEnv)
+  : path.join(repoRoot, 'extension');
+const activeExtensionDirSource = activeExtensionDirFromEnv ? 'UMBRA_EXTENSION_DIR' : 'repository';
+
+// Set UMBRA_EXTENSION_ID to pin the check to one install. Left unset, the
+// Chrome profile scan matches on the loaded directory instead, which is the
+// only signal that works before an id exists.
+const pinnedExtensionId = process.env.UMBRA_EXTENSION_ID?.trim() || '';
+
 const portStart = Number(process.env.UMBRA_PORT_START || 47821);
 const portEnd = Number(process.env.UMBRA_PORT_END || 47852);
-const defaultSocketPath = process.env.UMBRA_BROKER_SOCKET || '/tmp/umbra-rust-broker.sock';
+const defaultSocketPath = resolveBrokerSocketPath();
 const defaultIdleTtlMs = Number(process.env.UMBRA_IDLE_EMPTY_SESSION_TTL_MS || 20 * 60 * 1000);
 const defaultIdleMinAgeMs = Number(process.env.UMBRA_IDLE_EMPTY_SESSION_MIN_AGE_MS || 5 * 60 * 1000);
 

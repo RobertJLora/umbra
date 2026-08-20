@@ -2,9 +2,28 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { FileDownloadLedger } from './download-ledger.mjs';
+import { resolveDownloadDir } from './config.js';
+import { FileDownloadLedger, describeUserPath } from './download-ledger.mjs';
+
+// This module is the Ahrefs orchestration plugin. It is deliberately outside the
+// published package's file allowlist, so a public install resolves it to null and
+// hides browser_export_ahrefs, while a checkout of this repository keeps it.
+//
+// isAvailable() answers the other question: the file is present, but can it run?
+// Returns { ok, reason } so the MCP entry point can report a named cause instead
+// of surfacing a tool that fails 90 seconds later.
+export function isAvailable() {
+  const downloadDir = resolveDownloadDir();
+  if (!fs.existsSync(downloadDir)) {
+    return {
+      ok: false,
+      reason: `Ahrefs export needs a download directory. ${describeUserPath(downloadDir)} `
+        + 'does not exist; set UMBRA_DOWNLOAD_DIR to the folder Chrome saves downloads into.',
+    };
+  }
+  return { ok: true, reason: '' };
+}
 
 export const AHREFS_REPORTS = {
   'organic-keywords': {
@@ -223,28 +242,160 @@ export function makeAhrefsReportUrl({
   return `https://app.ahrefs.com/${host}/${spec.path}?${params.toString()}`;
 }
 
-export function parseDelimitedTable(filePath) {
-  const parsed = spawnSync('/opt/homebrew/bin/python3', ['-c', `
-import csv
-from pathlib import Path
-p = Path(${JSON.stringify(filePath)})
-text = p.read_text(encoding='utf-8-sig')
-first = text.splitlines()[0] if text else ''
-delim = '\\t' if '\\t' in first else ','
-rows = list(csv.DictReader(text.splitlines(), delimiter=delim))
-headers = list(rows[0].keys()) if rows else (first.split(delim) if first else [])
-print(len(rows))
-print('|'.join(headers[:12]))
-`], { encoding: 'utf8' });
-  if (parsed.status !== 0) {
-    throw new Error(`CSV parse failed: ${parsed.stderr || parsed.stdout || 'unknown python error'}`);
+// Decode a downloaded table to text. UTF-8 with or without a BOM is the format
+// this runner asks Ahrefs for; a UTF-16 BOM is decoded too, because a file saved
+// from a different export path would otherwise arrive as unreadable bytes and
+// report a parse failure over a download that actually succeeded.
+function decodeTableFile(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.subarray(2).toString('utf16le');
   }
-  const [count, columns] = parsed.stdout.trim().split('\n');
-  const headerList = (columns || '').split('|').filter(Boolean);
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return buffer.subarray(2).swap16().toString('utf16le');
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.subarray(3).toString('utf8');
+  }
+  return buffer.toString('utf8');
+}
+
+// Tab against comma, decided on the first record rather than the first line, so
+// a header whose first field is quoted and holds a newline cannot skew the vote.
+function detectDelimiter(text) {
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') {
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      }
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (char === '\n' || char === '\r') {
+      break;
+    }
+    if (char === '\t') {
+      return '\t';
+    }
+  }
+  return ',';
+}
+
+// RFC 4180 scan: quoted fields may hold the delimiter and newlines, and a doubled
+// quote inside a quoted field is one literal quote. Real Ahrefs exports contain
+// both, so a naive line count inflates rowCount, and rowCount gates the ok
+// verdict and is handed to the agent as evidence.
+//
+// Only the header's fields are materialized; later records are counted, not
+// built, because nothing downstream reads a cell value.
+function scanDelimitedText(text, delimiter) {
+  const headerFields = [];
+  let rowCount = 0;
+  let recordIndex = 0;
+  let field = '';
+  let fieldCount = 0;
+  let recordHasContent = false;
+  let inQuotes = false;
+
+  const endField = () => {
+    if (recordIndex === 0) {
+      headerFields.push(field);
+    }
+    field = '';
+    fieldCount += 1;
+  };
+  const endRecord = () => {
+    // A record with no characters at all is a blank line, which is not a row.
+    // A record holding one empty quoted field is a row, which is why this reads
+    // the raw character flag rather than the field value.
+    if (!recordHasContent && fieldCount === 0 && field === '') {
+      return;
+    }
+    endField();
+    if (recordIndex > 0) {
+      rowCount += 1;
+    }
+    recordIndex += 1;
+    fieldCount = 0;
+    recordHasContent = false;
+  };
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+      recordHasContent = true;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = true;
+      recordHasContent = true;
+      continue;
+    }
+    if (char === delimiter) {
+      recordHasContent = true;
+      endField();
+      continue;
+    }
+    if (char === '\n' || char === '\r') {
+      if (char === '\r' && text[i + 1] === '\n') {
+        i += 1;
+      }
+      endRecord();
+      continue;
+    }
+    field += char;
+    recordHasContent = true;
+  }
+
+  // A file ending in a newline leaves nothing here, which is how the trailing
+  // blank line stays out of the count. Anything else is a final unterminated
+  // record and counts.
+  if (recordHasContent || field.length > 0 || fieldCount > 0) {
+    endRecord();
+  }
+
+  return { headerFields, rowCount };
+}
+
+export function parseDelimitedTable(filePath) {
+  let text;
+  try {
+    text = decodeTableFile(filePath);
+  } catch (error) {
+    // Only the basename and the error code, because the raw fs message carries
+    // the absolute path and this string reaches the agent as a tool error.
+    throw new Error(
+      `CSV parse failed: cannot read ${path.basename(String(filePath))} (${error.code || 'read error'}).`,
+    );
+  }
+  const delimiter = detectDelimiter(text);
+  const { headerFields, rowCount } = scanDelimitedText(text, delimiter);
+  // Twelve headers is the cap the ok verdict and the chart-CSV rejection have
+  // always read, and columnLine stays the pipe-joined form both compare against.
+  const columnLine = headerFields.slice(0, 12).join('|');
   return {
-    rowCount: Number(count || 0),
-    columns: headerList,
-    columnLine: columns || '',
+    rowCount,
+    columns: columnLine.split('|').filter(Boolean),
+    columnLine,
   };
 }
 
@@ -553,18 +704,29 @@ export async function runAhrefsExport(sendCommand, options = {}) {
         timeoutMs: Number(options.downloadTimeoutMs) || 90_000,
       });
     } catch (error) {
-      const downloadDir = process.env.UMBRA_DOWNLOAD_DIR || '/Users/RobertLora/Documents/Downloads';
-      const ledger = new FileDownloadLedger({ downloadDir });
+      // Recovery, so it stays tolerant: findNew never throws on a missing
+      // directory, because a throw here would replace the wait's error and hide
+      // the real cause. The report's filename hints rank an actual Ahrefs export
+      // above any other file in the folder that happens to carry the domain
+      // name, and the tab scope pins a claimed download when the extension
+      // reports one.
+      const ledger = new FileDownloadLedger({
+        downloadDir: resolveDownloadDir(),
+        scope: { tabId: result.tabId },
+      });
       const recovered = (await ledger.findNew({
         sinceMs,
         extension: '.csv',
         nameIncludes: [needle],
+        nameIncludesAny: spec.filenameHints || [],
+        expectedNames: await ledger.collectAttribution(),
       }))[0];
       if (!recovered?.filePath) {
         throw error;
       }
       downloaded = recovered;
       result.downloadRecovered = true;
+      result.downloadAttributed = recovered.attributed === true;
     }
     const sourcePath = downloaded.filePath || downloaded.path;
     if (!sourcePath) {
@@ -578,6 +740,12 @@ export async function runAhrefsExport(sendCommand, options = {}) {
       await fsp.copyFile(sourcePath, destPath);
     }
 
+    // Assigned before the parse so any parse failure still returns where the
+    // file landed. The download has already succeeded by this point.
+    result.sourceDownloadPath = sourcePath;
+    result.destPath = destPath;
+    result.bytes = downloaded.bytes || fs.statSync(destPath).size;
+
     const parsed = parseDelimitedTable(destPath);
     if (/search-volume-history/i.test(path.basename(destPath))) {
       throw new Error(
@@ -590,9 +758,6 @@ export async function runAhrefsExport(sendCommand, options = {}) {
       );
     }
     const hasExpectedHeader = headersMatch(parsed.columns, spec.expectHeaders);
-    result.sourceDownloadPath = sourcePath;
-    result.destPath = destPath;
-    result.bytes = downloaded.bytes || fs.statSync(destPath).size;
     result.rowCount = parsed.rowCount;
     result.columns = parsed.columnLine;
     result.hasExpectedHeader = hasExpectedHeader;

@@ -4,14 +4,74 @@ import { createNonce, validateBindProof, validateHelloQuery } from './auth.js';
 import { SessionRegistry } from './session-registry.js';
 import { TabOwnershipStore } from './tab-ownership.js';
 import { MAX_BROWSER_BATCH_CALLS, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
-import { runAhrefsExport } from './ahrefs-export.js';
 import { resolveBatchParams } from './batch-refs.js';
 import { FileDownloadLedger } from './download-ledger.mjs';
+import { resolveDownloadDir } from './config.js';
+import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  resolveBrokerRequestTimeoutMs,
+  resolveChildCallTimeoutMs,
+} from './timeouts.js';
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_BIND_TIMEOUT_MS = 5_000;
 const DEFAULT_BATCH_TIMEOUT_MS = 30_000;
-const DEFAULT_DOWNLOAD_DIR = '/Users/RobertLora/Documents/Downloads';
+
+// Composite recipes run two or three children under a single budget. Handing the
+// same number to the batch deadline and to one child is what let the first
+// waiting step consume the whole budget, so the step that carries the payload
+// returned batch_timeout with no page content. Each waiting step takes a fixed
+// share of the total; the remaining steps are filled from whatever is left when
+// their turn comes.
+const COMPOSITE_NAVIGATE_SHARE = 0.5;
+const COMPOSITE_WAIT_AFTER_NAVIGATE_SHARE = 0.35;
+const COMPOSITE_SINGLE_WAIT_SHARE = 0.6;
+
+// The batch deadline a composite hands to sendBatch. Mirrors both the fallback
+// and the cap sendBatch applies, so the slices below are always computed from
+// the number the batch will actually enforce.
+function resolveCompositeTimeoutMs(requestedMs, maxMs) {
+  const requested = Number(requestedMs);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return DEFAULT_BATCH_TIMEOUT_MS;
+  }
+  return Math.min(Math.floor(requested), maxMs);
+}
+
+function compositeSlice(totalMs, share) {
+  return resolveChildCallTimeoutMs(Math.floor(totalMs * share), null) ?? undefined;
+}
+
+// Fill or clamp one batch child's own timeout from what is left of the batch
+// budget. Without this a child inherits its full tool default (browser_navigate
+// waits 45,000 ms) and exhausts a 30,000 ms batch on its own, so the step that
+// carries the payload reports batch_timeout. Only tools whose schema declares
+// timeoutMs are touched, so no child receives a parameter its schema does not
+// describe.
+function applyChildBudget(definition, childParams, remainingMs) {
+  if (!childParams || typeof childParams !== 'object' || Array.isArray(childParams)) {
+    return childParams;
+  }
+  if (!definition?.inputSchema?.properties?.timeoutMs) {
+    return childParams;
+  }
+
+  const requested = Number(childParams.timeoutMs);
+  const hasRequested = Number.isFinite(requested) && requested > 0;
+  const budgeted = resolveChildCallTimeoutMs(remainingMs, hasRequested ? requested : null);
+  if (budgeted === null) {
+    return childParams;
+  }
+
+  // Clamp downward only. A caller who asked for less than the remaining budget
+  // keeps the smaller number, including one under the 1,000 ms floor in
+  // resolveChildCallTimeoutMs; that floor exists to stop a nearly exhausted
+  // parent budget from handing a child a few milliseconds, not to overrule a
+  // deliberate short wait.
+  if (!hasRequested || budgeted < requested) {
+    childParams.timeoutMs = budgeted;
+  }
+  return childParams;
+}
 
 export class LocalBridgeServer {
   constructor({
@@ -21,6 +81,7 @@ export class LocalBridgeServer {
     portEnd,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     bindTimeoutMs = DEFAULT_BIND_TIMEOUT_MS,
+    runAhrefsExport = null,
   }) {
     this.sharedKey = sharedKey;
     this.sessionId = sessionId;
@@ -33,6 +94,13 @@ export class LocalBridgeServer {
     this.httpServer = null;
     this.websocketServer = null;
     this.port = null;
+
+    // The Ahrefs orchestration is a local-only plugin: the published npm package
+    // omits ahrefs-export.js through its files allowlist. Taking the runner as a
+    // constructor argument keeps that module out of this file's static import
+    // graph, so the published package loads with the file absent.
+    this.runAhrefsExport = typeof runAhrefsExport === 'function' ? runAhrefsExport : null;
+    this.ahrefsExportLoad = null;
 
     this.registry.on('connected', (status) => {
       console.error(
@@ -144,9 +212,31 @@ export class LocalBridgeServer {
       return;
     }
 
-    if (this.registry.isConnected()) {
-      socket.close(4005, 'session_already_connected');
-      return;
+    // A stale socket that still reports OPEN used to make this method close the
+    // extension's replacement connection with 4005 session_already_connected,
+    // and the extension then redialled every two seconds forever with no way
+    // back. The replacement is already HMAC-gated by validateHelloQuery before
+    // handleConnection runs, so letting it win opens no authentication gap.
+    // SessionRegistry.setChannel closes the socket it displaces with 4000
+    // superseded, and the displaced socket's own close handler checks channel
+    // identity before clearing anything, so it cannot tear down the replacement.
+    const displacedSocket = this.registry.channel?.socket ?? null;
+    if (displacedSocket && displacedSocket !== socket) {
+      console.error(
+        `[umbra] a new extension socket superseded the existing channel for ${this.sessionId}`,
+      );
+      // Retire the displaced channel before installing the replacement. Doing it
+      // here rejects its pending requests at once instead of leaving every
+      // caller to wait out a transport timeout against a socket that is closing,
+      // and it makes the displaced socket's own close handler a no-op on
+      // whichever tick that handler runs.
+      this.registry.clearChannel('superseded');
+      this.ownership.detachSession(this.sessionId);
+      try {
+        displacedSocket.close(4000, 'superseded');
+      } catch {
+        // Ignore close failures on a socket that is already gone.
+      }
     }
 
     const serverNonce = createNonce();
@@ -211,6 +301,26 @@ export class LocalBridgeServer {
           sessionId: this.sessionId,
           ready: true,
         }));
+        return;
+      }
+
+      // Application-level keepalive. Browser JavaScript cannot send WebSocket
+      // protocol pings and never surfaces pong frames to a message listener, so
+      // the extension's offscreen document detects a dead-but-OPEN socket by
+      // sending {"type":"ping"} and watching for this answer. Every unanswered
+      // ping used to fall into settleRequest, which returns false for a message
+      // carrying no known pending id, so the frame was silently dropped.
+      if (message.type === 'ping') {
+        try {
+          socket.send(JSON.stringify({
+            type: 'pong',
+            id: message.id ?? null,
+            sessionId: this.sessionId,
+          }));
+        } catch {
+          // A socket that cannot answer a keepalive is already gone; the close
+          // handler clears the channel.
+        }
         return;
       }
 
@@ -301,12 +411,19 @@ export class LocalBridgeServer {
 
     const id = `req_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
     const payload = { type: 'command', id, tool, params };
+    // The extension clamps its own wait from params.timeoutMs (browser_wait
+    // accepts up to 90,000 ms), so a fixed 60,000 ms transport timer aborted
+    // calls the extension was still legitimately servicing, and the caller saw a
+    // timeout against a page that had not finished rendering. Honour the
+    // per-call value with transport slack on top, which is what the Rust broker
+    // lane and the broker itself already do.
+    const timeoutMs = resolveBrokerRequestTimeoutMs(this.requestTimeoutMs, params);
 
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.registry.pendingRequests.delete(id);
         reject(new Error(`Timed out waiting for ${tool} result from the extension.`));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
 
       this.registry.addPendingRequest(id, { resolve, reject, timer, tool });
       this.registry.channel.socket.send(JSON.stringify(payload), (error) => {
@@ -406,7 +523,11 @@ export class LocalBridgeServer {
           call.params && typeof call.params === 'object' && !Array.isArray(call.params)
             ? call.params
             : {};
-        const childParams = resolveBatchParams(rawChildParams, results);
+        const childParams = applyChildBudget(
+          definition,
+          resolveBatchParams(rawChildParams, results),
+          remainingMs,
+        );
         const result = await this.sendExtensionCommand(toolName, childParams);
         results.push({
           ...entry,
@@ -448,7 +569,15 @@ export class LocalBridgeServer {
     };
   }
 
+  // The whole-recipe deadline for a composite, resolved and capped exactly as
+  // sendBatch resolves and caps it, so a slice can never exceed the deadline the
+  // batch enforces.
+  compositeBudgetMs(requestedMs) {
+    return resolveCompositeTimeoutMs(requestedMs, this.requestTimeoutMs * MAX_BROWSER_BATCH_CALLS);
+  }
+
   async sendWaitClickRead(params = {}) {
+    const totalMs = this.compositeBudgetMs(params.timeoutMs);
     const calls = [
       {
         tool: 'browser_wait',
@@ -457,7 +586,7 @@ export class LocalBridgeServer {
           tabId: params.tabId,
           selector: params.waitSelector,
           visible: params.visible === true,
-          timeoutMs: params.timeoutMs,
+          timeoutMs: compositeSlice(totalMs, COMPOSITE_SINGLE_WAIT_SHARE),
         },
       },
       {
@@ -481,10 +610,11 @@ export class LocalBridgeServer {
         },
       },
     ];
-    return await this.sendBatch({ calls, timeoutMs: params.timeoutMs, stopOnError: true });
+    return await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
   }
 
   async sendNavigateWaitRead(params = {}) {
+    const totalMs = this.compositeBudgetMs(params.timeoutMs);
     const calls = [
       {
         tool: 'browser_navigate',
@@ -493,6 +623,7 @@ export class LocalBridgeServer {
           tabId: params.tabId,
           url: params.url,
           activate: false,
+          timeoutMs: compositeSlice(totalMs, COMPOSITE_NAVIGATE_SHARE),
         },
       },
       {
@@ -502,7 +633,7 @@ export class LocalBridgeServer {
           tabId: { $ref: 'navigate.tabId' },
           selector: params.waitSelector,
           visible: params.visible === true,
-          timeoutMs: params.timeoutMs,
+          timeoutMs: compositeSlice(totalMs, COMPOSITE_WAIT_AFTER_NAVIGATE_SHARE),
         },
       },
       {
@@ -516,10 +647,11 @@ export class LocalBridgeServer {
         },
       },
     ];
-    return await this.sendBatch({ calls, timeoutMs: params.timeoutMs, stopOnError: true });
+    return await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
   }
 
   async sendClickWaitSelectorRead(params = {}) {
+    const totalMs = this.compositeBudgetMs(params.timeoutMs);
     const calls = [
       {
         tool: 'browser_click',
@@ -538,7 +670,7 @@ export class LocalBridgeServer {
           tabId: params.tabId,
           selector: params.waitSelector,
           visible: params.visible === true,
-          timeoutMs: params.timeoutMs,
+          timeoutMs: compositeSlice(totalMs, COMPOSITE_SINGLE_WAIT_SHARE),
         },
       },
       {
@@ -552,12 +684,11 @@ export class LocalBridgeServer {
         },
       },
     ];
-    return await this.sendBatch({ calls, timeoutMs: params.timeoutMs, stopOnError: true });
+    return await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
   }
 
   async waitForDownload(params = {}) {
-    const downloadDir = process.env.UMBRA_DOWNLOAD_DIR || DEFAULT_DOWNLOAD_DIR;
-    const ledger = new FileDownloadLedger({ downloadDir });
+    const ledger = new FileDownloadLedger({ downloadDir: resolveDownloadDir() });
     const timeoutMs = Number.isFinite(Number(params.timeoutMs)) && Number(params.timeoutMs) > 0
       ? Math.min(Number(params.timeoutMs), 300_000)
       : 30_000;
@@ -576,8 +707,32 @@ export class LocalBridgeServer {
     });
   }
 
+  // Returns the Ahrefs export runner, or null when this build has no plugin.
+  // The injected runner wins. Without one, the module is resolved lazily and at
+  // most once, so a checkout that still carries ahrefs-export.js keeps the tool
+  // working while a published package that omits the file resolves to null and
+  // reports it plainly instead of failing to load.
+  async resolveAhrefsExport() {
+    if (this.runAhrefsExport) {
+      return this.runAhrefsExport;
+    }
+    if (!this.ahrefsExportLoad) {
+      this.ahrefsExportLoad = import('./ahrefs-export.js')
+        .then((module) => (typeof module.runAhrefsExport === 'function' ? module.runAhrefsExport : null))
+        .catch(() => null);
+    }
+    this.runAhrefsExport = await this.ahrefsExportLoad;
+    return this.runAhrefsExport;
+  }
+
   async exportAhrefs(params = {}) {
-    return await runAhrefsExport((tool, toolParams) => this.sendCommand(tool, toolParams), params);
+    const runExport = await this.resolveAhrefsExport();
+    if (!runExport) {
+      throw new Error(
+        'Ahrefs export plugin is not installed in this build. browser_export_ahrefs needs ahrefs-export.js, which ships only with a full checkout.',
+      );
+    }
+    return await runExport((tool, toolParams) => this.sendCommand(tool, toolParams), params);
   }
 
 }

@@ -16,6 +16,9 @@ export class SessionStateStore {
   constructor(storageArea = chrome.storage.session ?? chrome.storage.local) {
     this.storageArea = storageArea;
     this.sessions = new Map();
+    // Stays false until load() has read stored state back. persist() refuses to
+    // write while it is false, which is the backstop described on persist().
+    this.loaded = false;
   }
 
   async load() {
@@ -38,16 +41,27 @@ export class SessionStateStore {
             ])
         : [],
     );
+    this.loaded = true;
     return this;
   }
 
+  // persist() overwrites the whole stored map, so a write that lands before the
+  // first load() replaces every session's tab ownership with an empty list and
+  // orphans the tabs. A service worker woken by a message can reach a persist()
+  // call before load() resolves, so refuse the write instead of destroying
+  // state. Returns true when the write happened and false when it was skipped.
   async persist() {
+    if (!this.loaded) {
+      return false;
+    }
+
     await this.storageArea.set({
       [STORAGE_KEY]: [...this.sessions.values()].map((session) => ({
         ...session,
         tabIds: [...new Set(session.tabIds)],
       })),
     });
+    return true;
   }
 
   ensureSession(sessionId, port = null, options = {}) {

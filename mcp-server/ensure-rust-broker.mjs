@@ -6,17 +6,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { resolveBrokerSocketPath, resolveLaunchdLabel } from './config.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
-const socketPath = process.env.UMBRA_BROKER_SOCKET
-  || '/tmp/umbra-rust-broker.sock';
+const socketPath = resolveBrokerSocketPath();
 const brokerBin = process.env.UMBRA_BROKER_BIN
   || path.join(repoRoot, 'rust-broker', 'target', 'release', 'umbra-rust-broker');
-const label = process.env.UMBRA_BROKER_LAUNCHD_LABEL
-  || 'com.robertlora.umbra-broker';
+const label = resolveLaunchdLabel();
+const logPath = path.join(os.homedir(), '.umbra', 'logs', 'umbra-rust-broker.log');
 const timeoutMs = Number(process.env.UMBRA_BROKER_CHECK_TIMEOUT_MS || 1500);
 const waitMs = Number(process.env.UMBRA_BROKER_START_TIMEOUT_MS || 8000);
 
+// The broker answers a health probe with one short JSON line built in
+// rust-broker/src/health.rs, and this reader stops at the first newline, so the
+// buffer here never grows past a few hundred bytes. No chunked framing needed.
 function health() {
   return new Promise((resolve) => {
     const socket = net.createConnection(socketPath);
@@ -54,6 +58,19 @@ function health() {
   });
 }
 
+function ensureDirectory(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // A concurrent starter may have created it first. A genuinely unwritable
+    // path surfaces a line later as a socket bind or log redirect failure.
+  }
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 function uid() {
   return process.getuid?.() ?? os.userInfo().uid;
 }
@@ -66,6 +83,10 @@ function domainTarget() {
   return `gui/${uid()}`;
 }
 
+// The launchd label is only ever read or kicked. Nothing in this project writes
+// a plist or bootstraps a service, so on a machine with no matching job
+// isLaunchdLoaded() returns false and main() falls through to
+// spawnDetachedBroker(). Installing the job is a deliberate opt-in step.
 function serviceTarget() {
   return `${domainTarget()}/${label}`;
 }
@@ -97,8 +118,13 @@ function spawnDetachedBroker() {
   if (!fs.existsSync(brokerBin)) {
     return false;
   }
-  const child = spawnSync('sh', ['-c', `nohup ${JSON.stringify(brokerBin)} >>/tmp/umbra-rust-broker.log 2>&1 &`], {
-    env: process.env,
+  ensureDirectory(path.dirname(logPath));
+  const command = `nohup ${shellQuote(brokerBin)} >>${shellQuote(logPath)} 2>&1 &`;
+  const child = spawnSync('sh', ['-c', command], {
+    // Pin the socket path for the child so the broker binds exactly where this
+    // script and check-rust-broker.mjs look for it, whatever default the binary
+    // was compiled with.
+    env: { ...process.env, UMBRA_BROKER_SOCKET: socketPath },
     encoding: 'utf8',
   });
   return child.status === 0;
@@ -121,6 +147,7 @@ async function main() {
     process.exit(0);
   }
 
+  ensureDirectory(path.dirname(socketPath));
   removeStaleSocket();
   const kicked = kickstartLaunchd();
   if (!kicked) {

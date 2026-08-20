@@ -8,6 +8,8 @@ const DEBUG_UPDATE_MIN_INTERVAL_MS = 15_000;
 const HEARTBEAT_MIN_INTERVAL_MS = 30_000;
 const CONNECTING_TIMEOUT_MS = 4_000;
 const UNAUTHENTICATED_OPEN_TIMEOUT_MS = 6_000;
+const KEEPALIVE_PING_INTERVAL_MS = 15_000;
+const KEEPALIVE_TEARDOWN_MS = 45_000;
 const connections = new Map();
 let nextScanIndex = 0;
 let lastDesiredPortSignature = '';
@@ -137,7 +139,50 @@ function destroyConnection(port) {
   connections.delete(port);
 }
 
+// Application-level keepalive, sender half. Browser JavaScript cannot send a
+// WebSocket protocol ping and never surfaces a protocol pong to a message
+// listener, so proving an authenticated socket is still alive takes a frame the
+// message handler can see. This sends { type: 'ping' } and the peer answers
+// { type: 'pong' }, which lands in the message listener and advances
+// lastMessageAt. The failures it catches are sleep and wake, and a peer process
+// that is running but no longer servicing its socket.
+function sendKeepalivePing(port, connection, now = Date.now()) {
+  if (connection.socket.readyState !== WebSocket.OPEN || !connection.authenticated) {
+    return false;
+  }
+  if (now - connection.lastPingAt < KEEPALIVE_PING_INTERVAL_MS) {
+    return false;
+  }
+
+  connection.lastPingAt = now;
+  try {
+    connection.socket.send(JSON.stringify({ type: 'ping', ts: now }));
+  } catch {
+    destroyConnection(port);
+    return false;
+  }
+  return true;
+}
+
 function closeExpiredConnection(port, connection, now = Date.now()) {
+  // An authenticated socket that answered at least one ping and has since gone
+  // silent past KEEPALIVE_TEARDOWN_MS is dead even though readyState still
+  // reports OPEN, and resyncConnections will not redial a port whose socket
+  // reports OPEN, so the dead socket blocks its own replacement until it is
+  // destroyed here. The pongSeen gate keeps this branch off any peer that never
+  // answers a ping, so a companion server without a pong handler keeps the
+  // previous behaviour instead of looping through a disconnect every 45 seconds.
+  if (
+    connection.socket.readyState === WebSocket.OPEN
+    && connection.authenticated
+    && connection.pongSeen === true
+    && connection.lastMessageAt > 0
+    && now - connection.lastMessageAt > KEEPALIVE_TEARDOWN_MS
+  ) {
+    destroyConnection(port);
+    return true;
+  }
+
   if (
     connection.socket.readyState === WebSocket.CONNECTING
     && now - connection.createdAt > CONNECTING_TIMEOUT_MS
@@ -217,7 +262,10 @@ async function resyncConnections(options = {}) {
     for (const port of [...connections.keys()]) {
       destroyConnection(port);
     }
-    await publishStatus({ force: true });
+    // Plain publishStatus, never forced. Forcing skipped the
+    // STATUS_UPDATE_MIN_INTERVAL_MS throttle, so an install with no shared key
+    // wrote an identical status to chrome.storage.local on every scan tick.
+    await publishStatus();
     await setDebugStatus(
       { state: 'idle', message: 'Waiting for shared key or enabled bridge.' },
       { minIntervalMs: DEBUG_UPDATE_MIN_INTERVAL_MS, throttleKey: 'idle' },
@@ -236,7 +284,10 @@ async function resyncConnections(options = {}) {
 
   const now = Date.now();
   for (const [port, connection] of [...connections.entries()]) {
-    closeExpiredConnection(port, connection, now);
+    if (closeExpiredConnection(port, connection, now)) {
+      continue;
+    }
+    sendKeepalivePing(port, connection, now);
   }
 
   const authenticatedCount = [...connections.values()].filter((connection) => connection.authenticated).length;
@@ -287,6 +338,8 @@ async function tryConnect(port, config, installId) {
     createdAt: Date.now(),
     openedAt: 0,
     lastMessageAt: 0,
+    lastPingAt: 0,
+    pongSeen: false,
     authenticated: false,
     isBroker: false,
     installId,
@@ -313,6 +366,15 @@ async function tryConnect(port, config, installId) {
     try {
       message = JSON.parse(event.data);
     } catch {
+      return;
+    }
+
+    // Keepalive receiver half. The assignment to lastMessageAt above already
+    // recorded that this socket is alive; pongSeen records that the peer
+    // understands the ping frame, which is what arms the teardown branch in
+    // closeExpiredConnection.
+    if (message.type === 'pong') {
+      state.pongSeen = true;
       return;
     }
 

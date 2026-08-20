@@ -3,11 +3,11 @@ use crate::health::{
 };
 use crate::pressure::PressureCounters;
 use crate::session::{RoutingTarget, SessionError, SessionRegistry};
-use serde::{Deserialize, Serialize};
 use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -19,7 +19,38 @@ const DEFAULT_IDLE_EMPTY_SESSION_TTL_MS: u64 = 20 * 60 * 1000;
 const DEFAULT_IDLE_EMPTY_SESSION_MIN_AGE_MS: u64 = 5 * 60 * 1000;
 const DEFAULT_IDLE_REAPER_INTERVAL_MS: u64 = 60 * 1000;
 const DEFAULT_BROKER_SESSION_ID: &str = "umbra-rust-broker";
-const DEFAULT_BROKER_SOCKET_PATH: &str = "/tmp/umbra-rust-broker.sock";
+
+/// Per-user default for the shim socket, mirroring `resolveBrokerSocketPath()`
+/// in `mcp-server/config.js`.
+///
+/// The two resolvers must produce the identical string: the broker binds this
+/// path and the Node companion dials it, so any divergence leaves the shim
+/// connecting to a socket nothing ever created. That is also why this function
+/// does not consult `XDG_RUNTIME_DIR`, even though a runtime directory is the
+/// conventional home for a socket on Linux; the Node resolver does not consult
+/// it either, and anyone who wants the socket elsewhere sets
+/// `UMBRA_BROKER_SOCKET` on both sides.
+///
+/// The old default lived at `/tmp/umbra-rust-broker.sock`. `/tmp` is
+/// world-writable, so an unprivileged local account could pre-create that path
+/// and make the startup `remove_file` fail under the sticky bit, which is a
+/// denial of service against every session on the machine.
+fn default_broker_socket_path() -> String {
+    let home = env::var("HOME").unwrap_or_default();
+    let trimmed = home.trim();
+    let base = if trimmed.is_empty() {
+        // HOME is unset only in a broken environment. Anchor to the current
+        // directory rather than to world-writable /tmp, and expect anyone
+        // running that way to set UMBRA_BROKER_SOCKET explicitly.
+        PathBuf::from(".umbra")
+    } else {
+        Path::new(trimmed).join(".umbra")
+    };
+    base.join("run")
+        .join("broker.sock")
+        .to_string_lossy()
+        .into_owned()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrokerConfig {
@@ -53,7 +84,7 @@ impl Default for BrokerConfig {
             idle_empty_session_min_age_ms: DEFAULT_IDLE_EMPTY_SESSION_MIN_AGE_MS,
             idle_reaper_interval_ms: DEFAULT_IDLE_REAPER_INTERVAL_MS,
             broker_session_id: DEFAULT_BROKER_SESSION_ID.to_string(),
-            socket_path: DEFAULT_BROKER_SOCKET_PATH.to_string(),
+            socket_path: default_broker_socket_path(),
         }
     }
 }
@@ -149,13 +180,6 @@ impl fmt::Display for ConfigError {
 
 impl Error for ConfigError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoutedCommand {
-    pub tool: String,
-    pub params: serde_json::Value,
-    pub target: RoutingTarget,
-}
-
 #[derive(Debug, Clone)]
 pub struct RustBroker {
     config: BrokerConfig,
@@ -207,21 +231,21 @@ impl RustBroker {
         Ok(())
     }
 
+    /// Resolve the channel a session's command travels over.
+    ///
+    /// This used to return a `RoutedCommand` carrying a cloned `params` tree and
+    /// a freshly allocated `tool` String. Nothing in the crate or its tests ever
+    /// read either field, so both allocations were paid per command and thrown
+    /// away by the caller. The routing target is the only value with a reader.
     pub async fn route_session_command(
         &self,
         session_id: &str,
-        tool: impl Into<String>,
-        params: serde_json::Value,
-    ) -> Result<RoutedCommand, SessionError> {
+    ) -> Result<RoutingTarget, SessionError> {
         match self.registry.route_session(session_id).await {
             Ok(target) => {
                 self.pressure.observe_routed_command();
                 self.registry.touch_session(session_id).await;
-                Ok(RoutedCommand {
-                    tool: tool.into(),
-                    params,
-                    target,
-                })
+                Ok(target)
             }
             Err(error) => {
                 self.pressure.observe_rejected_command();
@@ -230,22 +254,25 @@ impl RustBroker {
         }
     }
 
+    /// Resolve the channel for a command against one specific tab, refusing a
+    /// tab the session does not own.
+    ///
+    /// The runtime no longer calls this on the command path: the broker's tab
+    /// map is a non-authoritative copy of state the extension owns, and it is
+    /// empty after a broker restart, so gating there rejected commands for tabs
+    /// the extension still owned. The extension enforces ownership itself in the
+    /// process that holds the tabs. This stays as the registry-level ownership
+    /// check that health reporting and the ownership tests exercise.
     pub async fn route_tab_command(
         &self,
         session_id: &str,
         tab_id: u64,
-        tool: impl Into<String>,
-        params: serde_json::Value,
-    ) -> Result<RoutedCommand, SessionError> {
+    ) -> Result<RoutingTarget, SessionError> {
         match self.registry.route_tab(session_id, tab_id).await {
             Ok(target) => {
                 self.pressure.observe_routed_command();
                 self.registry.touch_session(session_id).await;
-                Ok(RoutedCommand {
-                    tool: tool.into(),
-                    params,
-                    target,
-                })
+                Ok(target)
             }
             Err(error) => {
                 self.pressure.observe_rejected_command();
@@ -329,4 +356,22 @@ fn load_shared_key_from_env() -> Result<String, ConfigError> {
         message: error.to_string(),
     })?;
     Ok(contents.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_shim_socket_is_per_user_and_outside_tmp() {
+        let socket_path = BrokerConfig::default().socket_path;
+        assert!(
+            !socket_path.starts_with("/tmp/"),
+            "a world-writable directory lets another local account pre-create the path and block startup, got {socket_path}"
+        );
+        assert!(
+            socket_path.ends_with(".umbra/run/broker.sock"),
+            "the Rust default must match resolveBrokerSocketPath() in mcp-server/config.js, got {socket_path}"
+        );
+    }
 }

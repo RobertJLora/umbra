@@ -5,13 +5,33 @@ import { SessionStateStore } from '../../extension/session-state.js';
 function createStorage(initialState = {}) {
   const state = { ...initialState };
   return {
+    state,
+    setCalls: 0,
     async get(defaults) {
       return { ...defaults, ...state };
     },
     async set(values) {
+      this.setCalls += 1;
       Object.assign(state, values);
     },
   };
+}
+
+// Storage whose get() stays pending until the test releases it, so a persist
+// can be attempted while load() is still in flight.
+function createBlockingStorage(initialState = {}) {
+  const storage = createStorage(initialState);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const inner = storage.get.bind(storage);
+  storage.get = async (defaults) => {
+    await gate;
+    return inner(defaults);
+  };
+  storage.release = release;
+  return storage;
 }
 
 test('extension session state persists owned tabs and active tab', async () => {
@@ -26,6 +46,50 @@ test('extension session state persists owned tabs and active tab', async () => {
   const reloaded = await new SessionStateStore(storage).load();
   assert.deepEqual(reloaded.listTabIds('sess_a'), [101, 102]);
   assert.equal(reloaded.getSession('sess_a').activeTabId, 102);
+});
+
+test('extension session state refuses to persist before load resolves', async () => {
+  const storage = createBlockingStorage({
+    bridgeSessionState: [
+      { sessionId: 'sess_a', tabIds: [101, 102], activeTabId: 102, groupId: 55, connected: true },
+    ],
+  });
+  const store = new SessionStateStore(storage);
+  const loading = store.load();
+
+  store.claimTab('sess_b', 900);
+  const wrote = await store.persist();
+
+  assert.equal(wrote, false);
+  assert.equal(storage.setCalls, 0);
+  assert.deepEqual(storage.state.bridgeSessionState, [
+    { sessionId: 'sess_a', tabIds: [101, 102], activeTabId: 102, groupId: 55, connected: true },
+  ]);
+
+  storage.release();
+  await loading;
+
+  assert.deepEqual(store.listTabIds('sess_a'), [101, 102]);
+});
+
+test('extension session state persists the full map once load has resolved', async () => {
+  const storage = createStorage();
+  const store = await new SessionStateStore(storage).load();
+
+  store.claimTab('sess_a', 101);
+  store.claimTab('sess_b', 202);
+  store.setGroup('sess_b', 77);
+  const wrote = await store.persist();
+
+  assert.equal(wrote, true);
+  assert.equal(storage.setCalls, 1);
+  assert.deepEqual(
+    storage.state.bridgeSessionState.map((entry) => [entry.sessionId, entry.tabIds, entry.groupId]),
+    [
+      ['sess_a', [101], null],
+      ['sess_b', [202], 77],
+    ],
+  );
 });
 
 test('extension session state rejects cross-session tab claims', async () => {

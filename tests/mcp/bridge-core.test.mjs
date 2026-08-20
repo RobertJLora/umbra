@@ -9,43 +9,67 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 
 function createSocket() {
+  const handlers = {};
   return {
     readyState: 1,
     closed: null,
+    sent: [],
+    handlers,
+    send(payload, callback = () => {}) {
+      this.sent.push(JSON.parse(payload));
+      callback();
+    },
     close(code, reason) {
       this.closed = { code, reason };
+      handlers.close?.();
     },
-    on() {
-      throw new Error('duplicate connection should be rejected before listeners are attached');
+    on(event, handler) {
+      handlers[event] = handler;
     },
   };
 }
 
-test('bridge rejects duplicate scanner sockets while a healthy channel is connected', async () => {
-  const bridge = new LocalBridgeServer({
+function newBridge(sessionId, options = {}) {
+  return new LocalBridgeServer({
     sharedKey: 'test-shared-key',
-    sessionId: 'sess_duplicate',
+    sessionId,
     portStart: 47821,
     portEnd: 47821,
+    ...options,
   });
+}
+
+test('a second extension connection supersedes the first instead of being refused', async () => {
+  const bridge = newBridge('sess_supersede');
   const existingSocket = createSocket();
-  const duplicateSocket = createSocket();
+  const replacementSocket = createSocket();
 
   bridge.registry.setChannel({ socket: existingSocket, port: 47821 });
   bridge.registry.markAuthenticated({ extensionInstanceId: 'install_a' });
 
+  // A command that is still in flight on the socket being displaced. It can
+  // never be answered once that socket closes, so it must fail immediately
+  // rather than wait out its transport timeout.
+  const inFlight = new Promise((resolve, reject) => {
+    bridge.registry.addPendingRequest('req_stale', {
+      resolve,
+      reject,
+      timer: setTimeout(() => reject(new Error('test leaked timer')), 1_000),
+      tool: 'browser_list_tabs',
+    });
+  });
+
   await bridge.handleConnection(
-    duplicateSocket,
+    replacementSocket,
     { socket: { remoteAddress: '127.0.0.1' } },
     { nonce: 'client_nonce' },
   );
 
-  assert.deepEqual(duplicateSocket.closed, {
-    code: 4005,
-    reason: 'session_already_connected',
-  });
-  assert.equal(existingSocket.closed, null);
-  assert.equal(bridge.registry.getStatus().channel.port, 47821);
+  assert.deepEqual(existingSocket.closed, { code: 4000, reason: 'superseded' });
+  assert.equal(replacementSocket.closed, null);
+  assert.equal(bridge.registry.channel.socket, replacementSocket);
+  assert.equal(replacementSocket.sent[0].type, 'hello_ack');
+  await assert.rejects(inFlight, /Extension channel disconnected: superseded/);
 });
 
 test('bridge exposes listener health without needing a WebSocket bind', () => {
@@ -56,31 +80,66 @@ test('bridge exposes listener health without needing a WebSocket bind', () => {
   assert.match(source, /channel: status\.channel/);
 });
 
+test('bridge source carries no home directory default and no static Ahrefs import', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'mcp-server', 'bridge-core.js'), 'utf8');
+
+  assert.doesNotMatch(source, /\/Users\//);
+  assert.match(source, /resolveDownloadDir/);
+  assert.doesNotMatch(source, /^import[^\n]*'\.\/ahrefs-export\.js'/m);
+});
+
 test('legacy bridge handshake still advertises protocol v1', async () => {
-  const bridge = new LocalBridgeServer({
-    sharedKey: 'test-shared-key',
-    sessionId: 'sess_protocol_v1',
-    portStart: 47821,
-    portEnd: 47821,
-  });
-  const handlers = {};
-  const socket = {
-    sent: [],
-    send(payload) {
-      this.sent.push(JSON.parse(payload));
-    },
-    close() {},
-    on(event, handler) {
-      handlers[event] = handler;
-    },
-  };
+  const bridge = newBridge('sess_protocol_v1');
+  const socket = createSocket();
 
   await bridge.handleConnection(socket, { socket: { remoteAddress: '127.0.0.1' } }, { nonce: 'client_nonce' });
-  handlers.close?.();
+  socket.handlers.close?.();
 
   assert.equal(socket.sent[0].type, 'hello_ack');
   assert.equal(socket.sent[0].sessionId, 'sess_protocol_v1');
   assert.equal(socket.sent[0].protocolVersion, 1);
+});
+
+test('an authenticated ping is answered with a pong', async () => {
+  const bridge = newBridge('sess_keepalive');
+  const socket = createSocket();
+
+  await bridge.handleConnection(socket, { socket: { remoteAddress: '127.0.0.1' } }, { nonce: 'client_nonce' });
+  bridge.registry.markAuthenticated({ extensionInstanceId: 'install_a', socket });
+
+  socket.handlers.message(Buffer.from(JSON.stringify({ type: 'ping', id: 'keepalive_1' })));
+
+  const pong = socket.sent.find((frame) => frame.type === 'pong');
+  assert.ok(pong, `expected a pong frame, got ${JSON.stringify(socket.sent)}`);
+  assert.equal(pong.id, 'keepalive_1');
+  assert.equal(pong.sessionId, 'sess_keepalive');
+  assert.equal(socket.closed, null);
+});
+
+test('exportAhrefs runs the injected plugin and names it plainly when it is missing', async () => {
+  const seen = [];
+  const withPlugin = newBridge('sess_ahrefs_injected', {
+    runAhrefsExport: async (sendCommand, params) => {
+      seen.push({ hasSendCommand: typeof sendCommand === 'function', params });
+      return { ok: true, rowCount: 3 };
+    },
+  });
+
+  assert.deepEqual(await withPlugin.exportAhrefs({ report: 'organic-keywords' }), {
+    ok: true,
+    rowCount: 3,
+  });
+  assert.deepEqual(seen, [{ hasSendCommand: true, params: { report: 'organic-keywords' } }]);
+
+  const withoutPlugin = newBridge('sess_ahrefs_absent');
+  // Stands in for a published package whose files allowlist omits
+  // ahrefs-export.js, where the lazy import resolves to nothing.
+  withoutPlugin.ahrefsExportLoad = Promise.resolve(null);
+
+  await assert.rejects(
+    withoutPlugin.exportAhrefs({}),
+    /Ahrefs export plugin is not installed in this build/,
+  );
 });
 
 test('protocol docs include v2 broker goldens while preserving legacy fallback', () => {

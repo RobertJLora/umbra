@@ -42,11 +42,16 @@
         font: inherit;
         background: #fff;
       }
+      #sharedKey {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
       .actions {
         display: flex;
+        flex-wrap: wrap;
         gap: 12px;
         margin-top: 16px;
       }
+      .actions.key-actions { margin-top: 10px; }
       button {
         border: 0;
         border-radius: 999px;
@@ -57,6 +62,7 @@
       }
       button.primary { background: #1d4ed8; color: #fff; }
       button.secondary { background: #dbeafe; color: #1e293b; }
+      button[disabled] { cursor: default; opacity: 0.65; }
       .status {
         display: flex;
         align-items: center;
@@ -68,32 +74,77 @@
         height: 12px;
         border-radius: 999px;
         background: #94a3b8;
+        flex: 0 0 auto;
       }
       .dot.on { background: #16a34a; }
-      ul {
+      .dot.bad { background: #dc2626; }
+      .bad { color: #b91c1c; }
+      ul, ol {
         margin: 10px 0 0;
-        padding-left: 18px;
+        padding-left: 20px;
       }
+      ol li { margin-bottom: 8px; }
+      .lede {
+        margin: 0 0 14px;
+        color: #475569;
+      }
+      .hint {
+        margin: 10px 0 0;
+        color: #475569;
+        font-weight: 400;
+      }
+      .footer {
+        text-align: center;
+        color: #475569;
+        font-size: 12px;
+      }
+      a { color: #1d4ed8; }
       code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
     <div class="shell">
       <section class="card">
         <h1>Umbra Settings</h1>
+        <p class="lede">
+          Umbra pairs this browser with a companion server running on your own machine over a
+          loopback connection. The two pair with a shared key you create here. Nothing works until
+          the companion server is running with the same key.
+        </p>
         <div class="status">
           <span id="status-dot" class="dot"></span>
-          <span id="status-text">Loading status…</span>
+          <span id="status-text">Loading status...</span>
         </div>
+      </section>
+
+      <section class="card" id="firstRunCard" hidden>
+        <h2>First Run</h2>
+        <ol>
+          <li>Click <strong>Generate Key</strong> below, then <strong>Save And Reconnect</strong>.</li>
+          <li>Click <strong>Copy Environment Line</strong> and paste that line into the environment
+            block of your MCP client's Umbra entry, then start the companion server.</li>
+          <li>Click <strong>Grant Site Access</strong> so Umbra can drive the tabs a session opens.</li>
+        </ol>
+        <p class="hint">The status dot at the top turns green once the companion server connects.</p>
       </section>
 
       <section class="card">
         <h2>Connection</h2>
         <label>
           Shared Key
-          <input id="sharedKey" type="password" autocomplete="off" />
+          <input id="sharedKey" type="password" autocomplete="off" placeholder="Click Generate Key to create one" />
         </label>
-        <div class="grid">
+        <div class="actions key-actions">
+          <button id="generateButton" class="secondary">Generate Key</button>
+          <button id="copyButton" class="secondary">Copy Environment Line</button>
+        </div>
+        <p class="hint">
+          The environment line carries the key and the port range in one string, so the key is typed
+          nowhere. A generated key replaces the old one: any companion server still holding the
+          previous key stops pairing.
+        </p>
+        <div class="grid" style="margin-top:14px;">
           <label>
             Port Start
             <input id="portStart" type="number" min="1024" max="47852" />
@@ -115,6 +166,22 @@
       </section>
 
       <section class="card">
+        <h2>Site Access</h2>
+        <div class="status">
+          <span id="perm-dot" class="dot"></span>
+          <span id="perm-text">Checking site access...</span>
+        </div>
+        <p class="hint">
+          Umbra reads and drives only the tabs a session owns, and it opens those tabs itself in a
+          labelled group. Chrome has no way to grant that per tab, so it asks for site access once,
+          here, instead of at install time.
+        </p>
+        <div class="actions">
+          <button id="grantButton" class="primary">Grant Site Access</button>
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Session Status</h2>
         <ul id="sessionsList"></ul>
       </section>
@@ -124,10 +191,7 @@
         <pre id="debugBox" style="white-space:pre-wrap; margin:0;"></pre>
       </section>
 
-      <section class="card">
-        <h2>Expected Test Values</h2>
-        <p>For the current local smoke test, use port range <code>47821-47852</code>.</p>
-      </section>
+      <p class="footer"><a id="homepageLink" href="#" target="_blank" rel="noreferrer" hidden>Setup guide and source</a></p>
     </div>
     <script type="module" src="options.js"></script>
   </body>
