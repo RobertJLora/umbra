@@ -200,7 +200,13 @@ async function scanForIdentityLeaks(scopes) {
       continue;
     }
     scannedFileCount += 1;
-    const lines = content.split('\n');
+    // The author deliberately points homepage_url and the listing at their own
+    // site, which carries the author name. That one host is neutralized before
+    // the scan so the approved occurrence passes while the name stays blocked
+    // everywhere else.
+    const lines = content
+      .split('\n')
+      .map((line) => line.split('robertjohnlora.com').join('#'.repeat('robertjohnlora.com'.length)));
     for (let index = 0; index < lines.length; index += 1) {
       for (const pattern of IDENTITY_PATTERNS) {
         if (pattern.regex.test(lines[index])) {

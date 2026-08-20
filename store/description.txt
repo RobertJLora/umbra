@@ -6,7 +6,7 @@ This extension does nothing on its own. It pairs with a companion server that ru
 
 npx -y @umbra-mcp/server pair
 
-That command prints the configuration block your MCP client needs. The extension's options page generates the shared key both sides use and shows connection status. Full setup walkthrough: https://github.com/getumbra/umbra/blob/main/docs/install.md
+That command prints the configuration block your MCP client needs. The extension's options page generates the shared key both sides use and shows connection status. Full setup walkthrough: https://robertjohnlora.com/umbra
 
 HOW THE BOUNDARY WORKS
 
@@ -44,4 +44,4 @@ Site access is optional and is not granted at install. The options page asks for
 
 The debugger permission is the widest one declared, and it does three things: capture a screenshot without activating the tab, populate a file input, and run JavaScript that a caller supplied. Attachment happens only against a tab the calling session already owns, it is released as soon as the work finishes, and Chrome shows its automation banner for as long as it lasts. Caller-supplied code runs through the debugger API rather than being compiled inside the extension.
 
-Requires Chrome 121 or later. Source, architecture notes, threat model, and a per-permission justification: https://github.com/getumbra/umbra
+Requires Chrome 121 or later. Source, architecture notes, threat model, and a per-permission justification: https://robertjohnlora.com/umbra

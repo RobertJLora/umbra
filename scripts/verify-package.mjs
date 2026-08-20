@@ -244,11 +244,27 @@ export function readPngChunkTypes(buffer) {
 
 // --- verification ----------------------------------------------------------
 
+// The author deliberately chose their personal site as Umbra's public home, so
+// homepage_url and the listing point at it. That host contains the author name,
+// which every other identity check still blocks. It is neutralized here before
+// the scan (replaced with same-length filler so line numbers are unchanged), so
+// the one approved occurrence passes while the name stays blocked everywhere
+// else.
+const APPROVED_IDENTITY_STRINGS = ['robertjohnlora.com'];
+
+function neutralizeApproved(text) {
+  let out = text;
+  for (const approved of APPROVED_IDENTITY_STRINGS) {
+    out = out.split(approved).join('#'.repeat(approved.length));
+  }
+  return out;
+}
+
 function scanText(entries, patterns, describe) {
   const hits = [];
   for (const entry of entries) {
     if (entry.isDirectory || !isTextEntry(entry.name)) continue;
-    const text = entry.data.toString('utf8');
+    const text = neutralizeApproved(entry.data.toString('utf8'));
     for (const pattern of patterns) {
       const re = pattern.re ?? pattern;
       const match = re.exec(text);
@@ -441,7 +457,7 @@ export function checkStoreListingText(root = REPO_ROOT, files = STORE_TEXT_FILES
   for (const relative of files) {
     let text;
     try {
-      text = fs.readFileSync(path.join(root, relative), 'utf8');
+      text = neutralizeApproved(fs.readFileSync(path.join(root, relative), 'utf8'));
     } catch {
       continue;
     }

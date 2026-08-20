@@ -113,6 +113,6 @@ Do not append this line to the description. A visible keyword block reads as spa
 
 **External dependency disclosure.** Google's documented path for an extension that needs a separate local program is a plain statement in the description plus test instructions in the reviewer field. The description block titled "Requires a local companion server" is that statement, and it appears above the fold rather than in a footnote. The reviewer notes carry the matching install command and screencast.
 
-**Links to verify before submitting.** Both URLs in the description point at `github.com/getumbra/umbra`, matching the manifest's `homepage_url`. The repository and the `docs/install.md` path on its default branch must both load publicly before the listing goes in, because a broken link in a description is a rejection reason on its own.
+**Links to verify before submitting.** Both URLs in the description point at `robertjohnlora.com/umbra`, matching the manifest's `homepage_url`. The repository and the `docs/install.md` path on its default branch must both load publicly before the listing goes in, because a broken link in a description is a rejection reason on its own.
 
 **Consistency check at submission time.** The tool count in the description says 47. If a tool is added or removed from the public build, that number and the "What you get" bullet change with it.

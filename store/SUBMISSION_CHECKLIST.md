@@ -20,7 +20,7 @@ None of these can be automated, delegated, or done by an agent. They need the ow
 
 **DONE: privacy policy hosted publicly.** Live at **https://umbra-privacy.pages.dev** (Cloudflare Pages, noindex, no login). Rendered from `store/privacy.html`. This URL goes in two places: the Privacy practices tab of the dashboard, and the listing. Re-deploy with `wrangler pages deploy` if the policy changes.
 
-**OPEN: `homepage_url` in the manifest still points at `https://github.com/getumbra/umbra`, which is not public** (the code lives on Cursor Origin, private). Either build a small public landing page (Cloudflare Pages, same flow as the privacy page) and point `homepage_url` + the listing website field at it, or point both at the privacy page for now. Do not ship a `homepage_url` that 404s on the store listing.
+**OPEN: `homepage_url` in the manifest still points at `https://robertjohnlora.com/umbra`, which is not public** (the code lives on Cursor Origin, private). Either build a small public landing page (Cloudflare Pages, same flow as the privacy page) and point `homepage_url` + the listing website field at it, or point both at the privacy page for now. Do not ship a `homepage_url` that 404s on the store listing.
 
 ```
 Privacy policy URL: ______________________________________
@@ -34,15 +34,15 @@ Privacy policy URL: ______________________________________
 
 Two links and one command in the listing copy do not resolve yet. Each of them is a rejection on its own, so none of section 2 is worth running until all three are true:
 
-- `https://github.com/getumbra/umbra` returns 200. It is `homepage_url` in the manifest and it is linked twice from `store/description.txt`.
-- `https://github.com/getumbra/umbra/blob/main/docs/install.md` returns 200 on the default branch.
+- `https://robertjohnlora.com/umbra` returns 200. It is `homepage_url` in the manifest and it is linked twice from `store/description.txt`.
+- `https://robertjohnlora.com/umbra` returns 200 on the default branch.
 - `npm view @umbra-mcp/server version` returns a version. `store/description.txt` gives `npx -y @umbra-mcp/server pair` as the one-line install, and a 404 there leaves a reviewer with no working path at all.
 
 Check all three in one go:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://github.com/getumbra/umbra
-curl -s -o /dev/null -w '%{http_code}\n' https://github.com/getumbra/umbra/blob/main/docs/install.md
+curl -s -o /dev/null -w '%{http_code}\n' https://robertjohnlora.com/umbra
+curl -s -o /dev/null -w '%{http_code}\n' https://robertjohnlora.com/umbra
 npm view @umbra-mcp/server version
 ```
 
@@ -81,7 +81,7 @@ Bump `version` in `extension/manifest.json` before every resubmission, including
 | Screenshots | At least one, five maximum | Assets below |
 | Small promo tile | 440 by 280 | Assets below |
 | Marquee promo tile | 1400 by 560, optional | Assets below |
-| Homepage URL | `https://github.com/getumbra/umbra`, matching `extension/manifest.json:6` | Already set |
+| Homepage URL | `https://robertjohnlora.com/umbra`, matching `extension/manifest.json:6` | Already set |
 | Support URL | The repository issue tracker | `store/listing.md` |
 
 Two consistency checks before pasting anything. The description names a tool count; if the public build gained or lost a tool since the copy was written, that number is wrong and a reviewer can count. Both URLs in the description point at the repository named in `homepage_url`, and a description link that does not load is a rejection reason by itself, so open both.
