@@ -274,10 +274,25 @@ describe('navigation waits, ref resolution, and page recipes', () => {
     const optionsHtml = fs.readFileSync(path.join(repoRoot, 'extension', 'options.html'), 'utf8');
     const popupJs = fs.readFileSync(path.join(repoRoot, 'extension', 'popup.js'), 'utf8');
     const popupHtml = fs.readFileSync(path.join(repoRoot, 'extension', 'popup.html'), 'utf8');
+    assert.match(optionsHtml, /id="onboardingCard"/);
+    assert.doesNotMatch(optionsHtml, /id="onboardingCard"[^>]*hidden/);
+    assert.doesNotMatch(optionsHtml, /id="firstRunCard"/);
+    assert.match(optionsHtml, /<h2>How this works<\/h2>/);
+    assert.doesNotMatch(optionsJs, /firstRunCard/);
     assert.match(optionsHtml, /id="bridgeEnabled"[^>]*checked/);
     assert.match(popupHtml, /id="bridgeEnabled"[^>]*checked/);
     assert.match(optionsJs, /let settingsHydrated = false/);
-    assert.match(optionsJs, /if \(!settingsHydrated\) \{\s*await refresh\(\);/);
-    assert.match(popupJs, /if \(!settingsHydrated\) \{\s*await refreshState\(\);/);
+    assert.match(popupJs, /let settingsHydrated = false/);
+    // The previous fix awaited refresh() before reading the checkbox. That
+    // painted stored false over a click the user already made, then Save wrote
+    // false and killed the scanner. Save must merge with stored config instead.
+    assert.doesNotMatch(optionsJs, /if \(!settingsHydrated\) \{\s*await refresh\(\);/);
+    assert.doesNotMatch(popupJs, /if \(!settingsHydrated\) \{\s*await refreshState\(\);/);
+    assert.match(optionsJs, /typedKey \|\| stored\.sharedKey/);
+    assert.match(popupJs, /typedKey \|\| stored\.sharedKey/);
+    assert.match(optionsJs, /settingsHydrated\s*\n\s*\? el\('bridgeEnabled'\)\.checked\s*\n\s*: stored\.bridgeEnabled !== false/);
+    assert.match(popupJs, /settingsHydrated\s*\n\s*\? el\('bridgeEnabled'\)\.checked\s*\n\s*: stored\.bridgeEnabled !== false/);
+    const sharedJs = fs.readFileSync(path.join(repoRoot, 'extension', 'shared.js'), 'utf8');
+    assert.match(sharedJs, /if \(!String\(next\.sharedKey \|\| ''\)\.trim\(\)\) \{\s*next\.sharedKey = existing\.sharedKey;/);
   });
 });

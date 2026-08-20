@@ -525,6 +525,22 @@
       ol li { margin-bottom: 8px; }
       ol strong { color: var(--text); font-weight: 500; }
 
+      /* Map card: first list lines up with the heading, second list sits
+         under a hairline kicker rather than a second card. */
+      #onboardingCard ol:first-of-type { margin-top: 0; }
+      #onboardingCard ol li:last-child { margin-bottom: 0; }
+
+      .steps-kicker {
+        margin: 12px 0 0;
+        padding-top: 14px;
+        border-top: 1px solid var(--hair-soft);
+        font-size: 12px;
+        line-height: 1.65;
+        color: #7d779c;
+      }
+
+      #onboardingCard .steps-kicker + ol { margin-top: 8px; }
+
       [hidden] { display: none !important; }
 
       @media (max-width: 700px) {
@@ -555,20 +571,24 @@
         </div>
       </header>
 
-      <section class="card" id="firstRunCard" hidden>
+      <section class="card" id="onboardingCard">
         <div class="split">
           <div>
-            <h2>First Run</h2>
-            <p class="side-note">Three steps, once per install.</p>
+            <h2>How this works</h2>
+            <p class="side-note">Three things, then ignore the rest of this page.</p>
           </div>
           <div>
             <ol>
-              <li>Click <strong>Generate Key</strong> below, then <strong>Save And Reconnect</strong>.</li>
-              <li>Click <strong>Copy Environment Line</strong> and paste that line into the environment
-                block of your MCP client's Umbra entry, then start the companion server.</li>
-              <li>Click <strong>Grant Site Access</strong> so Umbra can drive the tabs a session opens.</li>
+              <li>Turn <strong>Enable loopback scanning</strong> on, then <strong>Save And Reconnect</strong>.</li>
+              <li>The companion on this Mac must be running with the same shared key as this page.</li>
+              <li><strong>Grant Site Access</strong> once so Umbra can drive tabs.</li>
             </ol>
-            <p class="hint">The status dot at the top turns violet once the companion server connects.</p>
+            <p class="steps-kicker">If agents still cannot connect</p>
+            <ol>
+              <li>Confirm scanning is on, then <strong>Save And Reconnect</strong> again.</li>
+              <li>Click <strong>Reload Extension</strong>.</li>
+              <li>Wait for the status dot to turn violet. Grey means this Chrome is still dark to agents.</li>
+            </ol>
           </div>
         </div>
       </section>
@@ -577,7 +597,7 @@
         <div class="split">
           <div>
             <h2>Pairing</h2>
-            <p class="side-note">The secret this browser and the companion server both hold. Sixty four
+            <p class="side-note">Must match the companion on this Mac. Sixty four
               hex characters, generated here, never typed.</p>
           </div>
           <div>
@@ -605,8 +625,8 @@
         <div class="split">
           <div>
             <h2>Connection</h2>
-            <p class="side-note">Umbra probes this loopback range for a companion server holding the
-              same key.</p>
+            <p class="side-note">Leave scanning on. Umbra probes this loopback range for a companion
+              holding the same key.</p>
           </div>
           <div>
             <div class="toggle-row">

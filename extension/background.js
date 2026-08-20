@@ -274,11 +274,17 @@ async function ensureOffscreenDocument() {
   // to chrome.storage.local continuously while doing no work.
   if (!(await bridgeIsConfigured())) {
     await closeOffscreenDocument();
+    const config = await loadBridgeConfig();
+    const message = config.sharedKey
+      ? 'Loopback scanning is off. Turn Enable loopback scanning on, then Save And Reconnect.'
+      : 'Set a shared key in the Umbra options page to start the local bridge scanner.';
     await chrome.storage.local.set({
       bridgeDebug: {
         updatedAt: Date.now(),
         state: 'bridge_not_configured',
-        message: 'Set a shared key in the Umbra options page to start the local bridge scanner.',
+        message,
+        hasSharedKey: Boolean(config.sharedKey),
+        scanningEnabled: config.bridgeEnabled === true,
       },
     });
     return;

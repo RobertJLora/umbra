@@ -150,7 +150,6 @@ function renderState(state) {
   el('portEnd').value = config.portEnd;
   el('bridgeEnabled').checked = config.bridgeEnabled !== false;
   settingsHydrated = true;
-  el('firstRunCard').hidden = Boolean(config.sharedKey);
 
   const connectedCount = bridgeStatus?.connectedCount || 0;
   if (pendingKey) {
@@ -214,14 +213,18 @@ el('copyButton').addEventListener(
 el('saveButton').addEventListener(
   'click',
   guarded(async () => {
-    if (!settingsHydrated) {
-      await refresh();
-    }
+    // Do not refresh() here. renderState would paint the stored checkbox over a
+    // click the user already made, then this handler would persist that old
+    // false and kill the scanner.
+    const stored = (await getState()).config || {};
+    const typedKey = el('sharedKey').value.trim();
     const config = {
-      sharedKey: el('sharedKey').value.trim(),
+      sharedKey: typedKey || stored.sharedKey || '',
       portStart: Number(el('portStart').value),
       portEnd: Number(el('portEnd').value),
-      bridgeEnabled: el('bridgeEnabled').checked,
+      bridgeEnabled: settingsHydrated
+        ? el('bridgeEnabled').checked
+        : stored.bridgeEnabled !== false,
     };
     if (!config.sharedKey) {
       throw new Error('A shared key is required. Click Generate Key to create one.');

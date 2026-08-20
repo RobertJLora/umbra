@@ -79,6 +79,14 @@ export async function saveBridgeConfig(partialConfig) {
   next.portStart = clampPort(next.portStart, existing.portStart);
   next.portEnd = clampPort(next.portEnd, existing.portEnd);
   next.bridgeEnabled = next.bridgeEnabled !== false;
+  // An empty string from an unhydrated key field used to replace a working
+  // key. Merge keeps the stored key unless the caller sent a real one.
+  if (!String(next.sharedKey || '').trim()) {
+    next.sharedKey = existing.sharedKey;
+  }
+  if (!next.sharedKey) {
+    throw new Error('A shared key is required.');
+  }
   if (next.portEnd < next.portStart) {
     next.portEnd = next.portStart;
   }

@@ -230,14 +230,17 @@ el('copyButton').addEventListener(
 el('saveButton').addEventListener(
   'click',
   guarded(async () => {
-    if (!settingsHydrated) {
-      await refreshState();
-    }
+    // Do not refreshState() here. That paints stored checkbox values over a
+    // click the user already made, then this handler persists the old false.
+    const stored = (await getState()).config || {};
+    const typedKey = el('sharedKey').value.trim();
     const config = {
-      sharedKey: el('sharedKey').value.trim(),
+      sharedKey: typedKey || stored.sharedKey || '',
       portStart: Number(el('portStart').value),
       portEnd: Number(el('portEnd').value),
-      bridgeEnabled: el('bridgeEnabled').checked,
+      bridgeEnabled: settingsHydrated
+        ? el('bridgeEnabled').checked
+        : stored.bridgeEnabled !== false,
     };
     if (!config.sharedKey) {
       throw new Error('A shared key is required. Click Generate to create one.');
