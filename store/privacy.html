@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Umbra Privacy Policy</title>
+<style>
+  :root{
+    --bg:#0d0b1e; --panel:#16121f; --ink:#e8e6f4; --muted:#a9a3c4;
+    --violet:#a78bfa; --line:rgba(167,139,250,.16); --code:#0a0812;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:radial-gradient(1200px 700px at 50% -10%, #1a1433 0%, var(--bg) 60%) no-repeat, var(--bg);
+    color:var(--ink); font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; padding:56px 20px 96px;
+  }
+  main{max-width:760px; margin:0 auto}
+  .mark{display:flex; align-items:center; gap:14px; margin-bottom:8px}
+  .mark svg{width:40px;height:40px;flex:0 0 auto}
+  .brand{font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:var(--violet); font-weight:600}
+  h1{font-size:34px; line-height:1.15; margin:.4em 0 .1em; letter-spacing:-.01em}
+  .updated{color:var(--muted); font-size:14px; margin-bottom:40px}
+  h2{font-size:20px; margin:44px 0 10px; letter-spacing:-.01em}
+  p{margin:0 0 14px; color:#d6d2ea}
+  strong{color:#fff; font-weight:600}
+  ul{margin:0 0 16px; padding-left:22px}
+  li{margin:6px 0; color:#d6d2ea}
+  a{color:var(--violet); text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,pre{font-family:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace}
+  code{background:var(--code); color:#c9c2ea; padding:.12em .38em; border-radius:5px; font-size:.9em}
+  pre{background:var(--code); border:1px solid var(--line); border-radius:10px; padding:14px 16px; overflow-x:auto; font-size:14px; color:#c9c2ea}
+  .lead{font-size:18px; color:#efeafc}
+  hr{border:0; border-top:1px solid var(--line); margin:40px 0}
+  footer{color:var(--muted); font-size:13px; margin-top:56px}
+</style>
+</head>
+<body>
+<main>
+  <div class="mark">
+    <svg viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs><g fill="none" stroke="url(#g)" stroke-linecap="round"><path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15"/><path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity=".92"/></g></svg>
+    <span class="brand">Umbra</span>
+  </div>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Applies to the Umbra Chrome extension and the Umbra companion server. Last updated 20 August 2026.</p>
+
+  <h2>The short version</h2>
+  <p class="lead">Umbra collects nothing. It sends nothing to us, and it sends nothing to any server on the internet. Every byte it reads stays on the machine it was read on, and the only destination it can reach is a program running on that same machine, started by you, on a loopback address.</p>
+  <p>There is no account, no sign-in, no analytics, no telemetry, no crash reporting, no remote configuration, and no advertising. We operate no server that Umbra talks to, so there is nothing for us to store, sell, or hand over.</p>
+
+  <h2>What Umbra is</h2>
+  <p>Umbra is two pieces that pair on a key you generate yourself:</p>
+  <ul>
+    <li>a Chrome extension that owns every Chrome API call</li>
+    <li>a companion server that runs on your computer and exposes a browser tool surface to an MCP client such as an AI coding assistant</li>
+  </ul>
+  <p>They talk to each other over a WebSocket on <code>127.0.0.1</code>, authenticated with an HMAC of the key you generated. The extension does nothing at all until that pairing exists.</p>
+
+  <h2>What the extension can access</h2>
+  <p><strong>Tabs a session owns.</strong> When your agent asks Umbra to open a tab, Umbra records that tab as belonging to that session and puts it in a named tab group. Every later action resolves its target through that ownership record before Chrome is called, and an action against a tab no session owns is refused before Chrome is touched. A tab you opened yourself cannot be read, clicked, navigated, or closed by any session. It can still appear by title and URL in a tab-finder result, which is how you point an adopt-tab call at it.</p>
+  <p><strong>Page content inside those tabs.</strong> Reading text, taking a screenshot, walking the accessibility tree, filling a form, or running JavaScript all operate on owned tabs only. That content is returned to the companion server on your machine and to nowhere else.</p>
+  <p><strong>Tab metadata.</strong> The tabs permission lets Chrome report the title and URL of any tab in the profile. Routine listing filters to the calling session's own tabs. Two tools deliberately reach wider so you can hand a tab over: they return the title and URL of tabs and groups the session does not own, which is the only way an adopt-tab call can be pointed at one. Nothing is read from those tabs beyond title and URL, and no action can touch them until you adopt one.</p>
+
+  <h2>What the extension stores</h2>
+  <p><strong>In local extension storage,</strong> exactly five values:</p>
+  <ul>
+    <li><code>sharedKey</code>: the pairing key you generate on the options page</li>
+    <li><code>portStart</code> and <code>portEnd</code>: the loopback port range the extension scans</li>
+    <li><code>bridgeEnabled</code>: whether the bridge is on</li>
+    <li><code>installId</code>: a random hexadecimal string generated locally, used to tell one browser profile from another during the local handshake</li>
+  </ul>
+  <p><strong>In session storage,</strong> one record holding the per-session tab ownership map: session id, port, tab group id, and the list of tab ids. Chrome clears session storage when the browser closes.</p>
+  <p>Nothing else is written. No page content is cached, no browsing history is recorded, no credentials are stored.</p>
+
+  <h2>Where data goes</h2>
+  <p>The extension's only network activity in the entire codebase is one WebSocket to a loopback address:</p>
+  <pre>ws://127.0.0.1:&lt;port&gt;/bridge</pre>
+  <p>Three independent facts back that up, and any reviewer can check all three in a few minutes:</p>
+  <ul>
+    <li>The manifest content security policy declares <code>connect-src 'self' ws://127.0.0.1:* ws://localhost:*</code>. Chrome blocks a connection to any other host at the browser level, whatever the code tries.</li>
+    <li>Grepping the extension for <code>fetch(</code>, <code>XMLHttpRequest</code>, and <code>sendBeacon</code> returns zero results. There is no HTTP client anywhere in it.</li>
+    <li>The companion server binds to <code>127.0.0.1</code> only and closes any connection whose remote address is not <code>127.0.0.1</code> or <code>::1</code>. It is not reachable from your network, let alone from the internet.</li>
+  </ul>
+  <p>The companion server likewise makes no outbound request. It listens on loopback and speaks MCP over standard input and output to the client that launched it. It writes to disk in exactly two places: the key file you asked for, and a screenshot file when a caller passes an output path.</p>
+
+  <h2>The one thing that is not ours to control</h2>
+  <p>Umbra hands page content to the MCP client you paired it with. What that client does next is that client's behavior, not Umbra's. If you point Umbra at an assistant that runs in the cloud, that assistant's own transport carries the content off your machine, exactly as it would for a file you pasted into it.</p>
+  <p>We state this plainly because it is the honest boundary. Umbra's guarantee is that Umbra itself transmits nothing off the machine. Choosing what receives the content is your decision, made when you configure your MCP client.</p>
+
+  <h2>Permissions the extension deliberately does not request</h2>
+  <ul>
+    <li><code>cookies</code>, so it cannot read or write cookies or export a session</li>
+    <li><code>history</code>, <code>bookmarks</code>, and <code>topSites</code>, so durable personal data is out of reach</li>
+    <li><code>downloads</code>, so it has no view of the profile's download history</li>
+    <li><code>clipboardRead</code> and <code>clipboardWrite</code>, so it cannot read or plant clipboard contents</li>
+    <li><code>identity</code>, so it performs no sign-in and holds no account</li>
+    <li><code>nativeMessaging</code>, so it installs no second privileged local surface</li>
+  </ul>
+
+  <h2>Safeguards on the sensitive paths</h2>
+  <p><strong>The debugger permission</strong> is attached only to a tab the calling session owns, through a single reference-counted helper, and it is detached when the count reaches zero. There is no tool that sends an arbitrary debugger command. Chrome displays its own "controlled by automated test software" banner whenever the attachment is live, so the state is never hidden from you.</p>
+  <p><strong>JavaScript results are screened before they leave the page.</strong> A result that looks like a cookie jar, a set-cookie header, a JWT, a bearer token carrying a recognisable prefix, or a long query-string secret is blocked rather than returned. The screen matches shapes, so it is a backstop against an accidental leak rather than a guarantee against a caller who set out to encode one.</p>
+  <p><strong>Site access is not granted at install.</strong> Broad host access is declared as an optional permission, so Chrome asks for nothing at install time. You grant it with a button on the options page, and Chrome lets you revoke it at any time from <code>chrome://extensions</code>.</p>
+
+  <h2>Children</h2>
+  <p>Umbra is a developer tool. It is not directed at children and collects no data from anyone, including children.</p>
+
+  <h2>Removing your data</h2>
+  <p>Uninstalling the extension removes everything it stored, because everything it stored lived in that extension's own Chrome storage. To clear the pairing without uninstalling, open the options page and clear the key field, which also closes the bridge. To remove the companion server's key file, delete <code>~/.umbra/shared-key</code>.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>Changes are published at this URL with an updated date at the top. Because Umbra collects nothing, a change here will describe a change in what the software accesses locally, not a change in what is transmitted.</p>
+
+  <h2>Contact</h2>
+  <p>Questions and security reports go through the issue tracker at the project homepage listed on the Chrome Web Store entry and in the extension's manifest.</p>
+
+  <footer>Umbra - Browser Control for AI Agents</footer>
+</main>
+</body>
+</html>

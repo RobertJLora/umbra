@@ -18,7 +18,9 @@ None of these can be automated, delegated, or done by an agent. They need the ow
 
 **OWNER: declare trader status.** The dashboard requires each developer to state whether they publish as a trader or a non-trader for distribution in the European Union. Non-trader is the honest answer for an unpaid personal project; picking wrong is a compliance problem, not a formatting one, so read the definition on the form rather than guessing.
 
-**OWNER: host the privacy policy at a public URL.** `store/privacy-policy.md` has to be reachable without a login before the listing can reference it. The URL goes in two places: the Privacy practices tab of the dashboard, and the listing itself. Any stable public host works. The lowest-effort option that stays in one place is GitHub Pages on the repository already named in `homepage_url` (`https://github.com/getumbra/umbra`). Record the final URL here once it exists:
+**DONE: privacy policy hosted publicly.** Live at **https://umbra-privacy.pages.dev** (Cloudflare Pages, noindex, no login). Rendered from `store/privacy.html`. This URL goes in two places: the Privacy practices tab of the dashboard, and the listing. Re-deploy with `wrangler pages deploy` if the policy changes.
+
+**OPEN: `homepage_url` in the manifest still points at `https://github.com/getumbra/umbra`, which is not public** (the code lives on Cursor Origin, private). Either build a small public landing page (Cloudflare Pages, same flow as the privacy page) and point `homepage_url` + the listing website field at it, or point both at the privacy page for now. Do not ship a `homepage_url` that 404s on the store listing.
 
 ```
 Privacy policy URL: ______________________________________
