@@ -7,6 +7,13 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import {
+  AUTHOR_LAUNCHD_LABEL_RE,
+  AUTHOR_NAME_RE,
+  AUTHOR_SURNAME_RE,
+  HOME_PATH_RE,
+} from '../identity-needles.mjs';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 const launchScript = path.join(repoRoot, 'mcp-server', 'launch-mcp.sh');
@@ -112,14 +119,15 @@ describe('launch-mcp.sh', () => {
     const checkSource = fs.readFileSync(checkScript, 'utf8');
 
     for (const source of [ensureSource, checkSource]) {
-      assert.doesNotMatch(source, /robert/i);
-      assert.doesNotMatch(source, /\/Users\/[A-Za-z]/);
+      assert.doesNotMatch(source, AUTHOR_NAME_RE);
+      assert.doesNotMatch(source, AUTHOR_SURNAME_RE);
+      assert.doesNotMatch(source, HOME_PATH_RE);
       assert.match(source, /from '\.\/config\.js'/);
       assert.match(source, /resolveBrokerSocketPath\(\)/);
     }
 
     assert.match(ensureSource, /resolveLaunchdLabel\(\)/);
-    assert.doesNotMatch(ensureSource, /com\.robertlora/i);
+    assert.doesNotMatch(ensureSource, AUTHOR_LAUNCHD_LABEL_RE);
   });
 
   it('pins the socket path for a broker it spawns itself', () => {

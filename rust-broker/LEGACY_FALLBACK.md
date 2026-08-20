@@ -23,8 +23,10 @@ Keep or return to the legacy broker if any of these happen:
 - Rust HMAC validation differs from `mcp-server/auth.js`.
 - Session ownership or duplicate-channel behavior differs from the Node tests.
 - Health/status output cannot represent the existing `/healthz` fields.
-- The Rust broker cannot start/reuse its Unix shim socket.
+- The Rust broker cannot start or reuse its Unix shim socket, or that socket is created with any mode other than `0600`.
+- A second extension connection lets the first one's teardown clear the live extension handle, which wedges every session on the machine.
 - The extension cannot complete protocol v2 `sessionId` command routing.
+- The broker stops answering the application-level `ping` frame, which makes the extension tear down healthy sockets on its keepalive timer.
 - Pressure counters hide pending requests or rejected commands.
 - `cargo test` fails.
 - Node `npm test`, smoke, required smoke, group smoke, or benchmark gates regress.

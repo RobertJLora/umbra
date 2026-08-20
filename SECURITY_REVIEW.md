@@ -1,70 +1,57 @@
 # Security Review
 
-## Review Stance
+## Review stance
 
-Default deny. Upstream repos are reference material, not trusted code.
+Default deny. Other browser-bridge projects are reference material, not trusted code, and nothing was forked.
 
-This project is only acceptable if:
+The project is only acceptable while all four of these hold:
 
 - the extension acts only on session-owned tabs
 - the bridge accepts only authenticated loopback clients
-- no V1 feature exposes cookies, tokens, storage, or generic background fetch
-- permissions stay small and each one has a written justification
+- no feature exposes cookies, tokens, storage values, or generic background fetch
+- permissions stay small and each one has a written justification in `docs/permissions.md`
 
-## Current Status
+Anything that breaks one of them is a release blocker, not a trade-off.
 
-- Threat model written
-- Minimal V1 scope locked
-- Local bridge authentication designed
-- Upstream audits completed and summarized
-- Local scaffold implemented and syntax-tested
-- Static default test key removed; setup now requires an explicit random shared key
-- New Codex-local copy created under `System/Codex/umbra`
-- Local MCP server tests passed on 2026-04-24
-- Isolated Chrome test-profile launcher and V0 smoke flow added on 2026-04-24
-- Automated isolated-profile smoke passed on 2026-04-24 with Chrome for Testing: extension loaded, HMAC-authenticated to the local server, created/listed/navigated/read/closed a session-owned tab, then shut down without leftover listeners
-- CDP is allowed only as an isolated-profile test harness for configuring the unpacked extension; it is not the daily control model
-- Offscreen document storage access was removed; offscreen now requests config/debug writes from the background worker over `chrome.runtime` messaging
-- Extension is loaded unpacked in Robert's selected signed-in Chrome profile as `kkfedeeiobahmhcgpffcelpepiljiomk`
-- Signed-in reuse validated against Ahrefs dashboard on 2026-04-24 with URL/title-only smoke
-- Controlled download behavior validated on 2026-04-24: a bridge-initiated CSV landed in `/Users/RobertLora/Documents/Downloads/`
-- Group stress validated on 2026-04-24: five sessions, eight tabs each, forty total tabs, five Chrome tab groups, all owned tab titles readable, cross-session reads denied
-- MCP server lifecycle guard validated on 2026-04-24: closed stdio triggers shutdown and releases the listener port
-- Production sign-off not complete
+## What the code does today
 
-## Keep / Remove / Rewrite Matrix
+- Authentication is an HMAC challenge and response in both directions over a loopback WebSocket, keyed on a shared install key. No static default key exists; setup requires generating one.
+- Session ownership is enforced in the background service worker before any Chrome API call, and persisted in `chrome.storage.session` so a worker restart does not lose it.
+- The offscreen document holds sockets only. It makes no Chrome API call and holds no ownership state; it asks the background worker for config and debug writes over `chrome.runtime` messaging.
+- Site access is an optional permission requested from the options page rather than granted at install.
+- `chrome.debugger` is declared and used for exactly three things: silent screenshots, owned-tab file input population, and caller-supplied JavaScript. Each attaches, sends its commands, and detaches. Contract tests pin that shape.
+- Caller-supplied JavaScript runs through `Runtime.evaluate` on the owned tab. The `AsyncFunction` constructor that used to compile it inside the extension is gone from both the service worker and the content agent.
+- The DevTools Protocol appears in one place outside the extension: a test harness that configures an unpacked extension in a throwaway profile. It is not the control model.
+- The published packages exclude the site-specific page recipes and the export plugin that drives them, so the store build cannot run site automation that the source tree can.
 
-## Keep
+Production sign-off is not complete. The checklist below is the gate.
 
-- multi-session model with one local session listener per Codex session
-- offscreen document for long-lived connection management
-- tab-group-based session ownership
-- session cleanup and reconnect handling as first-class behavior
+## Keep, remove, rewrite
 
-## Remove
+### Keep
 
-- cookie read/write helpers
-- storage read/write helpers exposed as tools
+- one session per agent, each isolated to its own tab group
+- the offscreen document for long-lived connection management
+- tab-group-based session ownership as the isolation primitive
+- session cleanup and reconnect as first-class behavior rather than an afterthought
+
+### Remove
+
+- cookie read and write helpers
+- storage read and write helpers exposed as tools
 - token extraction flows
-- generic background fetch
+- generic background fetch on a page's behalf
 - CAPTCHA helpers
-- provider-specific auth plumbing
+- provider-specific authentication plumbing
 - auto-update, auto-pull, and auto-install behavior
 
-## Rewrite
+### Rewrite
 
-- localhost discovery and handshake
-  - keep loopback-only discovery idea
-  - replace blind trust with authenticated challenge-response
-- session state persistence
-  - keep ownership model
-  - persist enough metadata to survive worker suspend/resume safely
-- screenshot capture
-  - prefer a path that minimizes focus stealing
-  - currently activates a session-owned tab and uses broad host permission for `chrome.tabs.captureVisibleTab`
-  - does not request Chrome `debugger`
+- **Loopback discovery and handshake.** Keep loopback-only discovery, replace blind trust with an authenticated challenge and response.
+- **Session state persistence.** Keep the ownership model, persist enough metadata to survive worker suspend and resume, and refuse to persist before the first load so a cold worker cannot overwrite stored state with an empty map.
+- **Screenshot capture.** Prefer the path that steals the least focus. The default activates the owned tab and uses `chrome.tabs.captureVisibleTab`; `silent: true` attaches the debugger for one `Page.captureScreenshot` and accepts Chrome's automation banner as the honest signal.
 
-## Required Review Checklist
+## Required review checklist
 
 - [ ] Review every extension permission
 - [ ] Review every network egress path
@@ -72,98 +59,30 @@ This project is only acceptable if:
 - [ ] Review all filesystem writes
 - [ ] Review all sensitive tool surfaces
 - [ ] Review session cleanup and reconnect behavior
-- [ ] Review service worker suspend/resume behavior
-- [ ] Review screenshot implementation and any debugger attach behavior
-- [ ] Decide whether downloads belong in bridge V1 or remain delegated to `download-browser`
+- [ ] Review service worker suspend and resume behavior
+- [ ] Review the debugger attach, command, and detach paths
 - [ ] Verify one session cannot inspect or mutate another session's tabs
-- [ ] Verify no auto-update or auto-install paths remain
+- [ ] Verify no auto-update or auto-install path remains
+- [ ] Verify the packaged build excludes the recipes directory and the export plugin
 
-## Initial Findings From The Design
+## Standing findings
 
-1. Broad host permissions are likely unavoidable for arbitrary signed-in browsing.
-   They must remain visible in `docs/permissions.md`, and a future allowlist mode is worth planning.
+**Broad page reach is unavoidable for arbitrary signed-in browsing.** It is mitigated by making it optional and revocable rather than install-time, and by shipping no tool that exports what the reach could reach. A future allowlist mode that constrains it to named domains is worth planning for higher-value workflows.
 
-2. Any port-range discovery is a local attack surface.
-   The design keeps the range narrow, binds only to `127.0.0.1`, and requires HMAC authentication before exposing session metadata.
+**Any port-range discovery is a local attack surface.** The range is narrow and configurable, the listener binds only to `127.0.0.1`, and no session metadata is exposed before the HMAC bind step succeeds.
 
-3. Screenshot capture is the least-settled part of V1.
-   The first full-suite run showed Chrome rejects programmatic screenshots with only `activeTab`. V1 now documents the broader host permission needed for `chrome.tabs.captureVisibleTab`; the implementation still activates a session-owned tab and intentionally avoids `debugger`.
+**The Unix socket the broker exposes to MCP shims is the sharpest edge in the system.** Shim registration carries no HMAC proof, so anyone who can connect to that socket can drive the browser. The socket is created with mode `0600` in a per-user directory rather than in world-writable `/tmp`, which is what keeps that from being reachable by another local account.
 
-## Upstream Audit Notes
+**Screenshot capture is the least settled part of the tool surface.** Chrome rejects programmatic capture with `activeTab` alone, which is why the broad host permission exists at all. If an allowlist mode ever lands, capture is the path that will need the most thought.
 
-This section will be updated with concrete findings from:
+## Prior art
 
-- Agent360 Browser MCP
-- OpenChrome
-- Playwright MCP extension mode
-- Chrome DevTools MCP
+Four projects were read before writing this one. None was forked, and the reasons are worth recording so a reviewer can see what was deliberate.
 
-## Direct Upstream Findings
+**Agent360 Browser MCP.** Worth borrowing: the extension plus local server split, the offscreen document for long-lived connections, tab-group ownership as the isolation primitive. Not adopted because its startup path updates code automatically through `git pull`, conditional installs, and `@latest`; its manifest requests `cookies`, `notifications`, `webNavigation`, and `debugger`; its offscreen document scans a loopback range and trusts open local ports with no authenticated handshake; credential and second-factor prompting is injected into page DOM; and its tool surface includes fetch, cookie, local-storage, and token helpers. The architecture shape carried over; the trust model and tool surface were written from scratch.
 
-## Agent360 Browser MCP
+**OpenChrome.** Worth borrowing: the session manager and tab-group manager split, per-session request queues, lifecycle-aware coordination, and audit and redaction patterns. Not adopted as a base because its manifest includes `nativeMessaging`, `debugger`, a global content script on `<all_urls>`, and `externally_connectable`; it adds a native messaging host as a second privileged local surface; its CLI performs cached registry checks and clears the npx cache automatically; and it carries authentication, tenanting, CAPTCHA, stealth, and orchestration subsystems that multiply the review surface. Its concurrency and audit ideas informed the server side.
 
-What looks worth borrowing:
+**Playwright MCP extension mode.** Worth borrowing: extension-mediated pairing instead of raw debugger attach against a daily browser, and explicit browser-profile integration. Not the base because local testing showed it page-centric rather than session-centric, with a single connected page model and failures during new-tab flows.
 
-- extension plus local server split
-- offscreen document for long-lived session connections
-- tab-group ownership as the isolation primitive
-
-Concrete reasons not to fork blindly:
-
-- startup behavior updates code automatically via `git pull`, conditional `npm install`, `@latest`, and auto-copy paths
-- `extension/manifest.json` requests `cookies`, `notifications`, `webNavigation`, and `debugger` on top of `tabs`, `tabGroups`, `scripting`, `storage`, and `offscreen`
-- `extension/offscreen.js` scans a hard-coded loopback range and trusts open local ports without an authenticated handshake
-- credential and 2FA prompting flows are injected into page DOM rather than kept in a trusted extension surface
-- `mcp-server/tools.js` exposes `browser_fetch`, cookie tools, local-storage tools, response capture, token helpers, and a much wider tool surface than V1 needs
-- session isolation depends partly on weak identities and global tab tracking rather than a strict per-session capability model
-- persistent action logging stores serialized call params locally, which can retain sensitive values
-
-Bottom line:
-
-- borrow the architecture shape
-- rewrite the trust model and tool surface from scratch
-
-## OpenChrome
-
-What looks worth borrowing:
-
-- explicit session manager and tab-group manager split
-- stronger attention to lifecycle, persistence, and concurrency as first-class concerns
-- per-session request queues and lifecycle-aware worker/session coordination
-- audit and redaction patterns that can carry over to a smaller local-only design
-- small defense-in-depth helpers like domain guards and content sanitization
-
-Concrete reasons not to use it as the base:
-
-- `extension/manifest.json` includes `nativeMessaging`, `debugger`, a global content script on `<all_urls>`, and `externally_connectable`
-- `native-host/host.js` adds a native messaging bridge and another privileged local surface to review
-- `cli/update-check.ts` performs cached registry checks and clears npx cache automatically, which is exactly the sort of background update behavior we do not want in V1
-- the codebase includes auth, tenanting, CAPTCHA, stealth, cookie, and orchestration subsystems that materially increase review scope
-- the broader system now includes HTTP transport, tunnel, and desktop-side surfaces that are outside the minimal local-only trust model
-- default context behavior is tuned for reuse and power, not maximum isolation, so it is the wrong default to inherit unchanged
-
-Bottom line:
-
-- mine it for server-side concurrency and audit ideas
-- do not inherit the codebase whole
-
-## Playwright MCP Extension Mode
-
-What looks worth borrowing:
-
-- extension-mediated pairing rather than raw daily-browser debugger attach
-- explicit browser-profile integration
-
-Concrete reason it is not the primary base:
-
-- local verification already showed it remaining page-centric rather than session-centric, with a single connected page/session model and `_page` failures during new-tab flows
-
-## Chrome DevTools MCP
-
-What looks worth borrowing:
-
-- auto-connect ergonomics
-
-Concrete reason it is not the primary base:
-
-- it still centers raw debugger attachment against the real browser profile, which does not solve the approval-friction or session-isolation problem for concurrent signed-in use
+**Chrome DevTools MCP.** Worth borrowing: auto-connect ergonomics. Not the base because it centers raw debugger attachment against the real browser profile, which does not solve the approval friction or the session isolation problem for concurrent signed-in use.

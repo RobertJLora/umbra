@@ -29,7 +29,9 @@ npm install
 npm test
 ```
 
-Load `extension/` unpacked at `chrome://extensions` with Developer mode on, open the extension options page, generate a shared key, and paste the printed environment line into your MCP client config. Restart the client and the tools appear.
+Load `extension/` unpacked at `chrome://extensions` with Developer mode on, open the extension options page, click Generate Key, then click Copy Environment Line and paste that line into your MCP client config. Restart the client and the tools appear. Click Grant Site Access on the same page before the first page read, because Umbra requests no site access at install time.
+
+Without a checkout, `npx -y @umbra-mcp/server pair` generates the key, writes it to `~/.umbra/shared-key`, and prints the client config block. That published package leaves out the optional Ahrefs export plugin.
 
 ## Tool surface
 
@@ -100,7 +102,7 @@ Two transports exist. The Rust broker is the launcher default: one extension Web
 ## Known limitations
 
 - Default screenshots activate the session-owned tab before capture. `silent: true` avoids that by attaching `chrome.debugger` to the owned tab for one `Page.captureScreenshot`, which makes Chrome show its automation banner.
-- Broad host permissions are required for arbitrary signed-in browsing and for programmatic visible-tab capture. `docs/permissions.md` justifies each one.
+- Site access is an optional permission, requested from the Grant Site Access button on the options page rather than at install. Until it is granted, page reads and screenshots fail with Chrome's own permission error, because Chrome requires a literal broad host permission for programmatic visible-tab capture. `docs/permissions.md` justifies every permission the extension declares.
 - Download completion is detected by watching the filesystem, because the extension does not request Chrome's `downloads` permission. Point `UMBRA_DOWNLOAD_DIR` at your browser's download folder if you moved it.
 - `browser_read_interactive` is intentionally compact. Umbra does not expose a full accessibility-tree dump.
 - Generic text clicks can hit the wrong control on dense app UIs such as search pagination. Use `browser_read_interactive` with refs, or `browser_run_page_action` with `inspect_controls` then `click_control`, instead of guessing.
@@ -123,6 +125,7 @@ Two transports exist. The Rust broker is the launcher default: one extension Web
 - `docs/architecture.md` - components, flow, and the reasoning behind the offscreen and background split
 - `docs/permissions.md` - each Chrome permission with its risk and its mitigation
 - `docs/smoke-test.md` - automated and manual verification paths
+- `docs/performance/performance-work.md` - what the performance pass changed and what it measured
 - `MCP_PROTOCOL.md` - the wire protocol between extension and server
 - `THREAT_MODEL.md` - assets, trust boundaries, attackers, and mitigations
 - `SECURITY_REVIEW.md` - review stance, the keep and remove matrix, and upstream audit findings

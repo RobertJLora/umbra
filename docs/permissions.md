@@ -1,128 +1,111 @@
 # Permissions
 
-## Extension Permissions
+Every permission the extension declares, why it is there, what it costs, and what stops it being abused. The manifest is `extension/manifest.json`, and it is short enough to read in a minute.
 
-## `tabs`
+## Declared permissions
 
-Needed to create, update, query, and close session-owned tabs.
+### `storage`
 
-Risk:
+Holds the shared key, the loopback port range, the enabled flag, and an install id in `chrome.storage.local`, plus per-session tab ownership in `chrome.storage.session`.
 
-- access to metadata for tabs the extension can see
+Risk: a local secret sits in extension storage.
 
-Mitigation:
+Mitigation: nothing else is written. No page content, no browsing history, no credentials. Session ownership lives in `chrome.storage.session`, which Chrome clears when the browser closes.
 
-- session ownership checks gate every action
+### `tabs`
 
-## `tabGroups`
+Creates, updates, queries, and closes session-owned tabs, and reads the title and URL of the tabs a session owns.
 
-Needed to isolate each Codex session into its own tab group.
+Risk: the API can see metadata for every tab in the profile.
 
-Risk:
+Mitigation: every tool resolves its target through the session ownership map before Chrome is called, and `browser_list_tabs` filters to the caller's own tabs. A tab no session owns is invisible to every session.
 
-- can regroup tabs if misused
+### `activeTab`
 
-Mitigation:
+Covers the visible-tab capture path in the ordinary case where the session's tab is the active one.
 
-- grouping is done only for session-owned tabs
+Risk: minimal. The grant is per user gesture and per tab.
 
-## `scripting`
+Mitigation: it is not sufficient on its own for programmatic capture, which is why site access exists as a separate optional grant.
 
-Needed for one-shot DOM reads and interactions without a persistent content script.
+### `tabGroups`
 
-Risk:
+Gives each session its own named tab group, which is what makes an agent's tabs visually distinct from a person's.
 
-- code runs inside visited pages
+Risk: the API can regroup tabs if misused.
 
-Mitigation:
+Mitigation: grouping only ever touches tabs the session already owns.
 
-- only explicit tool actions inject code
-- no page-wide resident content script in V1
+### `scripting`
 
-## `storage`
+Injects the content agent, the accessibility walker, and one-shot read and interaction functions into owned tabs.
 
-Needed for local extension config and persisted ownership metadata.
+Risk: code runs inside visited pages.
 
-Risk:
+Mitigation: injection happens only as part of an explicit tool call against an owned tab. The manifest declares no `content_scripts` key, so nothing is resident on any page, and nothing is injected into a tab the caller does not own.
 
-- stores secrets and session metadata locally
+### `offscreen`
 
-Mitigation:
+Runs the document that holds the loopback WebSocket, because an MV3 service worker is killed after about thirty seconds idle and cannot hold a long-lived connection.
 
-- keep only the shared install key and session metadata
-- avoid durable sensitive browsing data
+Risk: another privileged extension surface to review.
 
-## `offscreen`
+Mitigation: the document does one job. It holds sockets, authenticates, relays messages, and sends a keepalive. It makes no Chrome API call and holds no ownership state. It is created only when the bridge is enabled and a shared key is set, and it is closed when the key is cleared.
 
-Needed to keep long-lived loopback WebSocket connections stable in MV3.
+### `alarms`
 
-Risk:
+One wake alarm, once a minute, that resurrects the offscreen document if it died.
 
-- adds another privileged extension surface
+Risk: none beyond a periodic worker wake.
 
-Mitigation:
+Mitigation: the alarm ensures the offscreen document exists and does nothing else.
 
-- offscreen document is narrowly scoped to bridge connectivity only
+### `debugger`
 
-## `debugger`
+Three jobs: silent screenshots that do not activate the tab (`Page.captureScreenshot`), file input population (`DOM.setFileInputFiles`), and caller-supplied JavaScript (`Runtime.evaluate`).
 
-Needed for silent screenshots that must not activate the tab, and for owned-tab file input uploads.
-
-Risk:
-
-- Chrome shows a user-facing "controlled by automated test software" banner
-- the API can do far more than screenshots and file inputs if misused
+Risk: this is the widest permission in the manifest. The API can do far more than these three things, and Chrome shows a "controlled by automated test software" banner whenever it is attached.
 
 Mitigation:
 
-- attach only to the session-owned tab
-- one helper attaches, runs the command, then detaches in `finally`
-- silent screenshots send only `Page.captureScreenshot`
-- file upload sends only `DOM.getDocument`, `DOM.querySelector`, and `DOM.setFileInputFiles`
-- if attach fails, return an error instead of falling back to `captureVisibleTab`
-- no generic debugger command tool
+- attach only to a tab the calling session owns
+- one helper owns attach and detach, refcounted so two concurrent calls on one tab cannot detach out from under each other, and released when the count reaches zero
+- a foreign attach, such as a person having DevTools open, raises a `debugger_busy` error rather than running commands that would silently fail
+- caller-supplied JavaScript runs here rather than through an `AsyncFunction` constructor inside the extension, which is the reason this permission is worth its cost: it keeps arbitrary code inside the API Chrome sanctions for it
+- there is no generic "send any debugger command" tool
 
-## Host Permissions
+## Optional host permission
 
-- `<all_urls>`
-- `http://127.0.0.1/*`
-- `http://localhost/*`
+`<all_urls>` is declared under `optional_host_permissions`, so it is not granted at install. The options page asks for it with the Grant Site Access button.
 
-Why:
+Why it is needed at all:
 
-- loopback WebSocket connectivity
-- arbitrary browsing and DOM interaction against real signed-in sites
-- Chrome requires a literal broad host permission for programmatic visible-tab screenshots; `activeTab` is not enough without a user gesture
+- reading and driving arbitrary signed-in pages, which is the entire point of the extension
+- Chrome requires a literal broad host permission for programmatic visible-tab screenshots, and `activeTab` is not enough without a user gesture
 
-Risk:
-
-- broad page reach
-- visible-tab screenshots can capture the active browser viewport for the session-owned tab
+Risk: broad page reach once granted, and visible-tab capture of the session-owned tab.
 
 Mitigation:
 
-- V1 ships no cookie/storage export tools
-- all actions are session-scoped and explicit
-- default screenshots activate a session-owned tab and use `chrome.tabs.captureVisibleTab`
-- `silent: true` captures without activating, using `chrome.debugger` attach plus `Page.captureScreenshot` on the session-owned tab only, then detach. It does not fall back to `captureVisibleTab`
-- `debugger` is also attached only for owned-tab file input uploads and is detached in the same call
-- a future allowlist mode is planned for higher-security workflows
+- nothing is granted until a person clicks the button, and Chrome lets them revoke it at any time
+- until it is granted, page reads, interaction, and screenshots fail with Chrome's own permission error, so the first thing to check when everything fails at once is the Site Access card on the options page
+- every action stays session-scoped after the grant; the permission widens which pages a session may drive, never which tabs it may touch
+- no cookie, token, or storage export tool exists to make the reach worth stealing
 
-## Permissions Deliberately Not Requested In V0
+Loopback host permissions are deliberately absent. The only network activity in the extension is the WebSocket in the offscreen document, and that is allowed by the `connect-src` directive in the manifest's content security policy, not by a host permission. There is no `fetch` or `XMLHttpRequest` anywhere in the extension.
 
-## `cookies`
+## Permissions deliberately not requested
 
-Rejected for V0. Cookie read/write is outside the safety boundary and would turn the bridge into a credential-adjacent data extractor.
+**`cookies`** would turn the extension into a credential extractor. Reading and writing cookies is outside the boundary this project draws, and no tool needs it.
 
-## `debugger`
+**`downloads`** could initiate, monitor, search, and cancel browser downloads. Download completion is detected by watching the filesystem instead, which is why `UMBRA_DOWNLOAD_DIR` exists. The trade is deliberate: a configuration variable in exchange for no visibility into the profile's download history. `chrome.downloads.DownloadItem` also carries no tab id, so the permission would not even buy reliable per-session attribution.
 
-Used only for silent screenshots (`Page.captureScreenshot`) and `browser_file_upload` (`DOM.setFileInputFiles`). The background worker attaches to the owned tab, runs that one command, then detaches in a `finally` block. It is not used for cookies or generic page control.
+**`history`, `bookmarks`, and `topSites`** would expose durable personal data that no browser automation task here needs.
 
-## `downloads`
+**`nativeMessaging`** would add a second privileged local surface with its own installer and its own review. The loopback WebSocket already does the job.
 
-Deferred for V0. Chrome's downloads API can initiate, monitor, search, and manipulate browser downloads, which is useful for completion detection but expands the extension's visibility into local file transfers.
+**`webNavigation`** would give precise navigation commit events. Navigation waits use `chrome.tabs.onUpdated` plus a URL comparison instead, which is enough to tell a completed load from a redirect.
 
-Current recommendation:
+**`clipboardRead` and `clipboardWrite`** are not requested, so nothing here can read or plant clipboard contents.
 
-- keep robust downloads in the existing `download-browser` Playwright lane for now
-- add `downloads` only after a focused review that proves bridge-side mapping from tab/session to download is worth the added permission
+**`identity`** is not requested. The extension performs no sign-in of its own and holds no account.

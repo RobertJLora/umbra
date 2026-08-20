@@ -2,85 +2,91 @@
 
 ## Goal
 
-Provide a minimal bridge that lets Codex control Robert's real Chrome state without inheriting raw remote-debugging approval pain, cross-session tab leakage, or dangerous data-extraction tools.
+Let an agent drive a real, signed-in Chrome profile without inheriting the blast radius of raw remote debugging, without leaking one session's tabs into another, and without shipping a single data-extraction tool.
 
-## Protected Assets
+## Protected assets
 
-- authenticated browser state in the real Chrome profile
-- tab contents and DOM data inside session-owned tabs
+- authenticated browser state in the profile the extension is loaded into
+- page content and DOM data inside session-owned tabs
 - session ownership metadata
-- local bridge secrets and handshake material
-- Codex-issued commands and bridge responses
+- the shared install key and the handshake material derived from it
+- the commands an agent issues and the responses it gets back
 
-## Trust Boundaries
+## Trust boundaries
 
-1. Codex session -> local MCP server
-   - trusted transport: stdio
-   - risk: malformed MCP calls or unexpected concurrency
+**1. MCP client to companion server.** Transport is stdio, inherited from whatever launched the server. Risk: malformed calls, unexpected concurrency, or a client that dispatches arguments the schema never described.
 
-2. Local MCP server -> Chrome extension
-   - trusted transport: authenticated WebSocket on `127.0.0.1`
-   - risk: another local process attempts to impersonate the extension or bind the port first
+**2. Companion server to extension.** Transport is an authenticated WebSocket on `127.0.0.1`. Risk: another local process impersonating the extension, binding the port first, or replaying a handshake.
 
-3. Chrome extension -> Chrome tab/page
-   - trusted API surface: `tabs`, `tabGroups`, `scripting`, `offscreen`, `storage`
-   - risk: page scripts influence injected automation logic or race navigation state
+**3. Broker to MCP shims.** Transport is a Unix socket, used only when the optional Rust broker is running. Risk: any local process that can open the socket can register a session and drive the browser, because registration carries no HMAC proof. The socket is created with mode `0600` in a per-user directory for exactly that reason.
 
-4. Extension internal boundary
-   - offscreen document keeps local bridge connections alive
-   - service worker owns tab actions and persisted session metadata
-   - risk: worker suspend/resume loses ownership state or reconnect logic
+**4. Extension to page.** API surface is `tabs`, `tabGroups`, `scripting`, `debugger`, `offscreen`, `alarms`, and `storage`. Risk: page scripts influencing injected automation, or a navigation racing a read.
 
-## Assumed Attackers
+**5. Inside the extension.** The offscreen document holds connections; the service worker owns tab actions and persisted ownership. Risk: worker suspend and resume losing ownership state, or a cold worker writing an empty map over stored state before it loads.
 
-- a malicious local process on the same machine trying to connect to the bridge
-- a compromised or careless upstream browser-bridge codebase
-- a web page attempting to trick injected code paths into unsafe behavior
-- stale or zombie sessions that leave tabs or permissions in an ambiguous state
+## Assumed attackers
 
-## Explicit Non-Goals
+- a malicious local process trying to connect to the bridge or the broker socket
+- a web page trying to trick injected code into acting outside its session
+- a second Chrome profile on the same machine holding the same key, since the key is machine-wide
+- stale or zombie sessions leaving tabs and permissions in an ambiguous state
+- a careless MCP client sending well-formed calls with wrong arguments
+
+Not in scope: an attacker who already has the user's shell. Anyone with that has the key file, the profile, and the browser itself.
+
+## Explicit non-goals
 
 - exporting cookies, tokens, or storage values
-- generic network egress from the extension on behalf of the page
+- generic network egress from the extension on a page's behalf
 - bypassing CAPTCHA or anti-bot checks
-- silent background changes to tabs outside session ownership
+- touching tabs outside session ownership, silently or otherwise
 
-## Main Risks And Mitigations
+## Risks and mitigations
 
-## Loopback bridge spoofing
+### Loopback bridge spoofing
 
-- Bind the bridge only to `127.0.0.1`.
-- Use a shared install key plus challenge-response HMAC.
-- Issue a per-session nonce and reject commands until the session is authenticated.
+- Bind only to `127.0.0.1`, and reject any connection whose remote address is not `127.0.0.1` or `::1`.
+- Require a shared install key and an HMAC challenge and response in both directions.
+- Issue a per-session nonce and refuse every command until the bind step succeeds.
 - Keep the scannable port range narrow and configurable.
 
-## Cross-session tab leakage
+### Broker socket abuse
 
-- Give every session a unique session ID and tab group.
-- Record owned tab IDs per session.
-- Reject any action on a tab not owned by the caller session.
+- Create the socket with mode `0600` under a per-user directory, never in world-writable `/tmp`, where another local account could also pre-create the path and stall every broker start.
+- Bind each shim socket to the session it registered, and reject a command or disconnect that names a different session.
+
+### Cross-session tab leakage
+
+- Give every session a unique id and its own tab group.
+- Record owned tab ids per session and check them before every Chrome call.
 - Return only session-owned tabs from `browser_list_tabs`.
+- Make adoption explicit: a tab enters a session through `browser_adopt_tab` or `browser_adopt_group` and no other way.
 
-## Privileged data exposure
+### Privileged data exposure
 
-- Ship no cookie, token, storage, history, bookmark, or background fetch tools.
-- Keep permissions minimal and document each one.
-- Log privileged actions locally for auditability.
+- Ship no cookie, token, storage, history, bookmark, or background fetch tool.
+- Keep permissions minimal, make site access optional and revocable, and document each one.
+- Keep caller-supplied JavaScript on the debugger path, so it is visible in Chrome's own automation banner rather than hidden inside the extension.
 
-## Service worker suspend/resume
+### Service worker suspend and resume
 
-- Persist ownership state in extension storage.
-- Treat the offscreen bridge as reconnectable, not authoritative.
-- Reconcile live Chrome tab/group state after reconnect.
+- Persist ownership state in extension storage and refuse to persist before the first successful load.
+- Treat the offscreen connection as reconnectable, never authoritative.
+- Reconcile live tab and group state after a reconnect.
 
-## Dangerous update behavior
+### Dead but open sockets
 
-- No auto-update logic in repo code.
-- No auto-pull, `@latest`, or background installer flows.
-- All dependency changes should be explicit and reviewable.
+- Send an application-level ping on an interval and tear down a socket that stops answering, because a sleep and wake can leave a socket reporting OPEN with nothing on the other end.
+- Gate that teardown on having seen at least one answer, so an older peer that does not know the frame degrades to the previous behavior instead of disconnecting on a loop.
 
-## Open Questions
+### Dangerous update behavior
 
-- Whether `chrome.debugger` is needed for non-focus-stealing screenshots, or whether the first release can tolerate a visible-tab fallback.
-- Whether V1 can avoid content scripts entirely and rely only on `chrome.scripting.executeScript`.
-- Whether a future allowlist mode should constrain host permissions to explicit domains for higher-value workflows.
+- No auto-update logic anywhere in the tree.
+- No auto-pull, no `@latest`, no background installer.
+- Dependency changes are explicit and reviewable.
+
+## Open questions
+
+- Whether an allowlist mode should constrain site access to named domains for higher-value profiles, and what that costs in usability.
+- Whether the shim registration path should require its own proof rather than relying on socket permissions alone.
+- Whether per-tool schema validation should reject mismatched arguments or keep only logging them, given that the extension coerces some parameters today.

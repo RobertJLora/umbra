@@ -688,7 +688,8 @@ export class LocalBridgeServer {
   }
 
   async waitForDownload(params = {}) {
-    const ledger = new FileDownloadLedger({ downloadDir: resolveDownloadDir() });
+    const requestedDir = typeof params.dir === 'string' && params.dir.trim() ? params.dir.trim() : '';
+    const ledger = new FileDownloadLedger({ downloadDir: requestedDir || resolveDownloadDir() });
     const timeoutMs = Number.isFinite(Number(params.timeoutMs)) && Number(params.timeoutMs) > 0
       ? Math.min(Number(params.timeoutMs), 300_000)
       : 30_000;

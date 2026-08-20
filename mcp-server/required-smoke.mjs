@@ -5,29 +5,32 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { LocalBridgeServer } from './bridge-core.js';
 import { FileDownloadLedger } from './download-ledger.mjs';
+import { resolveDownloadDir, resolveSharedKeyPath } from './config.js';
 
-const DOWNLOAD_DIR = '/Users/RobertLora/Documents/Downloads';
+const DOWNLOAD_DIR = resolveDownloadDir();
 const PORT_A = Number(process.env.UMBRA_REQUIRED_PORT_A || 47829);
 const PORT_B = Number(process.env.UMBRA_REQUIRED_PORT_B || (PORT_A + 1));
 const timeoutMs = Number(process.env.UMBRA_SMOKE_TIMEOUT_MS || 30000);
 
+// UMBRA_SHARED_KEY wins, then the key file, which defaults to the canonical
+// path the options page writes. Reading the default means a paired install
+// needs no environment setup to run this smoke.
 function loadSharedKey() {
   const directKey = process.env.UMBRA_SHARED_KEY?.trim();
   if (directKey) {
     return directKey;
   }
-
-  const keyFile = process.env.UMBRA_SHARED_KEY_FILE;
-  if (keyFile) {
-    return fs.readFileSync(keyFile, 'utf8').trim();
-  }
-
-  return '';
+  return fs.readFileSync(resolveSharedKeyPath(), 'utf8').trim();
 }
 
-const SHARED_KEY = loadSharedKey();
+let SHARED_KEY = '';
+try {
+  SHARED_KEY = loadSharedKey();
+} catch {
+  SHARED_KEY = '';
+}
 if (!SHARED_KEY) {
-  console.error('Missing UMBRA_SHARED_KEY or UMBRA_SHARED_KEY_FILE');
+  console.error(`Missing shared key. Set UMBRA_SHARED_KEY, or write one to ${resolveSharedKeyPath()} with the options page Generate button.`);
   process.exit(1);
 }
 

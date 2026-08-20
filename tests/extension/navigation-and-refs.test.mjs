@@ -5,6 +5,8 @@ import vm from 'node:vm';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { AUTHOR_NAME_RE, AUTHOR_SURNAME_RE, HOME_PATH_RE } from '../identity-needles.mjs';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 const background = fs.readFileSync(path.join(repoRoot, 'extension', 'background.js'), 'utf8');
@@ -166,7 +168,9 @@ describe('navigation waits, ref resolution, and page recipes', () => {
   });
 
   it('ships no author identity and no unrelated vendor name in the worker', () => {
-    assert.doesNotMatch(background, /robert/i);
+    assert.doesNotMatch(background, AUTHOR_NAME_RE);
+    assert.doesNotMatch(background, AUTHOR_SURNAME_RE);
+    assert.doesNotMatch(background, HOME_PATH_RE);
     assert.doesNotMatch(background, /codex/i);
     assert.match(background, /BRIDGE_WAKE_ALARM_NAME = 'umbra_bridge_wake'/);
     assert.match(background, /__umbraPageConsole/);

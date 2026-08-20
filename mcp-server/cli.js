@@ -292,8 +292,19 @@ export async function commandStart({ flags, env = process.env }) {
   return 0;
 }
 
-export function commandDoctor({ flags, positionals, stdout, stderr, spawn = spawnSync }) {
-  const script = path.join(__dirname, 'doctor.mjs');
+// The published package's files allowlist covers the server and its runtime
+// dependencies, not the development harness, so doctor.mjs is present in a
+// checkout and absent from an npm install. Say which one this is rather than
+// letting node report a module it cannot find.
+export function commandDoctor({
+  flags,
+  positionals,
+  stdout,
+  stderr,
+  spawn = spawnSync,
+  scriptPath = path.join(__dirname, 'doctor.mjs'),
+}) {
+  const script = scriptPath;
   if (!fs.existsSync(script)) {
     throw new CliError('The diagnostic script (doctor.mjs) is not part of this install.', {
       hint: 'Run it from a checkout of the repository: node mcp-server/doctor.mjs',
@@ -320,6 +331,13 @@ function xmlEscape(value) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function xmlUnescape(value) {
+  return String(value)
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
 }
 
 // Kept in the same placeholder shape as launchd/dev.umbra.broker.plist.template
@@ -351,9 +369,9 @@ export const BUILTIN_LAUNCHD_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
   <key>ThrottleInterval</key>
   <integer>2</integer>
   <key>StandardOutPath</key>
-  <string>__LOG_DIR__/umbra-broker.log</string>
+  <string>__LOG_DIR__/broker.log</string>
   <key>StandardErrorPath</key>
-  <string>__LOG_DIR__/umbra-broker.err.log</string>
+  <string>__LOG_DIR__/broker.err.log</string>
 </dict>
 </plist>
 `;
@@ -382,11 +400,30 @@ export function renderLaunchdPlist(template, values) {
   return rendered;
 }
 
-export function readPlistLabel(plistText) {
-  const match = plistText.match(/<key>Label<\/key>\s*<string>([^<]*)<\/string>/);
-  return match ? match[1].trim() : '';
+export function readPlistString(plistText, key) {
+  const literal = String(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = plistText.match(new RegExp(`<key>${literal}</key>\\s*<string>([^<]*)</string>`));
+  return match ? xmlUnescape(match[1]).trim() : '';
 }
 
+export function readPlistLabel(plistText) {
+  return readPlistString(plistText, 'Label');
+}
+
+export function readPlistProgram(plistText) {
+  const block = plistText.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/);
+  if (!block) {
+    return '';
+  }
+  const first = block[1].match(/<string>([^<]*)<\/string>/);
+  return first ? xmlUnescape(first[1]).trim() : '';
+}
+
+// launchd reads the rendered file, not the values that went into it, and the
+// repository template carries its own literal paths where the built-in copy
+// carries placeholders. Reading the rendered plist back is the only way the
+// existence check, the log directory this command creates, and the summary it
+// prints are guaranteed to describe the job launchd will actually run.
 export function buildBrokerJob({ repoRoot } = {}) {
   const home = os.homedir();
   const label = resolveLaunchdLabel();
@@ -402,14 +439,22 @@ export function buildBrokerJob({ repoRoot } = {}) {
   // The rendered Label is the authority for the filename, because launchd
   // refuses a job whose file name and Label disagree.
   const plistLabel = readPlistLabel(plist) || label;
+  const brokerBin = readPlistProgram(plist) || resolveBrokerBinPath();
+  const stdoutLog = readPlistString(plist, 'StandardOutPath');
+  const stderrLog = readPlistString(plist, 'StandardErrorPath');
+  const logPaths = [stdoutLog, stderrLog].filter(Boolean);
+  const logDirs = [...new Set(logPaths.map((file) => path.dirname(file)))];
   return {
     label: plistLabel,
     configuredLabel: label,
     templateSource: template.source,
     plist,
     plistPath: path.join(home, 'Library', 'LaunchAgents', `${plistLabel}.plist`),
-    brokerBin: resolveBrokerBinPath(),
-    logDir: resolveLogDir(),
+    brokerBin,
+    socketPath: readPlistString(plist, 'UMBRA_BROKER_SOCKET') || resolveBrokerSocketPath(),
+    sharedKeyFile: readPlistString(plist, 'UMBRA_SHARED_KEY_FILE') || resolveSharedKeyPath(),
+    logPaths,
+    logDirs: logDirs.length > 0 ? logDirs : [resolveLogDir()],
   };
 }
 
@@ -417,25 +462,35 @@ function launchctl(args, spawn) {
   return spawn('launchctl', args, { encoding: 'utf8' });
 }
 
-export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync }) {
+export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync, buildJob = buildBrokerJob }) {
   rejectUnknownFlags(flags, ['--dry-run'], 'broker install');
   const dryRun = flags.includes('--dry-run');
-  const job = buildBrokerJob();
+  const job = buildJob();
   const uid = process.getuid?.() ?? os.userInfo().uid;
   const serviceTarget = `gui/${uid}/${job.label}`;
 
-  if (job.label !== job.configuredLabel) {
-    stderr(
-      `Note: the template Label is ${job.label} while UMBRA_BROKER_LAUNCHD_LABEL resolves to ${job.configuredLabel}. Installing as ${job.label}.\n`,
-    );
+  // The rendered file wins, so any value in it that disagrees with what this
+  // server resolves means the server would look for a broker that is not there.
+  // Say so at install time instead of leaving it to a failed connection later.
+  for (const [name, fromPlist, resolved] of [
+    ['Label', job.label, job.configuredLabel],
+    ['broker socket', job.socketPath, resolveBrokerSocketPath()],
+    ['shared key file', job.sharedKeyFile, resolveSharedKeyPath()],
+  ]) {
+    if (fromPlist && resolved && fromPlist !== resolved) {
+      stderr(
+        `Note: the job file sets ${name} to ${fromPlist} while this server resolves ${resolved}. The job file wins; set the matching environment variable for the server, or edit ${job.templateSource}.\n`,
+      );
+    }
   }
 
   if (dryRun) {
     stdout(
       [
-        `Template:   ${job.templateSource}`,
+        `Template:    ${job.templateSource}`,
         `Would write: ${job.plistPath}`,
-        `Log files:   ${job.logDir}/umbra-broker.log and ${job.logDir}/umbra-broker.err.log`,
+        `Binary:      ${job.brokerBin}`,
+        `Log files:   ${job.logPaths.join(' and ')}`,
         `Would run:   launchctl bootstrap gui/${uid} ${job.plistPath}`,
         `             launchctl enable ${serviceTarget}`,
         `             launchctl kickstart -k ${serviceTarget}`,
@@ -463,8 +518,11 @@ export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync 
     });
   }
 
-  // launchd fails a job whose StandardOutPath directory does not exist.
-  fs.mkdirSync(job.logDir, { recursive: true });
+  // launchd fails a job whose StandardOutPath directory does not exist, and it
+  // reports that as a generic spawn failure rather than a missing directory.
+  for (const dir of job.logDirs) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
   fs.mkdirSync(path.dirname(job.plistPath), { recursive: true });
   fs.writeFileSync(job.plistPath, job.plist, { mode: 0o644 });
 
@@ -486,8 +544,8 @@ export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync 
       `Installed ${job.label}`,
       `  job file: ${job.plistPath}`,
       `  binary:   ${job.brokerBin}`,
-      `  socket:   ${resolveBrokerSocketPath()}`,
-      `  logs:     ${job.logDir}`,
+      `  socket:   ${job.socketPath}`,
+      `  logs:     ${job.logPaths.join(' and ')}`,
       kicked.status === 0
         ? '  status:   started'
         : `  status:   bootstrapped but not started yet (launchctl kickstart exit ${kicked.status})`,
@@ -515,8 +573,9 @@ export async function runCli(argv, io = {}) {
   const stderr = io.stderr || ((text) => process.stderr.write(text));
   const spawn = io.spawn || spawnSync;
   const env = io.env || process.env;
+  const buildJob = io.buildJob || buildBrokerJob;
   const parsed = parseArgs(argv);
-  const context = { ...parsed, stdout, stderr, spawn, env };
+  const context = { ...parsed, stdout, stderr, spawn, env, buildJob };
 
   switch (parsed.command) {
     case 'help':

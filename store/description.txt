@@ -1,0 +1,47 @@
+Umbra connects a local AI agent to the Chrome you are already signed into, and limits it to the tabs it owns.
+
+REQUIRES A LOCAL COMPANION SERVER
+
+This extension does nothing on its own. It pairs with a companion server that runs on your own machine and speaks the Model Context Protocol, so any MCP client can drive the browser through it. One command installs and pairs it:
+
+npx -y @umbra-mcp/server pair
+
+That command prints the configuration block your MCP client needs. The extension's options page generates the shared key both sides use and shows connection status. Full setup walkthrough: https://github.com/umbra-bridge/umbra/blob/main/docs/install.md
+
+HOW THE BOUNDARY WORKS
+
+Attaching an agent to a browser over remote debugging hands it everything at once: every tab, every cookie jar, every profile. Umbra takes the opposite position. Each session gets its own session id and its own named Chrome tab group, and every action resolves through an ownership map before Chrome is called. A session can read, click, and close only the tabs it created or that you handed to it. Tabs it does not own are invisible to it, and so are the tabs belonging to every other session.
+
+That boundary is what makes this usable against a browser you are already logged into. An agent can read a dashboard you are signed into, fill a form, and close its own tabs when it finishes, while your other windows stay untouched and unreadable.
+
+WHAT YOU GET
+
+- 47 browser tools: navigation, page reads, an accessibility-based list of visible controls, clicking, typing, form fill, select, hover, keyboard input, file upload, scrolling, screenshots, console reads, and multi-step batches that run in a single call.
+- Background operation. Opening, navigating, and DOM interaction default to inactive tabs, so routine agent work never pulls Chrome to the foreground. Ask for focus explicitly when a task genuinely needs it.
+- Many sessions in one browser. Each agent session gets its own tab group and its own view of the browser, and several can run at once in the same profile.
+- Tab adoption. Open a page by hand, sign in, then hand that exact tab to the agent instead of making it navigate there itself.
+- A dedicated window. Umbra remembers a window for its tabs and routes new session tabs there, and it refuses to reuse that window while you are working in it.
+- Ownership-based cleanup. One call closes the session's whole tab group, and it closes a window only when every tab in it belongs to that session.
+
+HOW IT TALKS TO THE COMPANION SERVER
+
+A WebSocket on 127.0.0.1, inside a port range you set on the options page. Both sides prove they hold the same shared key through an HMAC challenge before a single command is accepted, and a connection from anything other than loopback is refused. The extension contains no fetch and no XMLHttpRequest, and its content security policy allows no remote host. Nothing it reads leaves the machine.
+
+WHAT IT WILL NOT DO
+
+- no cookie dump and no cookie sync
+- no token extraction
+- no storage read or write tools
+- no background fetching on a page's behalf
+- no CAPTCHA solving
+- no access to bookmarks, history, or the clipboard
+- no native messaging
+- no analytics, no telemetry, no account, no remote configuration
+
+PERMISSIONS
+
+Site access is optional and is not granted at install. The options page asks for it with a Grant Site Access button, and Chrome lets you revoke it at any time. Until it is granted, page reads and screenshots stop with a message naming that button rather than failing quietly.
+
+The debugger permission is the widest one declared, and it does three things: capture a screenshot without activating the tab, populate a file input, and run JavaScript that a caller supplied. Attachment happens only against a tab the calling session already owns, it is released as soon as the work finishes, and Chrome shows its automation banner for as long as it lasts. Caller-supplied code runs through the debugger API rather than being compiled inside the extension.
+
+Requires Chrome 121 or later. Source, architecture notes, threat model, and a per-permission justification: https://github.com/umbra-bridge/umbra

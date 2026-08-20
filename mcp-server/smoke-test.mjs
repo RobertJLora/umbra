@@ -4,25 +4,28 @@ import http from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createSessionId } from './auth.js';
 import { LocalBridgeServer } from './bridge-core.js';
+import { resolveSharedKeyPath } from './config.js';
 
+// UMBRA_SHARED_KEY wins, then the key file, which defaults to the canonical
+// path the options page writes. Reading the default means a paired install
+// needs no environment setup to run this smoke.
 function loadSharedKey() {
   const directKey = process.env.UMBRA_SHARED_KEY?.trim();
   if (directKey) {
     return directKey;
   }
-
-  const keyFile = process.env.UMBRA_SHARED_KEY_FILE;
-  if (keyFile) {
-    return fs.readFileSync(keyFile, 'utf8').trim();
-  }
-
-  return '';
+  return fs.readFileSync(resolveSharedKeyPath(), 'utf8').trim();
 }
 
-const SHARED_KEY = loadSharedKey();
+let SHARED_KEY = '';
+try {
+  SHARED_KEY = loadSharedKey();
+} catch {
+  SHARED_KEY = '';
+}
 
 if (!SHARED_KEY) {
-  console.error('Missing UMBRA_SHARED_KEY or UMBRA_SHARED_KEY_FILE');
+  console.error(`Missing shared key. Set UMBRA_SHARED_KEY, or write one to ${resolveSharedKeyPath()} with the options page Generate button.`);
   process.exit(1);
 }
 
@@ -34,7 +37,7 @@ const bridge = new LocalBridgeServer({
 });
 
 const timeoutMs = Number(process.env.UMBRA_SMOKE_TIMEOUT_MS || 15000);
-const groupTitle = `Codex Smoke ${process.pid}`;
+const groupTitle = `Umbra Smoke ${process.pid}`;
 
 function assertSmoke(condition, message) {
   if (!condition) {

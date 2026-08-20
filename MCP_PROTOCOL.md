@@ -17,7 +17,7 @@ Protocol v2 is broker mode, where a Node prototype or the opt-in Rust broker can
 
 MCP-only orchestration tools, such as `browser_batch`, are not raw extension commands in v1. The MCP server expands them into ordinary owned-tab browser commands before anything reaches the extension. Batch child params can reference earlier step results with `{"$ref":"prev.tabId"}`, `{"$ref":"0.tabId"}`, or `{"$ref":"create.tabId"}`.
 
-The Node mux work remains a tested prototype in `mcp-server/node-mux-prototype.js`. The Rust broker is now the launcher default after passing live smoke, focused-suite, safety, and benchmark parity under Robert's normal multi-agent workload. The lightweight MCP shim path lives in `mcp-server/rust-broker-client.js`; legacy protocol v1 remains the rollback.
+The Node mux work remains a tested prototype in `mcp-server/node-mux-prototype.js`. The Rust broker is now the launcher default, having passed live smoke, focused-suite, safety, and benchmark parity against the legacy bridge under concurrent multi-agent load. The lightweight MCP shim path lives in `mcp-server/rust-broker-client.js`; legacy protocol v1 remains the rollback, one setting away.
 
 ## Authentication
 
@@ -170,6 +170,22 @@ Sent by a v2 broker to tell the extension that a shim session disconnected. This
   "reason": "shim_disconnected"
 }
 ```
+
+## `ping` and `pong`
+
+Sent by the extension's offscreen document on an interval, and answered by whichever server holds the other end.
+
+```json
+{ "type": "ping", "ts": 1767225600000 }
+```
+
+```json
+{ "type": "pong", "ts": 1767225600004 }
+```
+
+This is an application-level keepalive, not a WebSocket protocol ping. Browser JavaScript cannot send a protocol ping and never surfaces a protocol pong to a message listener, so a socket that is OPEN but dead is otherwise invisible to the extension and blocks its own replacement.
+
+Both the legacy bridge and the Rust broker answer it. A server that does not is not a failure case: the extension only tears a socket down for silence after it has seen at least one `pong` on that socket, so an older peer degrades to the previous behavior rather than disconnecting on a loop.
 
 ## MCP Shim Socket
 

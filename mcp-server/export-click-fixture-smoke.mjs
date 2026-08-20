@@ -6,15 +6,27 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createSessionId } from './auth.js';
 import { LocalBridgeServer } from './bridge-core.js';
+import { resolveSharedKeyPath } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, '..');
 const fixturePath = path.resolve(__dirname, '../tests/fixtures/ahrefs-export.html');
-const extensionId = 'knagiahhgpodfipmnljkgnpjmcjgfghm';
+
+// Every install gets its own extension id, so the options-page reload fallback
+// only runs when UMBRA_EXTENSION_ID names this one. Without it the run reports
+// the skip rather than opening a URL for an extension nobody has installed.
+const extensionId = process.env.UMBRA_EXTENSION_ID?.trim() || '';
 
 function loadSharedKey() {
-  const keyFile = process.env.UMBRA_SHARED_KEY_FILE
-    || '/Users/RobertLora/.umbra/shared-key';
-  return fs.readFileSync(keyFile, 'utf8').trim();
+  const directKey = process.env.UMBRA_SHARED_KEY?.trim();
+  if (directKey) {
+    return directKey;
+  }
+  return fs.readFileSync(resolveSharedKeyPath(), 'utf8').trim();
+}
+
+function readCanonicalVersion() {
+  return JSON.parse(fs.readFileSync(path.join(repoRoot, 'extension', 'manifest.json'), 'utf8')).version;
 }
 
 function getFrontmostApp() {
@@ -64,6 +76,9 @@ async function waitForDisconnect(bridge, timeoutMs) {
 }
 
 function openReloadPage() {
+  if (!extensionId) {
+    return;
+  }
   spawnSync('open', [`chrome-extension://${extensionId}/options.html?reload=1`]);
 }
 
@@ -84,10 +99,12 @@ function startFixtureServer() {
 }
 
 const previousApp = getFrontmostApp();
+const canonicalVersion = readCanonicalVersion();
 const samples = [previousApp];
 const result = {
   ok: false,
   previousApp,
+  canonicalVersion,
   samples,
 };
 
@@ -167,7 +184,7 @@ try {
   const exportPayload = result.exportAction?.result || result.exportAction;
   result.exportPayload = exportPayload;
   result.ok = Boolean(
-    result.loadedVersion === '0.2.0'
+    result.loadedVersion === canonicalVersion
     && (exportPayload?.exported === true)
     && result.clickedToolbar
     && result.clickedModal

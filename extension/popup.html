@@ -55,9 +55,14 @@
         background: #fff;
       }
 
+      #sharedKey {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+      }
+
       .status {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 8px;
       }
 
@@ -66,16 +71,27 @@
         height: 10px;
         border-radius: 999px;
         background: #94a3b8;
+        margin-top: 4px;
+        flex: 0 0 auto;
       }
 
       .dot.on {
         background: #16a34a;
       }
 
+      .dot.bad {
+        background: #dc2626;
+      }
+
+      .bad {
+        color: #b91c1c;
+      }
+
       button {
         border: 0;
         border-radius: 10px;
         padding: 9px 12px;
+        font: inherit;
         font-weight: 600;
         cursor: pointer;
       }
@@ -90,13 +106,48 @@
         background: #dbeafe;
       }
 
+      button[disabled] {
+        cursor: default;
+        opacity: 0.65;
+      }
+
       ul {
         margin: 0;
         padding-left: 18px;
       }
 
+      ol {
+        margin: 0;
+        padding-left: 18px;
+      }
+
+      ol li {
+        margin-bottom: 6px;
+      }
+
       .muted {
         color: #475569;
+      }
+
+      .hint {
+        margin: 8px 0 0;
+        color: #475569;
+        font-size: 12px;
+      }
+
+      .links {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+        font-size: 12px;
+      }
+
+      a {
+        color: #1d4ed8;
+      }
+
+      [hidden] {
+        display: none !important;
       }
     </style>
   </head>
@@ -109,13 +160,29 @@
       </div>
     </div>
 
+    <div class="panel" id="firstRunPanel" hidden>
+      <h2>First Run</h2>
+      <ol class="muted">
+        <li>Click <strong>Generate</strong>, then <strong>Save And Reconnect</strong>.</li>
+        <li>Click <strong>Copy Line</strong> and paste it into the environment block of your MCP
+          client's Umbra entry, then start the companion server.</li>
+        <li>Open <strong>Settings</strong> below and grant site access.</li>
+      </ol>
+    </div>
+
     <div class="panel">
       <h2>Connection</h2>
       <div class="row">
         <label for="sharedKey">Shared Key</label>
-        <input id="sharedKey" type="password" autocomplete="off" placeholder="Paste the shared install key" />
+        <input id="sharedKey" type="password" autocomplete="off" placeholder="Click Generate to create one" />
       </div>
       <div class="inline">
+        <button id="generateButton" class="secondary">Generate</button>
+        <button id="copyButton" class="secondary">Copy Line</button>
+      </div>
+      <p class="hint">The copied line carries the key and the port range together, so the key is
+        typed nowhere. Generating a new key replaces the old one.</p>
+      <div class="inline" style="margin-top:10px;">
         <div class="row">
           <label for="portStart">Port Start</label>
           <input id="portStart" type="number" min="1024" max="47852" />
@@ -138,9 +205,27 @@
     </div>
 
     <div class="panel">
+      <h2>Site Access</h2>
+      <div class="status">
+        <span id="perm-dot" class="dot"></span>
+        <span id="perm-text" class="muted">Checking site access...</span>
+      </div>
+      <p class="hint">Umbra reads and drives only the tabs a session owns. Chrome asks for site
+        access on the settings page, where the confirmation dialog can stay open.</p>
+      <div class="inline" style="margin-top:10px;">
+        <button id="settingsButton" class="secondary">Open Settings</button>
+      </div>
+    </div>
+
+    <div class="panel">
       <h2>Active Sessions</h2>
       <ul id="sessionsList" class="muted"></ul>
     </div>
+
+    <p class="links">
+      <a id="settingsLink" href="#">Settings</a>
+      <a id="homepageLink" href="#" target="_blank" rel="noreferrer" hidden>Setup guide and source</a>
+    </p>
 
     <script type="module" src="popup.js"></script>
   </body>

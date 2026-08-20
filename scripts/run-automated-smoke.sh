@@ -6,8 +6,10 @@ DEFAULT_TEST_PROFILE="$ROOT_DIR/.local/chrome-automated-smoke-profile-$(date +%Y
 PROFILE_DIR="${UMBRA_TEST_PROFILE:-$DEFAULT_TEST_PROFILE}"
 EXTENSION_DIR="$ROOT_DIR/extension"
 PLAYWRIGHT_CHROME_FOR_TESTING="$HOME/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
-if [[ -n "${CODEX_CHROME_BIN:-}" ]]; then
-  CHROME_BIN="$CODEX_CHROME_BIN"
+# UMBRA_CHROME_BIN names the browser this smoke drives. It never touches the
+# signed-in profile: the run always gets its own --user-data-dir below.
+if [[ -n "${UMBRA_CHROME_BIN:-}" ]]; then
+  CHROME_BIN="$UMBRA_CHROME_BIN"
 elif [[ -x "$PLAYWRIGHT_CHROME_FOR_TESTING" ]]; then
   CHROME_BIN="$PLAYWRIGHT_CHROME_FOR_TESTING"
 else
@@ -17,6 +19,7 @@ CDP_PORT="${UMBRA_CDP_PORT:-47840}"
 BRIDGE_PORT_START="${UMBRA_PORT_START:-47821}"
 BRIDGE_PORT_END="${UMBRA_PORT_END:-47852}"
 DEFAULT_PROFILE_ROOT="$HOME/Library/Application Support/Google/Chrome"
+CHROME_LOG="${TMPDIR:-/tmp}/umbra-smoke-chrome-$$.log"
 
 case "$PROFILE_DIR" in
   "$DEFAULT_PROFILE_ROOT"|"$DEFAULT_PROFILE_ROOT"/*)
@@ -67,6 +70,7 @@ echo "[smoke] launching isolated Chrome profile"
 echo "[smoke] profile:   $PROFILE_DIR"
 echo "[smoke] extension: $EXTENSION_DIR"
 echo "[smoke] cdp port:  $CDP_PORT"
+echo "[smoke] chrome log: $CHROME_LOG"
 
 "$CHROME_BIN" \
   --user-data-dir="$PROFILE_DIR" \
@@ -76,7 +80,7 @@ echo "[smoke] cdp port:  $CDP_PORT"
   --no-default-browser-check \
   --disable-sync \
   --load-extension="$EXTENSION_DIR" \
-  about:blank >/tmp/umbra-smoke-chrome.log 2>&1 &
+  about:blank >"$CHROME_LOG" 2>&1 &
 CHROME_PID="$!"
 
 node "$ROOT_DIR/scripts/configure-extension-cdp.mjs" \

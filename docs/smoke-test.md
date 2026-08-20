@@ -1,195 +1,130 @@
-# Smoke Tests
+# Verification
 
-Use these paths for V0 validation. The isolated-profile path avoids touching Robert's primary Chrome profile; the primary-profile path proves the bridge can use already-signed-in Chrome state.
+Four ways to prove an install works, from cheapest to most thorough. Run the unit tests on every change, the isolated smoke before touching a signed-in profile, and the full suite before a release.
 
-## What The Smoke Test Covers
+None of these paths reads or exports cookies, tokens, storage values, or passwords, and none of them solves a CAPTCHA. The heavier lanes do drive real pages in whatever profile you point them at, so read the profile note in each one.
 
-- extension authenticates to the local bridge server over loopback
-- `browser_create_tab` creates one session-owned tab
-- `browser_list_tabs` returns only the session-owned tab set
-- `browser_navigate` moves that owned tab to a local fixture page
-- `browser_get_page_content` reads title, URL, and body text from the fixture
-- `browser_close_tab` closes the smoke tab
-- `browser_get_session_status` reports owned tabs and cleanup blast radius without mutating Chrome
-
-The smoke test does not cover downloads, cookies, storage, tokens, passwords, CAPTCHA handling, or signed-in third-party sites.
-
-## Primary Chrome Results
-
-Verified on 2026-04-24 after loading the unpacked extension into Robert's signed-in Chrome profile:
-
-- `npm run smoke` passed create/list/navigate/read/close against local fixture pages.
-- `npm run smoke:auth` reached `https://app.ahrefs.com/dashboard` and returned title `Dashboard - Ahrefs` without dumping page body content.
-- `npm run smoke:required` passed two concurrent sessions, three owned tabs, cross-session denial, and a controlled CSV download to `/Users/RobertLora/Documents/Downloads/`.
-- `npm run smoke:groups` passed with five concurrent sessions, eight tabs per session, forty total tabs, five visible Chrome tab groups, clean group names, and all owned tab titles read back correctly.
-- Bridge-driven Ahrefs export passed on 2026-04-24: Top Pages for `adaptivesecurity.com`, CSV UTF-8, all 138 rows, saved to `/Users/RobertLora/Documents/Downloads/adaptivesecurity.com-top-pages-subdomains-u_2026-04-24_23-25-21.csv`.
-- Full-suite baseline passed on 2026-04-24 after manifest reload: create, group, read text, read HTML, screenshot, click visible text, and close.
-- Full-suite downloads passed on 2026-04-24 for CSV, XLSX, PDF, rendered PDF screenshot, and blob CSV using filesystem polling. The runner uses a fresh localhost origin for each file case to avoid Chrome's multiple-automatic-download guardrail.
-- Full-suite SEO passed on 2026-04-24 for rendered DOM technical snapshot, public page rendered status, and raw `HEAD` comparison.
-- Full-suite Ahrefs focused retest passed on 2026-04-24 for `adaptivesecurity.com`: Overview text/html, Top Pages CSV, Organic Keywords CSV, and Refdomains CSV.
-- Full-suite social/research retest passed on 2026-04-24 for read-only X, Reddit, LinkedIn, Wikipedia, and Hacker News. `example.com` returned a Chrome error-page DOM warning and the runner continued.
-- Full-suite cleanup retest passed on 2026-04-24: only the legitimate `47821` listener remained after safe test cleanup.
-- A single all-in-one stress run after repeated Ahrefs exports hit CSV timeouts. Use focused lanes or cooldowns for heavy Ahrefs export testing until repeated-download throttling is better characterized.
-- Stdio shutdown probe passed on 2026-04-24: a server launched with closed stdin opened a test port, exited with `stdin_end`, and left no listener behind.
-
-Run the heavier group test:
+## 1. Unit and contract tests
 
 ```bash
-cd "/Users/RobertLora/Documents/Workspaces/System/Umbra/mcp-server"
-UMBRA_SHARED_KEY_FILE="/Users/RobertLora/.umbra/shared-key" \
-UMBRA_SMOKE_TIMEOUT_MS=90000 \
-UMBRA_STRESS_SESSIONS=5 \
-UMBRA_STRESS_TABS=8 \
-npm run smoke:groups
+cd mcp-server
+npm test
 ```
 
-Expected result:
+No browser, no network, no Chrome. This is the gate every change has to pass.
 
-- one local bridge server per fake Codex session
-- one Chrome tab group per session
-- every session sees only its own group and tabs
-- cross-session reads fail with an ownership error
-- all created tabs are closed before exit
-- no listener remains from the stress sessions; the registered Codex MCP server may still legitimately occupy `47821`
+The suite includes contract tests that pin the safety posture, so a change that widens the boundary fails here rather than in review:
 
-When the registered MCP server is active, `47821` may already be occupied. The stress smoke defaults to `47829` so it can run beside the active MCP server. Override only when needed:
+- every advertised MCP tool has a background handler, and no unadvertised `browser_*` handler bypasses the schema
+- every tab read and mutate tool resolves a session-owned tab before touching Chrome
+- routine open, navigation, and DOM tools stay background-first unless `activate: true`
+- screenshot is the only intentionally activating read path
+- group adoption stays conservative and ref-based tools stay owned-tab scoped
+- predefined page actions stay behind owned-tab resolution and return JSON-safe results
+- navigation rejects risky URL schemes such as `javascript:` and `data:`
+- the manifest requests no cookie, token, history, password, or downloads permission
+- `chrome.debugger` is used only to attach, run one command, and detach, for silent screenshots, owned-tab file upload, and caller-supplied JavaScript
+- cleanup closes a window only when every tab in it belongs to the session
+
+Rust changes have their own gate:
 
 ```bash
-UMBRA_STRESS_PORT_START=47829 npm run smoke:groups
+cargo test --manifest-path rust-broker/Cargo.toml
+cargo test --manifest-path rust-broker/Cargo.toml --test runtime -- --ignored --nocapture
 ```
 
-## Full-Suite Runner
+The second command binds real loopback sockets, which is why it is ignored by default.
 
-Use this when validating the primary signed-in Chrome bridge after code or extension changes:
+## 2. Automated isolated-profile smoke
+
+Run this before pointing anything at a profile you are signed into. It launches a separate Chrome with a throwaway profile, configures the unpacked extension over the DevTools Protocol, runs the MCP smoke test, and closes that Chrome.
 
 ```bash
-cd "/Users/RobertLora/Documents/Workspaces/System/Umbra/mcp-server"
-UMBRA_SHARED_KEY_FILE="/Users/RobertLora/.umbra/shared-key" \
-npm run suite -- --suites baseline,concurrency,ahrefs,social,research,downloads,seo,cleanup --port-start 47829 --port-end 47852 --timeout-ms 90000
-```
-
-Each run writes a dated folder under:
-
-```text
-/Users/RobertLora/Documents/Workspaces/System/Umbra/reports/
-```
-
-Expected artifacts:
-
-- `Full_Bridge_Test_Report.md`
-- `results.jsonl`
-- `failures.jsonl`
-- `screenshots/` when a suite captures visible tabs or PDFs
-
-The runner closes owned test tabs and stops its own bridge listeners by default. If a failure needs visual debugging, rerun with `--keep-open-on-fail` and document any listener/port left open.
-
-Safe listener cleanup that preserves the registered `47821` MCP listener and active agent sessions:
-
-```bash
-cd "/Users/RobertLora/Documents/Workspaces/System/Umbra/mcp-server"
-npm run listeners
-npm run cleanup:test
-```
-
-`cleanup:test` only removes disconnected non-`47821` bridge listeners. Use `npm run cleanup:test:force` only when you intentionally want to clear every non-`47821` bridge listener, including active ad hoc agent sessions. Use `npm run cleanup` only when you intentionally want to kill every bridge listener in `47821-47852`, including the registered MCP listener on `47821`.
-
-## Automated Path
-
-Use this first. It launches a separate Chrome profile, configures the unpacked extension through Chrome DevTools Protocol, runs the MCP smoke test, and then closes that test Chrome process.
-
-```bash
-cd "/Users/RobertLora/Documents/Workspaces/System/Umbra"
 ./scripts/run-automated-smoke.sh
 ```
 
-On Robert's machine, this script automatically uses the Playwright-managed Chrome for Testing binary when present:
+It prefers a Chrome for Testing binary when one is installed and falls back to the system Chrome. It creates a fresh ignored profile under `.local/chrome-automated-smoke-profile-*` each run, because reusing one profile across different Chrome builds can hang or crash the test browser.
 
-```text
-/Users/RobertLora/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing
-```
+Expect `"ok": true` and no listener left behind on the bridge port range or the DevTools port.
 
-It creates a fresh ignored profile under `.local/chrome-automated-smoke-profile-*` by default. Reusing a profile across different Chrome builds can crash or hang the test browser.
+The DevTools Protocol here is a test harness for configuring an unpacked extension without a human clicking through the options page. It is not how Umbra drives a browser in normal use.
 
-Verified result on 2026-04-24:
+## 3. Manual smoke in a test profile
 
-- extension target found and configured
-- local bridge authenticated
-- `browser_create_tab` returned a session-owned tab
-- `browser_list_tabs` returned that owned tab
-- `browser_navigate` reached the local fixture URL
-- `browser_get_page_content` returned the expected title, URL, and body text
-- wrapper exited with no listener left on the bridge/CDP ports
-
-This CDP usage is a test harness only. It is not the recommended daily browser-control architecture.
-
-## Manual Path
-
-### 1. Generate A Test Key
+**Generate a throwaway key.**
 
 ```bash
 openssl rand -hex 32
 ```
 
-Keep the value in your terminal. Do not commit it.
-
-### 2. Launch An Isolated Chrome Profile
+**Launch an isolated profile.**
 
 ```bash
-cd "/Users/RobertLora/Documents/Workspaces/System/Umbra"
 ./scripts/launch-test-profile.sh
 ```
 
-By default this uses:
+It uses `.local/chrome-test-profile` by default, a git-ignored directory, and refuses to run against the normal Chrome profile root.
 
-```text
-/Users/RobertLora/Documents/Workspaces/System/Umbra/.local/chrome-test-profile
-```
+**Configure the extension.** In the test window, confirm the unpacked extension loaded, open its options page, paste the key, set the port range to `47821-47852`, keep loopback scanning enabled, then save and reconnect.
 
-That directory is ignored by git. The launcher refuses to use the normal Chrome profile root under `~/Library/Application Support/Google/Chrome`.
-
-### 3. Configure The Extension
-
-In the test Chrome window:
-
-1. Confirm the unpacked `Umbra` extension is loaded.
-2. Open the extension popup or options page.
-3. Paste the shared key from step 1.
-4. Set the port range to `47821-47852`.
-5. Keep loopback session scanning enabled.
-6. Save and reconnect.
-
-Chrome still has to visibly load the unpacked extension. That is intentional for V0 review.
-
-### 4. Run The Smoke Test
-
-In a terminal:
+**Run the smoke test.**
 
 ```bash
-cd "/Users/RobertLora/Documents/Workspaces/System/Umbra/mcp-server"
-UMBRA_SHARED_KEY="paste-key-here" \
-UMBRA_SMOKE_TIMEOUT_MS=60000 \
-npm run smoke
+cd mcp-server
+UMBRA_SHARED_KEY="paste-key-here" UMBRA_SMOKE_TIMEOUT_MS=60000 npm run smoke
 ```
 
-Expected result:
+It creates a session-owned tab, lists owned tabs, navigates to a local fixture page, reads the title, URL, and body text, and closes the tab. Expect the bridge to log its chosen loopback port, the extension to authenticate, and the command to exit with `"ok": true`.
 
-- the bridge logs the chosen loopback port
-- the extension authenticates
-- Chrome opens a local fixture page in the isolated profile
-- the command exits with JSON containing `"ok": true`
+Other lanes, all reading the key from `UMBRA_SHARED_KEY_FILE` when you do not want it in shell history:
 
-## Download Permission Decision
+| Command | What it proves |
+| --- | --- |
+| `npm run smoke` | create, list, navigate, read, close on one session |
+| `npm run smoke:rust` | the same path through the Rust broker |
+| `npm run smoke:auth` | a signed-in page returns its title without dumping body content |
+| `npm run smoke:required` | two concurrent sessions, cross-session denial, one download |
+| `npm run smoke:groups` | five sessions, eight tabs each, one visible group per session |
 
-V0 keeps Chrome's `downloads` API permission out of this bridge. Full-suite local testing shows filesystem polling can detect normal CSV, XLSX, PDF, and blob downloads after a bridge-initiated click. If future Ahrefs or Google Drive exports need exact download failure/completion events per tab/session, review `downloads` separately before adding it.
+The stress lane defaults to port `47829` so it can run beside a registered MCP server already holding `47821`. Override with `UMBRA_STRESS_PORT_START`.
 
-## Hardening Tests
+```bash
+cd mcp-server
+UMBRA_SMOKE_TIMEOUT_MS=90000 UMBRA_STRESS_SESSIONS=5 UMBRA_STRESS_TABS=8 npm run smoke:groups
+```
 
-`npm test` includes contract tests that pin the current CiC safety posture:
+Expect one group per session, every session seeing only its own tabs, cross-session reads failing with an ownership error, every created tab closed at exit, and no listener left from the stress sessions.
 
-- every advertised MCP tool must have a background handler, and no private `browser_*` handlers can bypass the schema
-- tab read/mutate tools must resolve session-owned tabs before touching Chrome
-- routine open, navigation, and DOM interaction tools must stay background-first unless `activate: true`
-- screenshot remains the only intentionally activating read path
-- visible cleanup must close whole windows only when every tab in that window is owned by the session
-- the manifest must not request cookies, history, debugger, downloads, password, or token-style permissions
-- navigation must reject risky URL schemes such as `javascript:` and `data:`
+## 4. Full-suite runner
+
+The heaviest lane, and the one to run against a signed-in profile after code or extension changes. It drives real pages, so use a profile whose signed-in state you are comfortable automating.
+
+```bash
+cd mcp-server
+npm run suite -- --suites baseline,concurrency,downloads,seo,cleanup --port-start 47833 --port-end 47852 --timeout-ms 90000
+```
+
+Each run writes a dated folder under `reports/` at the repository root containing `Full_Bridge_Test_Report.md`, `results.jsonl`, `failures.jsonl`, and a `screenshots/` directory when a suite captured anything. That whole path is git-ignored, because a run captures whatever pages it drove.
+
+The runner closes its own tabs and stops its own listeners by default. Add `--keep-open-on-fail` when a failure needs visual debugging, and note any port left open.
+
+Download cases each use a fresh localhost origin, because Chrome throttles multiple automatic downloads from one origin.
+
+## Cleaning up after a run
+
+```bash
+cd mcp-server
+npm run listeners        # what is currently bound in the range
+npm run cleanup:test     # remove only disconnected listeners, preserving 47821
+```
+
+`npm run cleanup:test:force` clears every non-`47821` bridge listener including live ad hoc sessions. `npm run cleanup` clears the whole range including the registered MCP listener. Reach for either one deliberately.
+
+## Diagnosing a failure
+
+```bash
+cd mcp-server
+npm run doctor
+```
+
+It reports the extension directory it resolved, whether Chrome has that unpacked extension registered, which bridge listeners answered, and a plain-language `problems` list naming the switch that fixes each one. `npm run recover` runs the same diagnostic with its repair steps enabled.

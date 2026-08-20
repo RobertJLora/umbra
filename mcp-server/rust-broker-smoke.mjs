@@ -7,37 +7,45 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { createSessionId } from './auth.js';
 import { RustBrokerClient } from './rust-broker-client.js';
+import { resolveBrokerSocketPath, resolveSharedKeyPath } from './config.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const rustManifest = path.join(repoRoot, 'rust-broker', 'Cargo.toml');
 
+// UMBRA_SHARED_KEY wins, then the key file, which defaults to the canonical
+// path the options page writes. Reading the default means a paired install
+// needs no environment setup to run this smoke.
 function loadSharedKey() {
   const directKey = process.env.UMBRA_SHARED_KEY?.trim();
   if (directKey) {
     return directKey;
   }
-
-  const keyFile = process.env.UMBRA_SHARED_KEY_FILE;
-  if (keyFile) {
-    return fs.readFileSync(keyFile, 'utf8').trim();
-  }
-
-  return '';
+  return fs.readFileSync(resolveSharedKeyPath(), 'utf8').trim();
 }
 
-const SHARED_KEY = loadSharedKey();
+let SHARED_KEY = '';
+try {
+  SHARED_KEY = loadSharedKey();
+} catch {
+  SHARED_KEY = '';
+}
 if (!SHARED_KEY) {
-  console.error('Missing UMBRA_SHARED_KEY or UMBRA_SHARED_KEY_FILE');
+  console.error(`Missing shared key. Set UMBRA_SHARED_KEY, or write one to ${resolveSharedKeyPath()} with the options page Generate button.`);
   process.exit(1);
 }
 
 const portStart = Number(process.env.UMBRA_RUST_SMOKE_PORT_START || 47849);
 const portEnd = Number(process.env.UMBRA_RUST_SMOKE_PORT_END || 47852);
 const timeoutMs = Number(process.env.UMBRA_SMOKE_TIMEOUT_MS || 30000);
+
+// This smoke starts its own throwaway broker, so it needs a socket path of its
+// own: pointing it at the real one would make the run fight the broker the
+// user's sessions are already using. Keep it beside the real socket in the
+// per-user run directory rather than in world-writable /tmp.
 const socketPath = process.env.UMBRA_BROKER_SOCKET
-  || `/tmp/umbra-rust-smoke-${process.pid}.sock`;
+  || path.join(path.dirname(resolveBrokerSocketPath()), `rust-smoke-${process.pid}.sock`);
 const sessionId = createSessionId();
-const groupTitle = `Codex Rust Smoke ${process.pid}`;
+const groupTitle = `Umbra Rust Smoke ${process.pid}`;
 
 function assertSmoke(condition, message) {
   if (!condition) {

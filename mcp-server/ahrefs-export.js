@@ -481,6 +481,9 @@ async function fallbackOpenAndSubmit(sendCommand, tabId, result) {
 }
 
 export async function runAhrefsExport(sendCommand, options = {}) {
+  const requestedDownloadDir = typeof options.downloadDir === 'string' && options.downloadDir.trim()
+    ? options.downloadDir.trim()
+    : '';
   const report = String(options.report || 'organic-keywords').trim();
   const spec = AHREFS_REPORTS[report];
   if (!spec) {
@@ -702,6 +705,7 @@ export async function runAhrefsExport(sendCommand, options = {}) {
         extension: '.csv',
         createdAfterMs: sinceMs,
         timeoutMs: Number(options.downloadTimeoutMs) || 90_000,
+        ...(requestedDownloadDir ? { dir: requestedDownloadDir } : {}),
       });
     } catch (error) {
       // Recovery, so it stays tolerant: findNew never throws on a missing
@@ -711,7 +715,7 @@ export async function runAhrefsExport(sendCommand, options = {}) {
       // name, and the tab scope pins a claimed download when the extension
       // reports one.
       const ledger = new FileDownloadLedger({
-        downloadDir: resolveDownloadDir(),
+        downloadDir: requestedDownloadDir || resolveDownloadDir(),
         scope: { tabId: result.tabId },
       });
       const recovered = (await ledger.findNew({

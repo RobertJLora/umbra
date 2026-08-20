@@ -6,8 +6,10 @@ PROFILE_DIR="${TMPDIR:-/tmp}/umbra-headless-$$"
 EXTENSION_DIR="$ROOT_DIR/extension"
 PLAYWRIGHT_CHROMIUM="$HOME/Library/Caches/ms-playwright/chromium-1194/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
 PLAYWRIGHT_CHROME_FOR_TESTING="$HOME/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
-if [[ -n "${CODEX_CHROME_BIN:-}" ]]; then
-  CHROME_BIN="$CODEX_CHROME_BIN"
+# UMBRA_CHROME_BIN names the browser this smoke drives. It must be an isolated
+# build: the check below refuses to fall back to the signed-in Google Chrome.
+if [[ -n "${UMBRA_CHROME_BIN:-}" ]]; then
+  CHROME_BIN="$UMBRA_CHROME_BIN"
 elif [[ -x "$PLAYWRIGHT_CHROMIUM" ]]; then
   CHROME_BIN="$PLAYWRIGHT_CHROMIUM"
 elif [[ -x "$PLAYWRIGHT_CHROME_FOR_TESTING" ]]; then
@@ -17,6 +19,8 @@ else
   exit 2
 fi
 echo "[smoke] chrome: $CHROME_BIN"
+CHROME_LOG="${TMPDIR:-/tmp}/umbra-headless-$$.log"
+echo "[smoke] chrome log: $CHROME_LOG"
 CDP_PORT="${UMBRA_CDP_PORT:-47901}"
 BRIDGE_PORT_START="${UMBRA_PORT_START:-47833}"
 BRIDGE_PORT_END="${UMBRA_PORT_END:-47852}"
@@ -45,7 +49,7 @@ trap cleanup EXIT
   --window-size=1280,900 \
   --load-extension="$EXTENSION_DIR" \
   --disable-features=DisableLoadExtensionCommandLineSwitch \
-  about:blank >/tmp/umbra-headless.log 2>&1 &
+  about:blank >"$CHROME_LOG" 2>&1 &
 CHROME_PID="$!"
 
 node "$ROOT_DIR/scripts/configure-extension-cdp.mjs" \

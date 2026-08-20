@@ -150,6 +150,13 @@ async function configureTarget(target, options) {
   const cdp = connectCdp(target.webSocketDebuggerUrl);
   try {
     await cdp.send('Runtime.enable');
+    // The expression below recreates the offscreen document with
+    // reasons: ['DOM_SCRAPING']. No Reason enum value covers holding a raw
+    // WebSocket, so that is the closest available value and the justification
+    // string is the accurate description of what the document does.
+    // extension/background.js declares the same reason for the same document;
+    // keep the two in step so the repository never states two different
+    // reasons for one thing.
     const expression = `
 (async () => {
   await chrome.storage.local.set({

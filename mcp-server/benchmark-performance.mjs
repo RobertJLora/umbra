@@ -10,13 +10,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createSessionId } from './auth.js';
 import { LocalBridgeServer } from './bridge-core.js';
 import { RustBrokerClient } from './rust-broker-client.js';
+import { resolveBrokerSocketPath, resolveSharedKeyPath } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = path.resolve(__dirname, '..');
 const REPORTS_ROOT = path.join(BRIDGE_ROOT, 'reports', 'performance');
 const RUST_MANIFEST = path.join(BRIDGE_ROOT, 'rust-broker', 'Cargo.toml');
 const RUST_RELEASE_BINARY = path.join(BRIDGE_ROOT, 'rust-broker', 'target', 'release', 'umbra-rust-broker');
-const DEFAULT_SHARED_KEY_FILE = '/Users/RobertLora/.umbra/shared-key';
+const DEFAULT_SHARED_KEY_FILE = resolveSharedKeyPath();
 const DEFAULT_PORT_START = 47829;
 const DEFAULT_PORT_END = 47852;
 const DEFAULT_TIMEOUT_MS = 45_000;
@@ -376,8 +377,14 @@ async function waitForRustBrokerExtension(bridge, label, timeoutMs) {
 }
 
 function startRustBrokerRuntime({ sharedKey, options, runId }) {
+  // The benchmark starts its own throwaway broker, so it needs a socket of its
+  // own: pointing it at the real one would make the run fight the broker the
+  // user's sessions are already using. Keep it beside the real socket in the
+  // per-user run directory rather than in world-writable /tmp, where another
+  // local account can pre-create the path and block startup.
   const socketPath = process.env.UMBRA_BROKER_SOCKET
-    || `/tmp/umbra-rust-bench-${process.pid}-${runId}.sock`;
+    || path.join(path.dirname(resolveBrokerSocketPath()), `bench-${process.pid}-${runId}.sock`);
+  fs.mkdirSync(path.dirname(socketPath), { recursive: true });
   fs.rmSync(socketPath, { force: true });
 
   const command = fs.existsSync(RUST_RELEASE_BINARY) ? RUST_RELEASE_BINARY : 'cargo';

@@ -33,19 +33,19 @@ const NEW_REPORTS = ['keywords-explorer', 'batch-analysis', 'content-gap', 'posi
 describe('Umbra Ahrefs export contract', () => {
   it('keeps official Site Explorer URLs on v2 paths and adds KE, batch, and content gap', () => {
     assert.equal(
-      makeAhrefsReportUrl({ target: 'travelbagexperts.com' }),
-      'https://app.ahrefs.com/v2-site-explorer/organic-keywords?target=travelbagexperts.com&mode=subdomains&volume_type=monthly&country=us',
+      makeAhrefsReportUrl({ target: 'example.com' }),
+      'https://app.ahrefs.com/v2-site-explorer/organic-keywords?target=example.com&mode=subdomains&volume_type=monthly&country=us',
     );
     assert.match(
-      makeAhrefsReportUrl({ target: 'userp.io', report: 'top-pages' }),
+      makeAhrefsReportUrl({ target: 'example.net', report: 'top-pages' }),
       /\/v2-site-explorer\/top-pages\?/,
     );
     assert.match(
-      makeAhrefsReportUrl({ target: 'userp.io', report: 'refdomains' }),
+      makeAhrefsReportUrl({ target: 'example.net', report: 'refdomains' }),
       /\/site-explorer\/refdomains\?/,
     );
     assert.match(
-      makeAhrefsReportUrl({ target: 'userp.io', compareDate: 'prevMonth' }),
+      makeAhrefsReportUrl({ target: 'example.net', compareDate: 'prevMonth' }),
       /compareDate=prevMonth/,
     );
     assert.deepEqual(Object.keys(AHREFS_REPORTS), [...SITE_EXPLORER_REPORTS, ...NEW_REPORTS]);
@@ -101,16 +101,17 @@ describe('Umbra Ahrefs export contract', () => {
 
   it('opens the toolbar Export from the Columns-anchored React handler', () => {
     const background = fs.readFileSync(path.join(repoRoot, 'extension', 'background.js'), 'utf8');
-    const helperStart = background.indexOf('const findExportUnderHeading');
-    const helperEnd = background.indexOf('const selectSheetsRadio');
-    const openHelper = background.slice(helperStart, helperEnd);
-    const start = background.indexOf("if (action === 'ahrefs_open_table_export')");
-    const end = background.indexOf("if (action === 'ahrefs_modal_state')");
-    const openBlock = background.slice(start, end);
-    const exportBlock = background.slice(
-      background.indexOf("if (action === 'ahrefs_export_csv')"),
-      background.indexOf("throw new Error(`Unsupported page action"),
+    const recipes = fs.readFileSync(
+      path.join(repoRoot, 'extension', 'recipes', 'ahrefs-actions.js'),
+      'utf8',
     );
+    const helperStart = recipes.indexOf('const findExportUnderHeading');
+    const helperEnd = recipes.indexOf('const selectSheetsRadio');
+    const openHelper = recipes.slice(helperStart, helperEnd);
+    const start = recipes.indexOf('async ahrefs_open_table_export(');
+    const end = recipes.indexOf('ahrefs_modal_state(');
+    const openBlock = recipes.slice(start, end);
+    const exportBlock = recipes.slice(recipes.indexOf('async ahrefs_export_csv('));
     const runner = fs.readFileSync(path.join(repoRoot, 'mcp-server', 'ahrefs-export.js'), 'utf8');
 
     assert.ok(helperStart >= 0);
@@ -129,24 +130,24 @@ describe('Umbra Ahrefs export contract', () => {
     assert.match(openHelper, /Last 2 years|Last \\d\+ \(days\|months\|years\)/);
     assert.match(openHelper, /scrollIntoView/);
     assert.doesNotMatch(openHelper, /topmost_export_click/);
-    assert.match(background, /enter keywords/i);
-    assert.match(background, /textarea_not_found/);
+    assert.match(recipes, /enter keywords/i);
+    assert.match(recipes, /textarea_not_found/);
     assert.match(runner, /pageActionResult/);
     assert.match(runner, /textarea not found after paste/);
     assert.match(runner, /list table did not show Columns after paste/);
     assert.match(runner, /search-volume-history/);
-    assert.match(background, /action === 'ahrefs_select_sheets'/);
-    assert.match(background, /action === 'ahrefs_unhide_columns'/);
-    assert.match(background, /action === 'ahrefs_include_top10'/);
-    assert.match(background, /action === 'ahrefs_update_if_empty'/);
-    assert.match(background, /No data for this keyword/);
+    assert.match(recipes, /ahrefs_select_sheets\(/);
+    assert.match(recipes, /ahrefs_unhide_columns\(/);
+    assert.match(recipes, /ahrefs_include_top10\(/);
+    assert.match(recipes, /ahrefs_update_if_empty\(/);
+    assert.match(recipes, /No data for this keyword/);
     assert.match(runner, /ahrefs_update_if_empty/);
     assert.match(exportBlock, /destination === 'sheets'/);
     assert.match(exportBlock, /radioCount === 5|radios\.length === 5/);
     assert.match(exportBlock, /modal_did_not_open/);
     assert.match(background, /action === 'wait_for_text'/);
-    assert.match(background, /action === 'ahrefs_export_position_history'/);
-    assert.match(background, /position_history_heading_not_found/);
+    assert.match(recipes, /ahrefs_export_position_history\(/);
+    assert.match(recipes, /position_history_heading_not_found/);
     assert.match(runner, /allowChartCsv/);
     assert.match(runner, /ahrefs_export_position_history/);
     assert.match(runner, /compareDate/);
@@ -156,28 +157,43 @@ describe('Umbra Ahrefs export contract', () => {
     assert.match(runner, /browser_close_tab/);
     assert.match(runner, /ahrefsDownloadNeedle/);
     assert.match(runner, /downloadRecovered/);
-    assert.match(background, /__reactFiber\$/);
-    assert.match(background, /memoizedProps/);
-    assert.match(background, /submitted_click/);
-    assert.match(background, /sheets-already-checked/);
+    assert.match(recipes, /__reactFiber\$/);
+    assert.match(recipes, /memoizedProps/);
+    assert.match(recipes, /submitted_click/);
+    assert.match(recipes, /sheets-already-checked/);
     assert.doesNotMatch(runner, /browser_close_session_tabs/);
+  });
+
+  it('keeps the Ahrefs page automation behind the recipe seam background.js dispatches to', () => {
+    const background = fs.readFileSync(path.join(repoRoot, 'extension', 'background.js'), 'utf8');
+    const recipes = fs.readFileSync(
+      path.join(repoRoot, 'extension', 'recipes', 'ahrefs-actions.js'),
+      'utf8',
+    );
+
+    assert.match(background, /globalThis\.__umbraPageRecipes\?\.ahrefs\?\.\[action\]/);
+    assert.match(background, /Page recipe not installed in this build/);
+    assert.match(background, /recipes\/ahrefs-actions\.js/);
+    assert.match(recipes, /globalThis\.__umbraPageRecipes = /);
+    assert.doesNotMatch(background, /const findExportUnderHeading/);
+    assert.doesNotMatch(background, /const selectSheetsRadio/);
   });
 
   it('waits on the hostname for exact-URL Ahrefs CSV names', () => {
     assert.equal(
-      ahrefsDownloadNeedle('https://cymulate.com/cybersecurity-glossary/siem-correlation-rules/'),
-      'cymulate.com',
+      ahrefsDownloadNeedle('https://example.org/cybersecurity-glossary/siem-correlation-rules/'),
+      'example.org',
     );
     assert.equal(
-      ahrefsDownloadNeedle('https://cymulate.com/cybersecurity-glossary/siem-correlation-rules/', {
+      ahrefsDownloadNeedle('https://example.org/cybersecurity-glossary/siem-correlation-rules/', {
         report: 'organic-keywords',
       }),
-      'cymulate.com',
+      'example.org',
     );
-    assert.equal(ahrefsDownloadNeedle('cymulate.com'), 'cymulate.com');
-    assert.equal(ahrefsDownloadNeedle('www.cymulate.com'), 'cymulate.com');
+    assert.equal(ahrefsDownloadNeedle('example.org'), 'example.org');
+    assert.equal(ahrefsDownloadNeedle('www.example.org'), 'example.org');
     assert.notEqual(
-      ahrefsDownloadNeedle('https://cymulate.com/cybersecurity-glossary/siem-correlation-rules/'),
+      ahrefsDownloadNeedle('https://example.org/cybersecurity-glossary/siem-correlation-rules/'),
       'https:',
     );
     assert.equal(
@@ -243,10 +259,10 @@ describe('Umbra Ahrefs export contract', () => {
   });
 
   it('rejects a chart kebab CSV that has Date and no Keyword', () => {
-    assert.equal(isChartKebabCsv(['Date', 'https://travelbagexperts.com/']), true);
+    assert.equal(isChartKebabCsv(['Date', 'https://example.com/']), true);
     assert.equal(isChartKebabCsv(['Keyword', 'Volume', 'Date']), false);
     const fixture = path.join(repoRoot, 'tests', 'fixtures', 'chart-kebab-sample.csv');
-    fs.writeFileSync(fixture, 'Date,https://travelbagexperts.com/\n2026-01-01,120\n');
+    fs.writeFileSync(fixture, 'Date,https://example.com/\n2026-01-01,120\n');
     const parsed = parseDelimitedTable(fixture);
     assert.equal(isChartKebabCsv(parsed.columns), true);
   });

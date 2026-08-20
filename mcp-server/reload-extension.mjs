@@ -1,16 +1,37 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createSessionId } from './auth.js';
 import { LocalBridgeServer } from './bridge-core.js';
+import { resolveSharedKeyPath } from './config.js';
 
-const extensionId = 'knagiahhgpodfipmnljkgnpjmcjgfghm';
-const reloadUrl = `chrome-extension://${extensionId}/options.html?reload=1`;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, '..');
+
+// The AppleScript fallback needs a chrome-extension:// URL, which needs the
+// install's own id. Every install gets a different one, so it comes from
+// UMBRA_EXTENSION_ID. Without it the fallback is skipped and the run reports
+// why, instead of opening a tab for an extension that is not installed here.
+const extensionId = process.env.UMBRA_EXTENSION_ID?.trim() || '';
+const reloadUrl = extensionId ? `chrome-extension://${extensionId}/options.html?reload=1` : '';
 
 function loadSharedKey() {
-  const keyFile = process.env.UMBRA_SHARED_KEY_FILE
-    || '/Users/RobertLora/.umbra/shared-key';
-  return fs.readFileSync(keyFile, 'utf8').trim();
+  const directKey = process.env.UMBRA_SHARED_KEY?.trim();
+  if (directKey) {
+    return directKey;
+  }
+  return fs.readFileSync(resolveSharedKeyPath(), 'utf8').trim();
+}
+
+// The version this checkout would load. Comparing the reloaded extension
+// against the repository's own manifest is the check that means something; the
+// old pinned string only ever matched one build.
+async function readCanonicalVersion() {
+  const manifest = JSON.parse(await fsp.readFile(path.join(repoRoot, 'extension', 'manifest.json'), 'utf8'));
+  return manifest.version;
 }
 
 function getFrontmostApp() {
@@ -31,6 +52,9 @@ function restoreIfStolen(previousApp) {
 }
 
 function openReloadTab() {
+  if (!reloadUrl) {
+    return { skipped: true, reason: 'Set UMBRA_EXTENSION_ID to let the AppleScript fallback open this install\'s options page.' };
+  }
   const script = `
 tell application "Google Chrome"
   if (count of windows) = 0 then
@@ -75,7 +99,8 @@ async function waitForDisconnect(bridge, timeoutMs) {
 }
 
 const previousApp = getFrontmostApp();
-const result = { ok: false, previousApp };
+const canonicalVersion = await readCanonicalVersion();
+const result = { ok: false, previousApp, canonicalVersion };
 const bridge = new LocalBridgeServer({
   sharedKey: loadSharedKey(),
   sessionId: createSessionId(),
@@ -107,7 +132,7 @@ try {
   result.sessionStatus = await bridge.sendCommand('browser_get_session_status', {});
   result.loadedVersion = result.sessionStatus?.extensionVersion || null;
   result.loadedName = result.sessionStatus?.extensionName || null;
-  result.ok = result.loadedVersion === '0.2.0';
+  result.ok = result.loadedVersion === canonicalVersion;
   result.finalApp = getFrontmostApp();
   restoreIfStolen(previousApp);
 } catch (error) {

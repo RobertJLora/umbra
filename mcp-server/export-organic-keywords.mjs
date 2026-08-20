@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { createSessionId } from './auth.js';
 import { LocalBridgeServer } from './bridge-core.js';
 import { AHREFS_REPORTS, runAhrefsExport } from './ahrefs-export.js';
+import { resolveSharedKeyPath } from './config.js';
 
 function parseArgs(argv) {
   const options = {
@@ -52,9 +53,7 @@ function parseArgs(argv) {
 function loadSharedKey() {
   const direct = process.env.UMBRA_SHARED_KEY?.trim();
   if (direct) return direct;
-  const keyFile = process.env.UMBRA_SHARED_KEY_FILE
-    || '/Users/RobertLora/.umbra/shared-key';
-  return fs.readFileSync(keyFile, 'utf8').trim();
+  return fs.readFileSync(resolveSharedKeyPath(), 'utf8').trim();
 }
 
 function getFrontmostApp() {

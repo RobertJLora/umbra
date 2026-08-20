@@ -10,6 +10,7 @@ import {
   buildToolDefinitions,
   getToolDefinition,
 } from '../../mcp-server/tools.js';
+import { AUTHOR_SITE_RE } from '../identity-needles.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
@@ -131,7 +132,7 @@ test('composite recipes and browser_batch document the ok failure contract', () 
 });
 
 test('tool schemas carry no personal site as an example', () => {
-  assert.doesNotMatch(toolsSource, /travelbagexperts/i);
+  assert.doesNotMatch(toolsSource, AUTHOR_SITE_RE);
   assert.match(
     getToolDefinition('browser_export_ahrefs').inputSchema.properties.target.description,
     /example\.com/,

@@ -1,21 +1,20 @@
 # Rust Broker
 
-This directory contains the Tokio broker runtime for CiC Performance V2.
-The launcher now prefers Rust first after live smoke, focused-suite, and
-benchmark parity passed on Robert's local Chrome extension. The legacy Node
-bridge remains available as a one-setting rollback.
+The Tokio broker runtime. One process holds one WebSocket to the Chrome extension and multiplexes every MCP session behind it over a local Unix socket, instead of each session binding its own loopback listener.
 
-## Current Scope
+It is optional. The launcher prefers it and falls back to the pure-Node bridge when it is not built, not running, or not wanted. Rolling back is one setting.
 
-- HMAC helpers for the existing hello and bind proof messages.
-- Async session routing primitives with session-owned tab checks.
-- HTTP `/healthz` and WebSocket `/bridge` on loopback for the Chrome extension.
-- Local Unix socket for lightweight MCP shims.
-- Protocol v2 session routing over one extension WebSocket.
-- Health and status structs that serialize cleanly for `/healthz` parity.
-- Pressure counters for pending requests, routed/rejected commands, auth failures,
-  and byte accounting.
-- Live integration test with a mock extension WebSocket plus two shim sessions.
+## Scope
+
+- HMAC helpers for the `hello` and `bind` proof messages, matching `mcp-server/auth.js`.
+- Async session routing with session-owned tab checks.
+- HTTP `/healthz` and WebSocket `/bridge` on loopback for the extension.
+- A local Unix socket for lightweight MCP shims, created with mode `0600` under `$HOME/.umbra/run/` so no other local account can connect or pre-create the path.
+- Protocol v2 session routing over the single extension WebSocket, with each shim socket bound to the session it registered.
+- An application-level `ping` and `pong` keepalive, so a dead-but-open socket is detectable from the extension side.
+- Health and status structs that serialize to the same shape the legacy `/healthz` returns.
+- Pressure counters for pending requests, routed and rejected commands, authentication failures, and byte accounting.
+- A live integration test with a mock extension WebSocket and two shim sessions.
 
 ## Run
 
@@ -23,7 +22,7 @@ bridge remains available as a one-setting rollback.
 cargo test
 ```
 
-Run the live broker parity test, which binds loopback sockets:
+The live parity test binds real loopback sockets, so it is ignored by default:
 
 ```bash
 cargo test --test runtime -- --ignored --nocapture
@@ -32,28 +31,27 @@ cargo test --test runtime -- --ignored --nocapture
 Run the broker directly:
 
 ```bash
-UMBRA_SHARED_KEY_FILE="$HOME/.codex/umbra/shared-key" cargo run
+UMBRA_SHARED_KEY_FILE="$HOME/.umbra/shared-key" cargo run
 ```
 
-Use the Rust broker through the normal MCP launcher:
+Or through the normal launcher, which builds it when the sources are newer than the binary, starts or reuses it, and then runs the MCP shim:
 
 ```bash
 ../mcp-server/launch-mcp.sh
 ```
 
-Roll back to the legacy bridge:
+Roll back to the legacy per-session Node bridge:
 
 ```bash
 UMBRA_BROKER_MODE=legacy ../mcp-server/launch-mcp.sh
 ```
 
-Set `UMBRA_BROKER_REQUIRED=1` if fallback to legacy should be
-treated as a hard failure during tests.
+Set `UMBRA_BROKER_REQUIRED=1` when a fallback to legacy should be a hard failure rather than a quiet degrade, which is what you want in a test run.
 
-## Non-Goals In This Phase
+## Non-goals
 
-- No cookie, token, password, CAPTCHA, debugger, downloads, native messaging, or
-  browser-storage permissions.
-- No Chrome API move into Rust; the extension remains the Chrome API layer.
+- No Chrome permission of any kind. The broker never calls a Chrome API; the extension remains the only Chrome API layer, and moving any of that into Rust is out of scope.
+- No cookie, token, password, CAPTCHA, download, native messaging, or browser-storage handling. The broker routes commands and never inspects what they carry beyond the fields it needs to route and account for them.
+- No network egress. It listens on loopback and on a Unix socket, and connects to nothing.
 
-See `LEGACY_FALLBACK.md` for the rollback and parity plan.
+`LEGACY_FALLBACK.md` carries the rollback triggers and the parity checks that keep this the default.

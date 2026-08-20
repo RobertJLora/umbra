@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
@@ -9,14 +10,15 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { LocalBridgeServer } from './bridge-core.js';
 import { FileDownloadLedger } from './download-ledger.mjs';
 import { RustBrokerClient } from './rust-broker-client.js';
+import { resolveBrokerSocketPath, resolveDownloadDir, resolveSharedKeyPath } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = path.resolve(__dirname, '..');
 const REPORTS_ROOT = path.join(BRIDGE_ROOT, 'reports');
 const RUST_MANIFEST = path.join(BRIDGE_ROOT, 'rust-broker', 'Cargo.toml');
 const RUST_RELEASE_BINARY = path.join(BRIDGE_ROOT, 'rust-broker', 'target', 'release', 'umbra-rust-broker');
-const DOWNLOAD_DIR = '/Users/RobertLora/Documents/Downloads';
-const DEFAULT_SHARED_KEY_FILE = '/Users/RobertLora/.umbra/shared-key';
+const DOWNLOAD_DIR = resolveDownloadDir();
+const DEFAULT_SHARED_KEY_FILE = resolveSharedKeyPath();
 const DEFAULT_SUITES = ['baseline', 'concurrency', 'ahrefs', 'social', 'research', 'downloads', 'seo', 'cleanup'];
 const DEFAULT_PORT_START = 47829;
 const DEFAULT_PORT_END = 47852;
@@ -26,6 +28,19 @@ const COLORS = ['blue', 'green', 'yellow', 'pink', 'purple', 'cyan', 'orange'];
 
 function stampForPath(date = new Date()) {
   return date.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+}
+
+// Written into every generated report, so it prints `~/Downloads` rather than
+// the running account's real home directory. The report still says exactly
+// which directory was used; it just does not name the person using it.
+function displayPath(absolutePath) {
+  const home = os.homedir();
+  if (absolutePath === home) {
+    return '~';
+  }
+  return absolutePath.startsWith(`${home}${path.sep}`)
+    ? `~${absolutePath.slice(home.length)}`
+    : absolutePath;
 }
 
 function parseArgs(argv) {
@@ -38,7 +53,15 @@ function parseArgs(argv) {
     keepOpenOnFail: false,
     cleanupMode: 'closeTabs',
     brokerMode: process.env.UMBRA_BROKER_MODE === 'rust' ? 'rust' : 'legacy',
-    ahrefsTarget: process.env.UMBRA_AHREFS_TARGET || 'adaptivesecurity.com',
+    // The Ahrefs suite needs some domain to drive a report for. It is a
+    // placeholder, not a subject: set UMBRA_AHREFS_TARGET to run against a
+    // domain the running account actually has data for.
+    ahrefsTarget: process.env.UMBRA_AHREFS_TARGET || 'example.com',
+    // The rendered-versus-raw check needs one page on the public internet that
+    // returns a title. Same rule as the Ahrefs target: a neutral placeholder
+    // ships, and UMBRA_PUBLIC_URL points the check at a real page when someone
+    // wants a heavier document than example.com.
+    publicUrl: process.env.UMBRA_PUBLIC_URL || 'https://example.com/',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -211,8 +234,8 @@ Report folder: \`${this.reportDir}\`
 | Timeout | ${this.options.timeoutMs}ms |
 | Cleanup mode | ${this.options.cleanupMode} |
 | Broker mode | ${this.options.brokerMode} |
-| Downloads | ${DOWNLOAD_DIR} |
-| Shared key source | ${process.env.UMBRA_SHARED_KEY ? 'env' : DEFAULT_SHARED_KEY_FILE} |
+| Downloads | ${displayPath(DOWNLOAD_DIR)} |
+| Shared key source | ${process.env.UMBRA_SHARED_KEY ? 'env' : displayPath(DEFAULT_SHARED_KEY_FILE)} |
 
 ## Summary
 
@@ -315,8 +338,14 @@ async function waitForAuthenticatedBridge(bridge, label, timeoutMs) {
 }
 
 function startRustBrokerRuntime(context) {
+  // The suite starts its own throwaway broker, so it needs a socket of its own:
+  // pointing it at the real one would make the run fight the broker the user's
+  // sessions are already using. Keep it beside the real socket in the per-user
+  // run directory rather than in world-writable /tmp, where another local
+  // account can pre-create the path and block startup.
   const socketPath = process.env.UMBRA_BROKER_SOCKET
-    || `/tmp/umbra-rust-suite-${process.pid}-${context.runId}.sock`;
+    || path.join(path.dirname(resolveBrokerSocketPath()), `suite-${process.pid}-${context.runId}.sock`);
+  fs.mkdirSync(path.dirname(socketPath), { recursive: true });
   fs.rmSync(socketPath, { force: true });
 
   const command = fs.existsSync(RUST_RELEASE_BINARY) ? RUST_RELEASE_BINARY : 'cargo';
@@ -753,10 +782,10 @@ function pageHtml(pathname, names) {
   if (pathname === '/downloads') {
     return `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Codex Bridge Downloads</title></head>
+<head><meta charset="utf-8"><title>Umbra Bridge Downloads</title></head>
 <body>
   <main>
-    <h1>Codex Bridge Downloads</h1>
+    <h1>Umbra Bridge Downloads</h1>
     <a id="csv-download" href="/files/${names.csvName}" download="${names.csvName}">Download CSV</a>
     <a id="xlsx-download" href="/files/${names.xlsxName}" download="${names.xlsxName}">Download XLSX</a>
     <a id="pdf-download" href="/files/${names.pdfName}" download="${names.pdfName}">Download PDF</a>
@@ -1222,7 +1251,9 @@ async function runSeo(context) {
       note: `H1=${snapshot.headings.counts.h1 || 0}, links=${snapshot.links.total}, images=${snapshot.images.total}.`,
     });
 
-    const publicUrl = 'https://travelbagexperts.com/best-luggage-for-suits/?_verify=1777045074000';
+    // Cache-busted at run time rather than with a frozen literal, so the check
+    // proves a live fetch on every run instead of one recorded moment.
+    const publicUrl = appendCacheBuster(context.options.publicUrl);
     const publicStartedAt = Date.now();
     const publicTab = await session.bridge.sendCommand('browser_create_tab', {
       url: publicUrl,
@@ -1251,6 +1282,16 @@ async function runSeo(context) {
   } finally {
     await fixture?.close().catch(() => {});
     await stopBridgeSession(context, session, { closeTabs: context.options.cleanupMode === 'closeTabs' });
+  }
+}
+
+function appendCacheBuster(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('_verify', String(Date.now()));
+    return parsed.toString();
+  } catch {
+    return url;
   }
 }
 
@@ -1517,7 +1558,7 @@ async function exportAhrefsReport(context, session, report) {
       bytes: downloaded.bytes,
       lines: lineCount,
       elapsedMs: Date.now() - startedAt,
-      note: `Ahrefs CSV landed in Robert downloads via primary signed-in Chrome. ${csvSelectionNote}`,
+      note: `Ahrefs CSV landed in the configured download directory via the signed-in Chrome profile. ${csvSelectionNote}`,
     });
   } catch (error) {
     await recordFailure(context, {

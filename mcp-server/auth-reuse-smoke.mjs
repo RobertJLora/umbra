@@ -2,29 +2,32 @@ import process from 'node:process';
 import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { LocalBridgeServer } from './bridge-core.js';
+import { resolveSharedKeyPath } from './config.js';
 
 const DEFAULT_AUTH_CHECK_URL = 'https://app.ahrefs.com/dashboard';
 const DEFAULT_EXPECT_HOST = 'app.ahrefs.com';
 const DEFAULT_REJECT_PATTERN = String.raw`/user/login|/signin|/sign-in|accounts\.google\.com`;
 const timeoutMs = Number(process.env.UMBRA_SMOKE_TIMEOUT_MS || 60000);
 
+// UMBRA_SHARED_KEY wins, then the key file, which defaults to the canonical
+// path the options page writes. Reading the default means a paired install
+// needs no environment setup to run this smoke.
 function loadSharedKey() {
   const directKey = process.env.UMBRA_SHARED_KEY?.trim();
   if (directKey) {
     return directKey;
   }
-
-  const keyFile = process.env.UMBRA_SHARED_KEY_FILE;
-  if (keyFile) {
-    return fs.readFileSync(keyFile, 'utf8').trim();
-  }
-
-  return '';
+  return fs.readFileSync(resolveSharedKeyPath(), 'utf8').trim();
 }
 
-const SHARED_KEY = loadSharedKey();
+let SHARED_KEY = '';
+try {
+  SHARED_KEY = loadSharedKey();
+} catch {
+  SHARED_KEY = '';
+}
 if (!SHARED_KEY) {
-  console.error('Missing UMBRA_SHARED_KEY or UMBRA_SHARED_KEY_FILE');
+  console.error(`Missing shared key. Set UMBRA_SHARED_KEY, or write one to ${resolveSharedKeyPath()} with the options page Generate button.`);
   process.exit(1);
 }
 
