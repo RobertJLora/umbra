@@ -12,6 +12,10 @@ const SHARED_KEY_BYTES = 32;
 // A key generated but not yet saved. Kept so a status refresh cannot overwrite
 // the field with the stored key and silently throw the new one away.
 let pendingKey = '';
+// The enable checkbox starts checked in HTML. Save must not read it until
+// renderState has painted the stored value, or a click on Save And Reconnect
+// before refresh finishes writes bridgeEnabled: false and kills scanning.
+let settingsHydrated = false;
 
 if (new URLSearchParams(location.search).get('reload') === '1') {
   chrome.runtime.reload();
@@ -145,6 +149,7 @@ function renderState(state) {
   el('portStart').value = config.portStart;
   el('portEnd').value = config.portEnd;
   el('bridgeEnabled').checked = config.bridgeEnabled !== false;
+  settingsHydrated = true;
   el('firstRunCard').hidden = Boolean(config.sharedKey);
 
   const connectedCount = bridgeStatus?.connectedCount || 0;
@@ -155,6 +160,8 @@ function renderState(state) {
       `Connected to ${connectedCount} local session${connectedCount === 1 ? '' : 's'}.`,
       'ok',
     );
+  } else if (!config.bridgeEnabled) {
+    setStatus('Loopback scanning is off. Turn Enable loopback scanning on, then Save And Reconnect.', 'error');
   } else if (config.sharedKey) {
     setStatus('No local sessions connected yet. Start the companion server with the same key.');
   } else {
@@ -207,6 +214,9 @@ el('copyButton').addEventListener(
 el('saveButton').addEventListener(
   'click',
   guarded(async () => {
+    if (!settingsHydrated) {
+      await refresh();
+    }
     const config = {
       sharedKey: el('sharedKey').value.trim(),
       portStart: Number(el('portStart').value),

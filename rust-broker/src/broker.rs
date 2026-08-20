@@ -322,6 +322,20 @@ impl RustBroker {
         Ok(())
     }
 
+    pub async fn rebind_session_channel(
+        &self,
+        session_id: &str,
+        channel_id: impl Into<String>,
+        port: u16,
+        connected_at_ms: u64,
+    ) -> Result<(), SessionError> {
+        self.registry
+            .rebind_channel(session_id, channel_id, port, connected_at_ms)
+            .await?;
+        self.refresh_pressure_from_registry().await;
+        Ok(())
+    }
+
     pub async fn authenticate_session(
         &self,
         session_id: &str,

@@ -268,4 +268,16 @@ describe('navigation waits, ref resolution, and page recipes', () => {
     // broken one.
     assert.doesNotMatch(background, /recipes\/[a-z0-9]+-actions\.js['"]/);
   });
+
+  it('does not persist an unhydrated Enable-scanning checkbox as false', () => {
+    const optionsJs = fs.readFileSync(path.join(repoRoot, 'extension', 'options.js'), 'utf8');
+    const optionsHtml = fs.readFileSync(path.join(repoRoot, 'extension', 'options.html'), 'utf8');
+    const popupJs = fs.readFileSync(path.join(repoRoot, 'extension', 'popup.js'), 'utf8');
+    const popupHtml = fs.readFileSync(path.join(repoRoot, 'extension', 'popup.html'), 'utf8');
+    assert.match(optionsHtml, /id="bridgeEnabled"[^>]*checked/);
+    assert.match(popupHtml, /id="bridgeEnabled"[^>]*checked/);
+    assert.match(optionsJs, /let settingsHydrated = false/);
+    assert.match(optionsJs, /if \(!settingsHydrated\) \{\s*await refresh\(\);/);
+    assert.match(popupJs, /if \(!settingsHydrated\) \{\s*await refreshState\(\);/);
+  });
 });

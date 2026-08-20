@@ -1109,7 +1109,7 @@ async fn handle_shim_connection(
     // Every session this connection ever attached, so a race that let two
     // registrations through still detaches both on close instead of stranding
     // one attached to a socket that is gone.
-    let attached_sessions = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let attached_sessions = Arc::new(Mutex::new(HashMap::<String, u64>::new()));
     let in_flight = Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT_SHIM_REQUESTS));
     let mut idle_check =
         time::interval(Duration::from_millis(state.config.idle_reaper_interval_ms));
@@ -1216,8 +1216,17 @@ async fn handle_shim_connection(
     // touch it for twenty minutes.
     if !detached_before_close {
         registered_session.lock().await.take();
-        let sessions: Vec<String> = attached_sessions.lock().await.drain().collect();
-        for session_id in sessions {
+        let sessions: HashMap<String, u64> = attached_sessions.lock().await.drain().collect();
+        for (session_id, attached_at) in sessions {
+            if let Some(status) = state.broker.registry().status(&session_id).await {
+                if let Some(channel) = status.channel {
+                    // A later register_session on a new socket rebound this id.
+                    // Detaching here would drop the live session and its tabs.
+                    if channel.connected_at_ms > attached_at {
+                        continue;
+                    }
+                }
+            }
             let _ = state.broker.registry().detach_session(&session_id).await;
             state
                 .notify_session_disconnected(&session_id, "shim_disconnected")
@@ -1234,7 +1243,7 @@ async fn handle_shim_connection(
 async fn handle_shim_request(
     state: Arc<RuntimeBroker>,
     registered_session: Arc<Mutex<Option<String>>>,
-    attached_sessions: Arc<Mutex<HashSet<String>>>,
+    attached_sessions: Arc<Mutex<HashMap<String, u64>>>,
     request: ShimRequest,
 ) -> ShimResponse {
     match request {
@@ -1276,9 +1285,10 @@ async fn handle_shim_request(
                 }
             }
             let _ = state.broker.registry().ensure_session(&session_id).await;
+            let attached_at = now_ms() as u64;
             if let Err(error) = state
                 .broker
-                .attach_session_channel(&session_id, "mcp-shim", 0, now_ms() as u64)
+                .rebind_session_channel(&session_id, "mcp-shim", 0, attached_at)
                 .await
             {
                 return ShimResponse::error(id, "session_already_connected", &error.to_string());
@@ -1292,7 +1302,10 @@ async fn handle_shim_request(
             }
             *registered = Some(session_id.clone());
             drop(registered);
-            attached_sessions.lock().await.insert(session_id.clone());
+            attached_sessions
+                .lock()
+                .await
+                .insert(session_id.clone(), attached_at);
             let status = state.broker.registry().status(&session_id).await;
             ShimResponse::ok(id, json!({ "sessionId": session_id, "status": status }))
         }
@@ -1647,7 +1660,7 @@ mod tests {
     async fn register_session_requires_hmac_proof() {
         let state = Arc::new(test_broker());
         let registered = Arc::new(Mutex::new(None));
-        let attached = Arc::new(Mutex::new(HashSet::new()));
+        let attached = Arc::new(Mutex::new(HashMap::new()));
         let denied = handle_shim_request(
             Arc::clone(&state),
             Arc::clone(&registered),

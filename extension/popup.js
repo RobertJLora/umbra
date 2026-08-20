@@ -15,6 +15,7 @@ const SHARED_KEY_BYTES = 32;
 // A key generated but not yet saved. Kept so a status refresh cannot overwrite
 // the field with the stored key and silently throw the new one away.
 let pendingKey = '';
+let settingsHydrated = false;
 
 function el(id) {
   return document.getElementById(id);
@@ -182,6 +183,7 @@ function renderState(state) {
   el('portStart').value = config.portStart;
   el('portEnd').value = config.portEnd;
   el('bridgeEnabled').checked = config.bridgeEnabled !== false;
+  settingsHydrated = true;
   el('firstRunPanel').hidden = Boolean(config.sharedKey);
 
   const connectedCount = bridgeStatus?.connectedCount || 0;
@@ -228,6 +230,9 @@ el('copyButton').addEventListener(
 el('saveButton').addEventListener(
   'click',
   guarded(async () => {
+    if (!settingsHydrated) {
+      await refreshState();
+    }
     const config = {
       sharedKey: el('sharedKey').value.trim(),
       portStart: Number(el('portStart').value),

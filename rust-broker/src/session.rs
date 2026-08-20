@@ -168,6 +168,32 @@ impl SessionRegistry {
         port: u16,
         connected_at_ms: u64,
     ) -> Result<Option<ChannelStatus>, SessionError> {
+        self.attach_channel_with_replace(session_id, channel_id, port, connected_at_ms, false)
+            .await
+    }
+
+    /// Same as attach_channel, but a second MCP shim with a valid register HMAC
+    /// may replace an authenticated channel. Used when the companion reconnects
+    /// after a broker restart and the old socket has not closed yet.
+    pub async fn rebind_channel(
+        &self,
+        session_id: &str,
+        channel_id: impl Into<String>,
+        port: u16,
+        connected_at_ms: u64,
+    ) -> Result<Option<ChannelStatus>, SessionError> {
+        self.attach_channel_with_replace(session_id, channel_id, port, connected_at_ms, true)
+            .await
+    }
+
+    async fn attach_channel_with_replace(
+        &self,
+        session_id: &str,
+        channel_id: impl Into<String>,
+        port: u16,
+        connected_at_ms: u64,
+        replace_authenticated: bool,
+    ) -> Result<Option<ChannelStatus>, SessionError> {
         let mut inner = self.inner.write().await;
         let record = inner.sessions.entry(session_id.to_string()).or_default();
         if record.channel.is_none()
@@ -183,6 +209,7 @@ impl SessionRegistry {
             .channel
             .as_ref()
             .is_some_and(|channel| channel.authenticated)
+            && !replace_authenticated
         {
             return Err(SessionError::SessionAlreadyConnected {
                 session_id: session_id.to_string(),

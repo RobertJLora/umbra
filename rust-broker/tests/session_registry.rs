@@ -39,6 +39,17 @@ async fn replaces_unauthenticated_channel_but_rejects_authenticated_duplicate() 
             session_id: "sess_a".to_string()
         }
     );
+
+    let rebound = registry
+        .rebind_channel("sess_a", "chan_4", 47824, 140)
+        .await
+        .expect("rebind should replace an authenticated mcp-shim channel");
+    assert_eq!(
+        rebound
+            .expect("previous channel should be returned")
+            .channel_id,
+        "chan_2"
+    );
 }
 
 #[tokio::test]
