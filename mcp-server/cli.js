@@ -300,12 +300,15 @@ export function buildEnvBlock({ key, keyPath, quiet = false }) {
 }
 
 export function buildClientConfigSnippet({ keyPath }) {
+  // The companion runs from a public checkout rather than an npm package, so the
+  // pasted config points node at this file's own absolute path. __dirname is the
+  // mcp-server directory of the checkout the user just cloned.
   return JSON.stringify(
     {
       mcpServers: {
         umbra: {
-          command: 'npx',
-          args: ['-y', '@umbra-mcp/server', 'start'],
+          command: 'node',
+          args: [path.join(__dirname, 'cli.js'), 'start'],
           env: { UMBRA_SHARED_KEY_FILE: keyPath },
         },
       },

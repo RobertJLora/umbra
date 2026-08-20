@@ -25,7 +25,7 @@ The project is deliberately boring:
 Full walkthrough, with every variable a normal install needs, is in `docs/install.md`. The short version:
 
 ```bash
-git clone <this-repo> umbra
+git clone https://github.com/RobertJLora/umbra
 cd umbra/mcp-server
 npm install
 npm test
@@ -35,7 +35,7 @@ Dependencies live in `mcp-server/`, not at the repository root, so `npm install`
 
 Load `extension/` unpacked at `chrome://extensions` with Developer mode on, open the extension options page, click Generate Key, then click Copy Environment Line and paste that line into your MCP client config. Restart the client and the tools appear. Click Grant Site Access on the same page before the first page read, because Umbra requests no site access at install time.
 
-The package is not on npm yet and the extension is not in the Chrome Web Store yet, so a checkout is the only install path today. From one, `node mcp-server/cli.js pair` generates the key, writes it to `~/.umbra/shared-key`, and prints the client config block. Once `@umbra-mcp/server` is published the same command runs as `npx -y @umbra-mcp/server pair`, and that published package will carry no optional local plugins.
+Install is a checkout from the public repository. After the clone above, `node mcp-server/cli.js pair` generates the key, writes it to `~/.umbra/shared-key`, and prints the client config block. The public checkout carries no optional local plugins.
 
 ## Tool surface
 

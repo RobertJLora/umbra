@@ -201,12 +201,16 @@ async function scanForIdentityLeaks(scopes) {
     }
     scannedFileCount += 1;
     // The author deliberately points homepage_url and the listing at their own
-    // site, which carries the author name. That one host is neutralized before
-    // the scan so the approved occurrence passes while the name stays blocked
-    // everywhere else.
+    // site, and hosts the open-source companion at a public repository under the
+    // same personal identity. Both of those chosen public strings carry the
+    // author name, so both are neutralized before the scan; the name stays
+    // blocked everywhere else. Neither string reaches the shipped extension.
     const lines = content
       .split('\n')
-      .map((line) => line.split('robertjohnlora.com').join('#'.repeat('robertjohnlora.com'.length)));
+      .map((line) =>
+        line
+          .split('robertjohnlora.com').join('#'.repeat('robertjohnlora.com'.length))
+          .split('github.com/RobertJLora').join('#'.repeat('github.com/RobertJLora'.length)));
     for (let index = 0; index < lines.length; index += 1) {
       for (const pattern of IDENTITY_PATTERNS) {
         if (pattern.regex.test(lines[index])) {

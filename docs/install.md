@@ -25,17 +25,18 @@ Either way, the extension opens its options page once on a fresh install, which 
 
 ## 2. Install the companion server
 
-From a checkout:
+From a checkout of the public repository:
 
 ```bash
-cd mcp-server
+git clone https://github.com/RobertJLora/umbra
+cd umbra/mcp-server
 npm install
 npm test
 ```
 
-`@umbra-mcp/server` is not published yet, so `npx -y @umbra-mcp/server` fails with a 404 and every command below runs from the checkout as `node mcp-server/<script>`. Once it is published, the same commands run as `npx -y @umbra-mcp/server <command>` with no checkout at all.
+The companion runs from the checkout, and every command below runs as `node mcp-server/<script>` from the repository root (or `node <script>` from inside `mcp-server/`).
 
-The published package will carry no optional local page-recipe plugins, so it advertises the built-in tool list and nothing else. A checkout that installs a plugin under `mcp-server/plugins/` lists that plugin's tools as well. Every built-in tool is the same in both.
+The public checkout carries no optional local page-recipe plugins, so it advertises the built-in tool list and nothing else. A checkout that installs a plugin under `mcp-server/plugins/` lists that plugin's tools as well. Every built-in tool is the same in both.
 
 ## 3. Generate the shared key
 
@@ -67,15 +68,15 @@ Add an entry that runs the server on stdio. Using the key file keeps the secret 
 {
   "mcpServers": {
     "umbra": {
-      "command": "npx",
-      "args": ["-y", "@umbra-mcp/server", "start"],
+      "command": "node",
+      "args": ["<checkout>/mcp-server/cli.js", "start"],
       "env": { "UMBRA_SHARED_KEY_FILE": "<your-home>/.umbra/shared-key" }
     }
   }
 }
 ```
 
-Write the real absolute path in place of `<your-home>`. MCP client config is not a shell, so `~` and `$HOME` are not expanded. `umbra pair` prints the resolved path for you.
+Write the real absolute paths in place of `<checkout>` and `<your-home>`. MCP client config is not a shell, so `~` and `$HOME` are not expanded. `node mcp-server/cli.js pair` prints this exact block with the resolved paths filled in for you.
 
 From a checkout, point at the launcher instead, which starts or reuses the Rust broker when one is available and falls back to the pure-Node bridge when it is not:
 
@@ -110,7 +111,7 @@ If it does not, run the diagnostic:
 node mcp-server/doctor.mjs
 ```
 
-`npm run doctor` from the repository root does the same thing, and so will `npx -y @umbra-mcp/server doctor` once the package is published.
+`npm run doctor` from the repository root does the same thing, and `node mcp-server/cli.js doctor` runs it from anywhere in the checkout.
 
 Then ask your agent for a first call. `browser_create_tab` followed by `browser_navigate` and `browser_get_page_content` proves the whole path: the client reached the server, the server reached the extension, and the extension owns a tab.
 

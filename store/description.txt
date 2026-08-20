@@ -2,11 +2,7 @@ Umbra connects a local AI agent to the Chrome you are already signed into, and l
 
 REQUIRES A LOCAL COMPANION SERVER
 
-This extension does nothing on its own. It pairs with a companion server that runs on your own machine and speaks the Model Context Protocol, so any MCP client can drive the browser through it. One command installs and pairs it:
-
-npx -y @umbra-mcp/server pair
-
-That command prints the configuration block your MCP client needs. The extension's options page generates the shared key both sides use and shows connection status. Full setup walkthrough: https://robertjohnlora.com/umbra
+This extension does nothing on its own. It pairs with a free, open-source companion server that runs on your own machine and speaks the Model Context Protocol, so any MCP client can drive the browser through it. You install the companion once, then run its pair command; it prints the configuration block your MCP client needs. The extension's options page generates the shared key both sides use and shows connection status. Full one-command setup walkthrough: https://robertjohnlora.com/umbra
 
 HOW THE BOUNDARY WORKS
 

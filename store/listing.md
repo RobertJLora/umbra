@@ -54,7 +54,7 @@ wc -m < store/description.txt
 Its structure, and why each block is there:
 
 * **Opening line.** States the capability and the limit in one sentence, because the summary is truncated on some surfaces and this is the first line everyone sees.
-* **Requires a local companion server.** The external dependency disclosure, placed second so nobody reads three paragraphs before learning the extension does nothing alone. It carries the `npx -y @umbra-mcp/server pair` command and the install-doc link, which is also what the reviewer notes point at.
+* **Requires a local companion server.** The external dependency disclosure, placed second so nobody reads three paragraphs before learning the extension does nothing alone. It carries the one-command pair step and the install-doc link, which is also what the reviewer notes point at.
 * **How the boundary works.** The ownership model, contrasted against remote debugging. This is the one idea that separates Umbra from every other agent-browser bridge, so it gets prose rather than a bullet.
 * **What you get.** Six concrete capabilities, each verifiable against the shipped tool list.
 * **How it talks to the companion server.** Loopback address, port range, HMAC challenge on both sides, no fetch, no remote host in the content security policy. Written so a security-minded reader can check each claim against the source.

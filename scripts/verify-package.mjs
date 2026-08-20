@@ -250,7 +250,7 @@ export function readPngChunkTypes(buffer) {
 // the scan (replaced with same-length filler so line numbers are unchanged), so
 // the one approved occurrence passes while the name stays blocked everywhere
 // else.
-const APPROVED_IDENTITY_STRINGS = ['robertjohnlora.com'];
+const APPROVED_IDENTITY_STRINGS = ['robertjohnlora.com', 'github.com/RobertJLora'];
 
 function neutralizeApproved(text) {
   let out = text;
