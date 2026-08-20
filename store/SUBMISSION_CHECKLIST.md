@@ -32,18 +32,15 @@ Privacy policy URL: ______________________________________
 
 ## 1b. Blockers that are still open
 
-Two links and one command in the listing copy do not resolve yet. Each of them is a rejection on its own, so none of section 2 is worth running until all three are true:
+The install path no longer depends on npm. The companion is distributed as a public GitHub checkout at `https://github.com/RobertJLora/umbra`, and every install instruction (README, docs/install.md, the landing page, the config the `pair` command prints) points there. So the only external link that has to resolve is the homepage:
 
-- `https://robertjohnlora.com/umbra` returns 200. It is `homepage_url` in the manifest and it is linked twice from `store/description.txt`.
-- `https://robertjohnlora.com/umbra` returns 200 on the default branch.
-- `npm view @umbra-mcp/server version` returns a version. `store/description.txt` gives `npx -y @umbra-mcp/server pair` as the one-line install, and a 404 there leaves a reviewer with no working path at all.
+- `https://robertjohnlora.com/umbra` returns 200 (it 308-redirects to `/umbra/` which serves the landing page). It is `homepage_url` in the manifest and is linked from `store/description.txt` and `store/listing.md`.
+- The landing page at that URL must show the current `git clone` install command, not the retired `npx` one; redeploy it from `store/landing.html` if the live copy is stale.
 
-Check all three in one go:
+Check the homepage in one go:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://robertjohnlora.com/umbra
-curl -s -o /dev/null -w '%{http_code}\n' https://robertjohnlora.com/umbra
-npm view @umbra-mcp/server version
+curl -sL -o /dev/null -w '%{http_code}\n' https://robertjohnlora.com/umbra
 ```
 
 ---
