@@ -1,0 +1,65 @@
+[
+  {
+    "name": "domain-overview",
+    "url": "https://app.ahrefs.com/v2-site-explorer/overview?compareDate=prevMonth&country=us&mode=subdomains&target=autotransportprofessionals.com",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/domain-overview.txt",
+    "chars": 4575,
+    "title": "Overview: autotransportprofessionals.com/ - Ahrefs"
+  },
+  {
+    "name": "homepage-overview",
+    "url": "https://app.ahrefs.com/v2-site-explorer/overview?compareDate=prevMonth&country=us&mode=exact&target=https%3A%2F%2Fautotransportprofessionals.com%2F",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/homepage-overview.txt",
+    "chars": 4538,
+    "title": "Overview: autotransportprofessionals.com/ - Ahrefs"
+  },
+  {
+    "name": "homepage-keywords",
+    "url": "https://app.ahrefs.com/v2-site-explorer/organic-keywords?brandedMode=all&compareDate=prevMonth&country=us&limit=100&mode=exact&sort=OrganicTrafficInitial&sortDirection=desc&target=https%3A%2F%2Fautotransportprofessionals.com%2F&volume_type=average",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/homepage-keywords.txt",
+    "chars": 2146,
+    "title": "Organic keywords: autotransportprofessionals.com/ - Ahrefs"
+  },
+  {
+    "name": "fl-ca-overview",
+    "url": "https://app.ahrefs.com/v2-site-explorer/overview?compareDate=prevMonth&country=us&mode=exact&target=https%3A%2F%2Fautotransportprofessionals.com%2Fflorida-to-california-auto-transport%2F",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/fl-ca-overview.txt",
+    "chars": 3727,
+    "title": "Overview: autotransportprofessionals.com/florida-to-california-auto-transport/ - Ahrefs"
+  },
+  {
+    "name": "fl-ca-keywords",
+    "url": "https://app.ahrefs.com/v2-site-explorer/organic-keywords?brandedMode=all&compareDate=prevMonth&country=us&limit=100&mode=exact&sort=OrganicTrafficInitial&sortDirection=desc&target=https%3A%2F%2Fautotransportprofessionals.com%2Fflorida-to-california-auto-transport%2F&volume_type=average",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/fl-ca-keywords.txt",
+    "chars": 1227,
+    "title": "Organic keywords: autotransportprofessionals.com/florida-to-california-auto-transport/ - Ahrefs"
+  },
+  {
+    "name": "fl-ny-overview",
+    "url": "https://app.ahrefs.com/v2-site-explorer/overview?compareDate=prevMonth&country=us&mode=exact&target=https%3A%2F%2Fautotransportprofessionals.com%2Fflorida-to-new-york-auto-transport%2F",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/fl-ny-overview.txt",
+    "chars": 3721,
+    "title": "Overview: autotransportprofessionals.com/florida-to-new-york-auto-transport/ - Ahrefs"
+  },
+  {
+    "name": "fl-ny-keywords",
+    "url": "https://app.ahrefs.com/v2-site-explorer/organic-keywords?brandedMode=all&compareDate=prevMonth&country=us&limit=100&mode=exact&sort=OrganicTrafficInitial&sortDirection=desc&target=https%3A%2F%2Fautotransportprofessionals.com%2Fflorida-to-new-york-auto-transport%2F&volume_type=average",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/fl-ny-keywords.txt",
+    "chars": 1244,
+    "title": "Organic keywords: autotransportprofessionals.com/florida-to-new-york-auto-transport/ - Ahrefs"
+  },
+  {
+    "name": "enclosed-overview",
+    "url": "https://app.ahrefs.com/v2-site-explorer/overview?compareDate=prevMonth&country=us&mode=exact&target=https%3A%2F%2Fautotransportprofessionals.com%2Fenclosed-auto-transport%2F",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/enclosed-overview.txt",
+    "chars": 3698,
+    "title": "Overview: autotransportprofessionals.com/enclosed-auto-transport/ - Ahrefs"
+  },
+  {
+    "name": "enclosed-keywords",
+    "url": "https://app.ahrefs.com/v2-site-explorer/organic-keywords?brandedMode=all&compareDate=prevMonth&country=us&limit=100&mode=exact&sort=OrganicTrafficInitial&sortDirection=desc&target=https%3A%2F%2Fautotransportprofessionals.com%2Fenclosed-auto-transport%2F&volume_type=average",
+    "path": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/atp-ahrefs-call-prep/enclosed-keywords.txt",
+    "chars": 1244,
+    "title": "Organic keywords: autotransportprofessionals.com/enclosed-auto-transport/ - Ahrefs"
+  }
+]

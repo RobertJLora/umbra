@@ -1,0 +1,13 @@
+{
+  "name": "umbra",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm --prefix mcp-server test",
+    "doctor": "npm --prefix mcp-server run doctor",
+    "recover": "npm --prefix mcp-server run recover",
+    "release:check": "npm --prefix mcp-server run release:check",
+    "bench": "npm --prefix mcp-server run bench"
+  }
+}

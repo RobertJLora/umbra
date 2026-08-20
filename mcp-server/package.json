@@ -1,0 +1,35 @@
+{
+  "name": "umbra-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Security-first local MCP server for umbra",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "smoke": "node smoke-test.mjs",
+    "smoke:rust": "node rust-broker-smoke.mjs",
+    "smoke:auth": "node auth-reuse-smoke.mjs",
+    "export:organic": "node export-organic-keywords.mjs",
+    "export:click-fixture": "node export-click-fixture-smoke.mjs",
+    "reload:extension": "node reload-extension.mjs",
+    "smoke:groups": "node group-stress-smoke.mjs",
+    "smoke:required": "node required-smoke.mjs",
+    "suite": "node full-suite-runner.mjs",
+    "bench": "node benchmark-performance.mjs",
+    "doctor": "node doctor.mjs",
+    "recover": "node doctor.mjs --fix --verify-health",
+    "release:check": "node release-check.mjs",
+    "listeners": "lsof -nP -iTCP:47821-47852 -sTCP:LISTEN || true",
+    "cleanup:test": "node cleanup-listeners.mjs --preserve-port 47821 --only-disconnected",
+    "cleanup:test:force": "node cleanup-listeners.mjs --preserve-port 47821",
+    "cleanup": "node cleanup-listeners.mjs",
+    "cleanup:headless:dry": "node cleanup-headless-chrome.mjs --dry-run",
+    "cleanup:headless": "node cleanup-headless-chrome.mjs",
+    "test": "node --test ../tests/mcp/auth.test.mjs ../tests/mcp/session-registry.test.mjs ../tests/mcp/bridge-core.test.mjs ../tests/mcp/bridge-hardening.test.mjs ../tests/mcp/download-ledger.test.mjs ../tests/mcp/node-mux-prototype.test.mjs ../tests/mcp/rust-broker-client.test.mjs ../tests/mcp/tools.test.mjs ../tests/mcp/tool-contract.test.mjs ../tests/mcp/javascript-tool.test.mjs ../tests/mcp/tabs-context.test.mjs ../tests/mcp/launch-script.test.mjs ../tests/mcp/cleanup-listeners.test.mjs ../tests/mcp/cleanup-headless-chrome.test.mjs ../tests/extension/session-state.test.mjs ../tests/extension/background-lifecycle.test.mjs ../tests/extension/safety-contract.test.mjs ../tests/extension/ahrefs-export-contract.test.mjs ../tests/extension/ax-tree.test.mjs ../tests/extension/computer-parity.test.mjs ../tests/integration/tab-isolation.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.28.0",
+    "ws": "8.18.0"
+  }
+}

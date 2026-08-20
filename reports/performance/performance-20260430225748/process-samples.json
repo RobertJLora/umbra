@@ -1,0 +1,3176 @@
+[
+  {
+    "label": "before-bridge-start",
+    "sampledAt": "2026-04-30T22:57:48.210Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 66,
+      "cpuPct": 39.1,
+      "rssKb": 14440720,
+      "rssMb": 14102.3,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 1.1,
+          "rssMb": 937.3,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0,
+          "rssMb": 416.5,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0,
+          "rssMb": 406.3,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0,
+          "rssMb": 390.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0,
+          "rssMb": 385.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0,
+          "rssMb": 368.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0,
+          "rssMb": 366.2,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95286,
+          "cpuPct": 0,
+          "rssMb": 358.6,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 123.8,
+      "rssKb": 5043088,
+      "rssMb": 4924.9,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 57.2,
+          "rssMb": 1333.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.8,
+          "rssMb": 365.1,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 2.5,
+          "rssMb": 322,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 16.1,
+          "rssMb": 321.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 6.7,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 2.6,
+          "rssMb": 303.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 21.8,
+          "rssMb": 116.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 4.8,
+      "rssKb": 60496,
+      "rssMb": 59.1,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 4.8,
+          "rssMb": 59.1,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "after-bridge-auth",
+    "sampledAt": "2026-04-30T22:57:49.113Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 66,
+      "cpuPct": 3.4,
+      "rssKb": 14440368,
+      "rssMb": 14101.9,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 1.5,
+          "rssMb": 937.3,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0,
+          "rssMb": 416.5,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0,
+          "rssMb": 406.3,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0,
+          "rssMb": 390.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0,
+          "rssMb": 385.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0,
+          "rssMb": 368.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0,
+          "rssMb": 366.2,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95286,
+          "cpuPct": 0,
+          "rssMb": 358.6,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 58.2,
+      "rssKb": 5049536,
+      "rssMb": 4931.2,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 29.7,
+          "rssMb": 1339.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.6,
+          "rssMb": 365.4,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0.1,
+          "rssMb": 322,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0.6,
+          "rssMb": 321.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 1.3,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0.2,
+          "rssMb": 303.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 11.3,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.6,
+      "rssKb": 63376,
+      "rssMb": 61.9,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.6,
+          "rssMb": 61.9,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "create-read-text:before",
+    "sampledAt": "2026-04-30T22:57:49.166Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 66,
+      "cpuPct": 4.6,
+      "rssKb": 14440368,
+      "rssMb": 14101.9,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 1.5,
+          "rssMb": 937.3,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0,
+          "rssMb": 416.5,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0,
+          "rssMb": 406.3,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0,
+          "rssMb": 390.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0,
+          "rssMb": 385.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0,
+          "rssMb": 368.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0,
+          "rssMb": 366.2,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95286,
+          "cpuPct": 0,
+          "rssMb": 358.6,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 59,
+      "rssKb": 5053728,
+      "rssMb": 4935.3,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 29.7,
+          "rssMb": 1343.4,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.6,
+          "rssMb": 365.4,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0.1,
+          "rssMb": 322,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0.5,
+          "rssMb": 321.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 1.3,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0.2,
+          "rssMb": 303.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 11.3,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 3.6,
+      "rssKb": 64528,
+      "rssMb": 63,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 3.6,
+          "rssMb": 63,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "create-read-text:after",
+    "sampledAt": "2026-04-30T22:57:49.844Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 335.9,
+      "rssKb": 15428160,
+      "rssMb": 15066.6,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 105.6,
+          "rssMb": 939.4,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 85.6,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.7,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 1.3,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 3.1,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 1.1,
+          "rssMb": 384.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.8,
+          "rssMb": 369.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.5,
+          "rssMb": 367,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 102.1,
+      "rssKb": 5059360,
+      "rssMb": 4940.8,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 38,
+          "rssMb": 1347.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 1,
+          "rssMb": 365.4,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0.1,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 42.7,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 8,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 2.6,
+      "rssKb": 67632,
+      "rssMb": 66,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 2.6,
+          "rssMb": 66,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "navigate-loop:before",
+    "sampledAt": "2026-04-30T22:57:49.891Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 356.6,
+      "rssKb": 15449456,
+      "rssMb": 15087.4,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 98.1,
+          "rssMb": 939.4,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 53.3,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.6,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.8,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 2.1,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.8,
+          "rssMb": 384.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.5,
+          "rssMb": 369.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.5,
+          "rssMb": 367,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 75.1,
+      "rssKb": 5059168,
+      "rssMb": 4940.6,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 29.2,
+          "rssMb": 1347.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.6,
+          "rssMb": 365.4,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 26.8,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 7.1,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 3.2,
+      "rssKb": 70944,
+      "rssMb": 69.3,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 3.2,
+          "rssMb": 69.3,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "navigate-loop:after",
+    "sampledAt": "2026-04-30T22:57:50.683Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 279.1,
+      "rssKb": 15522576,
+      "rssMb": 15158.8,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 115.2,
+          "rssMb": 939.5,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 3.4,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.5,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.4,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.5,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.5,
+          "rssMb": 384.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.3,
+          "rssMb": 369.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.4,
+          "rssMb": 367,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 51.4,
+      "rssKb": 5063360,
+      "rssMb": 4944.7,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 29.9,
+          "rssMb": 1352,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.1,
+          "rssMb": 365.4,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 2.2,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 7.8,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.9,
+      "rssKb": 71296,
+      "rssMb": 69.6,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.9,
+          "rssMb": 69.6,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "wait-loop:before",
+    "sampledAt": "2026-04-30T22:57:50.737Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 248.7,
+      "rssKb": 15522656,
+      "rssMb": 15158.8,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 90.8,
+          "rssMb": 939.5,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 1.9,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.5,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.4,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.5,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.5,
+          "rssMb": 384.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.3,
+          "rssMb": 369.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.4,
+          "rssMb": 367,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 51.4,
+      "rssKb": 5063360,
+      "rssMb": 4944.7,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 29.9,
+          "rssMb": 1352,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.1,
+          "rssMb": 365.4,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 2.2,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 7.8,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.9,
+      "rssKb": 72400,
+      "rssMb": 70.7,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.9,
+          "rssMb": 70.7,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "wait-loop:after",
+    "sampledAt": "2026-04-30T22:57:51.236Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 197.9,
+      "rssKb": 15527840,
+      "rssMb": 15163.9,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 103.4,
+          "rssMb": 939.6,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.6,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 41.8,
+      "rssKb": 5067504,
+      "rssMb": 4948.7,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 22.6,
+          "rssMb": 1356.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.1,
+          "rssMb": 365.3,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.5,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 5.9,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.3,
+      "rssKb": 72688,
+      "rssMb": 71,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.3,
+          "rssMb": 71,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "screenshot:before",
+    "sampledAt": "2026-04-30T22:57:51.281Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 222.9,
+      "rssKb": 15527872,
+      "rssMb": 15163.9,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 103.4,
+          "rssMb": 939.7,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.6,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.5,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.3,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.4,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.4,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.4,
+          "rssMb": 369.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.4,
+          "rssMb": 367,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 43.1,
+      "rssKb": 5067504,
+      "rssMb": 4948.7,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 24.1,
+          "rssMb": 1356.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.1,
+          "rssMb": 365.3,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.4,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 6.3,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.9,
+      "rssKb": 73168,
+      "rssMb": 71.5,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.9,
+          "rssMb": 71.5,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "screenshot:after",
+    "sampledAt": "2026-04-30T22:57:51.944Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 221.4,
+      "rssKb": 15556752,
+      "rssMb": 15192.1,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 107.9,
+          "rssMb": 939.8,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.1,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0,
+          "rssMb": 369.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 44.9,
+      "rssKb": 5071792,
+      "rssMb": 4952.9,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 25.6,
+          "rssMb": 1360.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.3,
+          "rssMb": 365.4,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.5,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 6.1,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.5,
+      "rssKb": 76272,
+      "rssMb": 74.5,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.5,
+          "rssMb": 74.5,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "multi-tab-fanout:before",
+    "sampledAt": "2026-04-30T22:57:51.996Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 220.7,
+      "rssKb": 15556768,
+      "rssMb": 15192.2,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 99.3,
+          "rssMb": 939.8,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.4,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.3,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.4,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.4,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.3,
+          "rssMb": 369.7,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.3,
+          "rssMb": 367,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 47.5,
+      "rssKb": 5071664,
+      "rssMb": 4952.8,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 25.5,
+          "rssMb": 1360.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.1,
+          "rssMb": 365.4,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 2.7,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 6.8,
+          "rssMb": 116.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.5,
+      "rssKb": 77728,
+      "rssMb": 75.9,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.5,
+          "rssMb": 75.9,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "multi-tab-fanout:after",
+    "sampledAt": "2026-04-30T22:57:53.951Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 245.6,
+      "rssKb": 15548240,
+      "rssMb": 15183.8,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 111.3,
+          "rssMb": 940,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.4,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.2,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.2,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.3,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 50.9,
+      "rssKb": 5074832,
+      "rssMb": 4955.9,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 30.1,
+          "rssMb": 1364.4,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.4,
+          "rssMb": 364.5,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.3,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 9,
+          "rssMb": 115.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 0.5,
+      "rssKb": 78752,
+      "rssMb": 76.9,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 0.5,
+          "rssMb": 76.9,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "large-payload-html:before",
+    "sampledAt": "2026-04-30T22:57:53.999Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 224.4,
+      "rssKb": 15548240,
+      "rssMb": 15183.8,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 94.2,
+          "rssMb": 940,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.4,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.2,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 394.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 49.8,
+      "rssKb": 5074704,
+      "rssMb": 4955.8,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 29.2,
+          "rssMb": 1364.2,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.2,
+          "rssMb": 364.5,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.3,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 8.8,
+          "rssMb": 115.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 0.5,
+      "rssKb": 79040,
+      "rssMb": 77.2,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 0.5,
+          "rssMb": 77.2,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "large-payload-html:after",
+    "sampledAt": "2026-04-30T22:57:54.575Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 186.6,
+      "rssKb": 15579488,
+      "rssMb": 15214.3,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 91.9,
+          "rssMb": 940.1,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.1,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 43.5,
+      "rssKb": 5080608,
+      "rssMb": 4961.5,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 21.7,
+          "rssMb": 1368.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.6,
+          "rssMb": 366,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 1.7,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 5.9,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 2.8,
+      "rssKb": 89680,
+      "rssMb": 87.6,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 2.8,
+          "rssMb": 87.6,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "technical-snapshot:before",
+    "sampledAt": "2026-04-30T22:57:54.624Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 183.1,
+      "rssKb": 15549360,
+      "rssMb": 15184.9,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 85.6,
+          "rssMb": 940.1,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.3,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.3,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.3,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 44.5,
+      "rssKb": 5080608,
+      "rssMb": 4961.5,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 22.3,
+          "rssMb": 1368.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.6,
+          "rssMb": 366,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 2.7,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 5.9,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 2.8,
+      "rssKb": 89936,
+      "rssMb": 87.8,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 2.8,
+          "rssMb": 87.8,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "technical-snapshot:after",
+    "sampledAt": "2026-04-30T22:57:55.315Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 169.3,
+      "rssKb": 15551168,
+      "rssMb": 15186.7,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 80.5,
+          "rssMb": 940.2,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.1,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 44.7,
+      "rssKb": 5084832,
+      "rssMb": 4965.7,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 24.3,
+          "rssMb": 1372.6,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.4,
+          "rssMb": 366,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.5,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 7.7,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.1,
+      "rssKb": 90192,
+      "rssMb": 88.1,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.1,
+          "rssMb": 88.1,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "workflow-separate:before",
+    "sampledAt": "2026-04-30T22:57:55.370Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 161,
+      "rssKb": 15551168,
+      "rssMb": 15186.7,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 72.6,
+          "rssMb": 940.2,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.3,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.3,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.2,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 43,
+      "rssKb": 5084832,
+      "rssMb": 4965.7,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 23.2,
+          "rssMb": 1372.6,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.2,
+          "rssMb": 366,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.4,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 7.2,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.1,
+      "rssKb": 90448,
+      "rssMb": 88.3,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.1,
+          "rssMb": 88.3,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "workflow-separate:after",
+    "sampledAt": "2026-04-30T22:57:55.936Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 189.6,
+      "rssKb": 15584432,
+      "rssMb": 15219.2,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 99.7,
+          "rssMb": 940.2,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.1,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 40.2,
+      "rssKb": 5089360,
+      "rssMb": 4970.1,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 21.2,
+          "rssMb": 1377,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.3,
+          "rssMb": 366.1,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.3,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 6,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.1,
+      "rssKb": 90928,
+      "rssMb": 88.8,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.1,
+          "rssMb": 88.8,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "workflow-batch:before",
+    "sampledAt": "2026-04-30T22:57:55.984Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 189.6,
+      "rssKb": 15584480,
+      "rssMb": 15219.2,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 99.7,
+          "rssMb": 940.2,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.1,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 40.2,
+      "rssKb": 5089360,
+      "rssMb": 4970.1,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 21.2,
+          "rssMb": 1377,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.3,
+          "rssMb": 366.1,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.3,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 6,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.1,
+      "rssKb": 91504,
+      "rssMb": 89.4,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.1,
+          "rssMb": 89.4,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "workflow-batch:after",
+    "sampledAt": "2026-04-30T22:57:56.542Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 196.7,
+      "rssKb": 15569712,
+      "rssMb": 15204.8,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 95.1,
+          "rssMb": 940.2,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.1,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 42.5,
+      "rssKb": 5093584,
+      "rssMb": 4974.2,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 21.6,
+          "rssMb": 1381.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.3,
+          "rssMb": 366.1,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 1,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 5.7,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.9,
+      "rssKb": 88784,
+      "rssMb": 86.7,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.9,
+          "rssMb": 86.7,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "export-like-workflow:before",
+    "sampledAt": "2026-04-30T22:57:56.586Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 196.7,
+      "rssKb": 15569728,
+      "rssMb": 15204.8,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 95.1,
+          "rssMb": 940.2,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.1,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.1,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.1,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.1,
+          "rssMb": 384.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.1,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 42.5,
+      "rssKb": 5093584,
+      "rssMb": 4974.2,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 21.6,
+          "rssMb": 1381.1,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.3,
+          "rssMb": 366.1,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 1,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 5.7,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1.9,
+      "rssKb": 89040,
+      "rssMb": 87,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1.9,
+          "rssMb": 87,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "export-like-workflow:after",
+    "sampledAt": "2026-04-30T22:57:57.153Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 204.3,
+      "rssKb": 15560480,
+      "rssMb": 15195.8,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 101.4,
+          "rssMb": 940.3,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.3,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.2,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.2,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.3,
+          "rssMb": 384.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.2,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 58,
+      "rssKb": 5042848,
+      "rssMb": 4924.7,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 39.2,
+          "rssMb": 1331.5,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.3,
+          "rssMb": 366.2,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.4,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 5.5,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1,
+      "rssKb": 89312,
+      "rssMb": 87.2,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1,
+          "rssMb": 87.2,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  },
+  {
+    "label": "before-shutdown",
+    "sampledAt": "2026-04-30T22:57:57.206Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "chrome": {
+      "count": 70,
+      "cpuPct": 204.3,
+      "rssKb": 15528832,
+      "rssMb": 15164.9,
+      "top": [
+        {
+          "pid": 72620,
+          "cpuPct": 101.4,
+          "rssMb": 940.3,
+          "command": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        {
+          "pid": 72655,
+          "cpuPct": 0.3,
+          "rssMb": 542.4,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 95105,
+          "cpuPct": 0.2,
+          "rssMb": 415.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 70409,
+          "cpuPct": 0.1,
+          "rssMb": 410.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 47025,
+          "cpuPct": 0.2,
+          "rssMb": 395,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 48790,
+          "cpuPct": 0.3,
+          "rssMb": 384.9,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 67604,
+          "cpuPct": 0.2,
+          "rssMb": 369.8,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        },
+        {
+          "pid": 26410,
+          "cpuPct": 0.1,
+          "rssMb": 367.1,
+          "command": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/147.0.7727.119/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --m"
+        }
+      ]
+    },
+    "codexApp": {
+      "count": 63,
+      "cpuPct": 58,
+      "rssKb": 5042736,
+      "rssMb": 4924.5,
+      "top": [
+        {
+          "pid": 37960,
+          "cpuPct": 39.2,
+          "rssMb": 1331.4,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37901,
+          "cpuPct": 0.3,
+          "rssMb": 366.2,
+          "command": "/Applications/Codex.app/Contents/MacOS/Codex"
+        },
+        {
+          "pid": 4968,
+          "cpuPct": 0,
+          "rssMb": 322.3,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 4967,
+          "cpuPct": 0,
+          "rssMb": 321.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37949,
+          "cpuPct": 0.4,
+          "rssMb": 309.7,
+          "command": "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled"
+        },
+        {
+          "pid": 37999,
+          "cpuPct": 0,
+          "rssMb": 303.9,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 81748,
+          "cpuPct": 0,
+          "rssMb": 187,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper (Renderer).app/Contents/MacOS/Codex Helper (Renderer) --type=renderer --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --standard-schemes=app --"
+        },
+        {
+          "pid": 37912,
+          "cpuPct": 5.5,
+          "rssMb": 115.8,
+          "command": "/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper --type=gpu-process --user-data-dir=/Users/RobertLora/Library/Application Support/Codex --gpu-preferences=SAAAAAAAAAAgAQAEAAAAAAAAAA"
+        }
+      ]
+    },
+    "benchmarkNode": {
+      "count": 1,
+      "cpuPct": 1,
+      "rssKb": 89552,
+      "rssMb": 87.5,
+      "processes": [
+        {
+          "pid": 66077,
+          "cpuPct": 1,
+          "rssMb": 87.5,
+          "command": "node benchmark-performance.mjs --runs 2 --tabs 4 --port-start 47845 --port-end 47852 --timeout-ms 60000 --broker-mode legacy"
+        }
+      ]
+    },
+    "rustBroker": {
+      "count": 0,
+      "cpuPct": 0,
+      "rssKb": 0,
+      "rssMb": 0,
+      "processes": []
+    }
+  }
+]

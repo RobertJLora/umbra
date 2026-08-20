@@ -1,0 +1,8 @@
+[
+  {
+    "label": "before-shutdown",
+    "sampledAt": "2026-04-30T21:31:06.907Z",
+    "method": "ps -axo pid,ppid,pcpu,rss,command",
+    "error": "spawn EPERM"
+  }
+]

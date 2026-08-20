@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.robertlora.umbra-broker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/RobertLora/.umbra/bin/umbra-rust-broker</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/RobertLora/.umbra</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>UMBRA_SHARED_KEY_FILE</key>
+    <string>/Users/RobertLora/.umbra/shared-key</string>
+    <key>UMBRA_BROKER_SOCKET</key>
+    <string>/tmp/umbra-rust-broker.sock</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/RobertLora/.claude/logs/umbra-broker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/RobertLora/.claude/logs/umbra-broker.err.log</string>
+</dict>
+</plist>

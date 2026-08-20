@@ -1,0 +1,4 @@
+.DS_Store
+*.log
+.local/
+mcp-server/node_modules/

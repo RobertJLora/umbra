@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "runId": "performance-20260430213106",
+  "generatedAt": "2026-04-30T21:31:06.961Z",
+  "benchmarkKind": "local-http-fixture-no-account-auth",
+  "reportDir": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/reports/performance/performance-20260430213106",
+  "environment": {
+    "node": "v25.9.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "pid": 49964,
+    "bridgeRoot": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge",
+    "mcpServerDir": "/Users/RobertLora/Documents/Workspaces/System/Codex/codex-chrome-bridge/mcp-server",
+    "psSampling": "ps -axo pid,ppid,pcpu,rss,command"
+  },
+  "options": {
+    "runs": 1,
+    "tabs": 2,
+    "largeKb": 128,
+    "portStart": 47829,
+    "portEnd": 47852,
+    "timeoutMs": 15000,
+    "reportDir": "",
+    "keepTabsOpen": false
+  },
+  "bridge": {
+    "sessionId": "sess_045d87d809934da3a2eda1b9b3dbadb4",
+    "port": null,
+    "authElapsedMs": null,
+    "groupTitle": "CiC Bench performance-20260430213106"
+  },
+  "fixture": {
+    "baseUrl": null,
+    "stats": {
+      "requests": 0,
+      "responseBytes": 0,
+      "paths": {}
+    }
+  },
+  "summary": {
+    "status": "fail",
+    "scenarioCount": 1,
+    "passCount": 0,
+    "failCount": 1,
+    "commandCount": 0,
+    "payloadBytes": {
+      "requestBytes": 0,
+      "responseBytes": 0,
+      "totalBytes": 0
+    },
+    "tabsLeftOpen": 0,
+    "fixtureRequests": 0,
+    "fixtureResponseBytes": 0
+  },
+  "matrix": [
+    {
+      "runId": "performance-20260430213106",
+      "scenario": "bridge-start",
+      "label": "Bridge Start",
+      "status": "fail",
+      "iterations": 0,
+      "elapsedMs": 5.14,
+      "commandCount": 0,
+      "commandCounts": {},
+      "latencyMs": {
+        "min": 0,
+        "avg": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "payloadBytes": {
+        "requestBytes": 0,
+        "responseBytes": 0,
+        "totalBytes": 0
+      },
+      "fixture": {
+        "requests": 0,
+        "responseBytes": 0,
+        "paths": {}
+      },
+      "tabs": {
+        "tabsBeforeCleanup": 0,
+        "closeResult": null,
+        "tabsLeftOpen": 0,
+        "matchedGroupsAfterCleanup": 0
+      },
+      "process": {
+        "before": {
+          "chrome": {
+            "count": 0,
+            "cpuPct": 0,
+            "rssKb": 0,
+            "rssMb": 0,
+            "top": []
+          },
+          "benchmarkNode": {
+            "count": 0,
+            "cpuPct": 0,
+            "rssKb": 0,
+            "rssMb": 0,
+            "processes": []
+          }
+        },
+        "after": {
+          "chrome": {
+            "count": 0,
+            "cpuPct": 0,
+            "rssKb": 0,
+            "rssMb": 0,
+            "top": []
+          },
+          "benchmarkNode": {
+            "count": 0,
+            "cpuPct": 0,
+            "rssKb": 0,
+            "rssMb": 0,
+            "processes": []
+          }
+        }
+      },
+      "error": "Error: listen EPERM: operation not permitted 127.0.0.1\n    at Server.setupListenHandle [as _listen2] (node:net:1986:21)\n    at listenInCluster (node:net:2065:12)\n    at node:net:2274:7\n    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)"
+    }
+  ],
+  "commands": [],
+  "processSamples": [
+    {
+      "label": "before-shutdown",
+      "sampledAt": "2026-04-30T21:31:06.907Z",
+      "method": "ps -axo pid,ppid,pcpu,rss,command",
+      "error": "spawn EPERM"
+    }
+  ]
+}

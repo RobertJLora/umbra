@@ -1,0 +1,27 @@
+{"scenario":"create-read-text","iteration":0,"tool":"browser_create_tab","status":"pass","elapsedMs":252.43,"requestBytes":258,"responseBytes":218,"totalBytes":476}
+{"scenario":"create-read-text","iteration":0,"tool":"browser_get_page_content","status":"pass","elapsedMs":22.91,"requestBytes":125,"responseBytes":471,"totalBytes":596}
+{"scenario":"create-read-text","iteration":0,"tool":"browser_run_page_action","status":"pass","elapsedMs":3.67,"requestBytes":204,"responseBytes":188,"totalBytes":392}
+{"scenario":"create-read-text","iteration":null,"tool":"browser_list_tabs","status":"pass","elapsedMs":2.21,"requestBytes":85,"responseBytes":463,"totalBytes":548}
+{"scenario":"create-read-text","iteration":null,"tool":"browser_close_session_tabs","status":"pass","elapsedMs":23.05,"requestBytes":94,"responseBytes":270,"totalBytes":364}
+{"scenario":"create-read-text","iteration":null,"tool":"browser_list_tabs","status":"pass","elapsedMs":8.21,"requestBytes":85,"responseBytes":95,"totalBytes":180}
+{"scenario":"create-read-text","iteration":null,"tool":"browser_cleanup_groups","status":"pass","elapsedMs":1.61,"requestBytes":206,"responseBytes":195,"totalBytes":401}
+{"scenario":"navigate-loop","iteration":0,"tool":"browser_create_tab","status":"pass","elapsedMs":305.67,"requestBytes":260,"responseBytes":219,"totalBytes":479}
+{"scenario":"navigate-loop","iteration":0,"tool":"browser_navigate","status":"pass","elapsedMs":60.49,"requestBytes":218,"responseBytes":221,"totalBytes":439}
+{"scenario":"navigate-loop","iteration":0,"tool":"browser_navigate","status":"pass","elapsedMs":52.25,"requestBytes":225,"responseBytes":227,"totalBytes":452}
+{"scenario":"navigate-loop","iteration":0,"tool":"browser_get_page_content","status":"pass","elapsedMs":14.24,"requestBytes":125,"responseBytes":479,"totalBytes":604}
+{"scenario":"navigate-loop","iteration":null,"tool":"browser_list_tabs","status":"pass","elapsedMs":2.32,"requestBytes":85,"responseBytes":476,"totalBytes":561}
+{"scenario":"navigate-loop","iteration":null,"tool":"browser_close_session_tabs","status":"pass","elapsedMs":20.29,"requestBytes":94,"responseBytes":270,"totalBytes":364}
+{"scenario":"navigate-loop","iteration":null,"tool":"browser_list_tabs","status":"pass","elapsedMs":6.01,"requestBytes":85,"responseBytes":95,"totalBytes":180}
+{"scenario":"navigate-loop","iteration":null,"tool":"browser_cleanup_groups","status":"pass","elapsedMs":2.38,"requestBytes":208,"responseBytes":195,"totalBytes":403}
+{"scenario":"wait-loop","iteration":0,"tool":"browser_create_tab","status":"pass","elapsedMs":233.28,"requestBytes":256,"responseBytes":218,"totalBytes":474}
+{"scenario":"wait-loop","iteration":0,"tool":"browser_wait","status":"pass","elapsedMs":6.4,"requestBytes":156,"responseBytes":41,"totalBytes":197}
+{"scenario":"wait-loop","iteration":null,"tool":"browser_list_tabs","status":"pass","elapsedMs":2.51,"requestBytes":85,"responseBytes":461,"totalBytes":546}
+{"scenario":"wait-loop","iteration":null,"tool":"browser_close_session_tabs","status":"pass","elapsedMs":25.72,"requestBytes":94,"responseBytes":270,"totalBytes":364}
+{"scenario":"wait-loop","iteration":null,"tool":"browser_list_tabs","status":"pass","elapsedMs":6.32,"requestBytes":85,"responseBytes":95,"totalBytes":180}
+{"scenario":"wait-loop","iteration":null,"tool":"browser_cleanup_groups","status":"pass","elapsedMs":1.74,"requestBytes":204,"responseBytes":195,"totalBytes":399}
+{"scenario":"screenshot","iteration":0,"tool":"browser_create_tab","status":"pass","elapsedMs":328.7,"requestBytes":257,"responseBytes":219,"totalBytes":476}
+{"scenario":"screenshot","iteration":0,"tool":"browser_screenshot","status":"fail","elapsedMs":15002.01,"requestBytes":103,"responseBytes":0,"totalBytes":103,"error":"Timed out waiting for browser_screenshot result from the extension."}
+{"scenario":"screenshot","iteration":null,"tool":"browser_list_tabs","status":"pass","elapsedMs":10.31,"requestBytes":85,"responseBytes":465,"totalBytes":550}
+{"scenario":"screenshot","iteration":null,"tool":"browser_close_session_tabs","status":"pass","elapsedMs":57.03,"requestBytes":94,"responseBytes":270,"totalBytes":364}
+{"scenario":"screenshot","iteration":null,"tool":"browser_list_tabs","status":"pass","elapsedMs":11.87,"requestBytes":85,"responseBytes":95,"totalBytes":180}
+{"scenario":"screenshot","iteration":null,"tool":"browser_cleanup_groups","status":"pass","elapsedMs":2.29,"requestBytes":205,"responseBytes":195,"totalBytes":400}
