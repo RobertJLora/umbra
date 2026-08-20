@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Umbra - Local Only</title>
+    <style>
+      /* ==================================================================
+         Umbra Chrome Web Store screenshot 4 of N: PRIVACY / LOCAL-ONLY.
+         Exactly 1280x800, no overflow. A macOS Chrome window showing the
+         real Umbra options page (Eclipse Minimal), a headline, and a
+         loopback callout diagram. Violet-on-near-black, layered depth.
+         ================================================================== */
+
+      :root {
+        --void: #07060e;
+        --disc: #0d0b1e;
+        --ink: #0a0812;
+        --surface: rgba(255, 255, 255, 0.024);
+        --text: #ece9f6;
+        --muted: #9c96b9;
+        --faint: #6d6789;
+        --hair: rgba(255, 255, 255, 0.08);
+        --hair-soft: rgba(255, 255, 255, 0.05);
+        --violet: #7c5cff;
+        --violet-lift: #a78bfa;
+        --violet-pale: #c4b5fd;
+        --amber: #f2b45a;
+        --idle: #6d6789;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { background: #05040a; }
+
+      body {
+        width: 1280px;
+        height: 800px;
+        overflow: hidden;
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---------- stage + backdrop ---------- */
+
+      .stage {
+        position: relative;
+        width: 1280px;
+        height: 800px;
+        background: #08060f;
+        overflow: hidden;
+      }
+
+      /* Layered aurora: violet light seeping from the upper-left over the copy
+         and a deep purple pooling under the browser. */
+      .stage::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(46% 44% at 20% 6%, rgba(124, 92, 255, 0.22), rgba(124, 92, 255, 0) 62%),
+          radial-gradient(40% 46% at 8% 88%, rgba(76, 29, 149, 0.20), rgba(76, 29, 149, 0) 70%),
+          radial-gradient(60% 70% at 96% 108%, rgba(76, 29, 149, 0.30), rgba(76, 29, 149, 0) 72%),
+          linear-gradient(150deg, #0b0918 0%, #08060f 46%, #0a0713 100%);
+      }
+
+      /* Faint drifting star field for depth, no hard edges. */
+      .stage::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          radial-gradient(1.4px 1.4px at 12% 22%, rgba(196, 181, 253, 0.42), transparent 60%),
+          radial-gradient(1.1px 1.1px at 33% 14%, rgba(196, 181, 253, 0.30), transparent 60%),
+          radial-gradient(1.2px 1.2px at 26% 62%, rgba(167, 139, 250, 0.24), transparent 60%),
+          radial-gradient(1px 1px at 46% 40%, rgba(196, 181, 253, 0.26), transparent 60%),
+          radial-gradient(1.3px 1.3px at 8% 74%, rgba(167, 139, 250, 0.22), transparent 60%);
+      }
+
+      /* glow pooled specifically behind the browser to lift it off the plane */
+      .browser-glow {
+        position: absolute;
+        top: 150px;
+        left: 640px;
+        width: 620px;
+        height: 560px;
+        border-radius: 50%;
+        background: radial-gradient(50% 50% at 50% 50%, rgba(124, 92, 255, 0.26), rgba(124, 92, 255, 0) 70%);
+        filter: blur(14px);
+        z-index: 1;
+      }
+
+      /* =================================================================
+         LEFT COLUMN: brand signature, headline, loopback diagram
+         ================================================================= */
+
+      .copy {
+        position: absolute;
+        left: 78px;
+        top: 96px;
+        width: 500px;
+        z-index: 3;
+      }
+
+      .lockup {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        margin-bottom: 30px;
+      }
+
+      .lockup .glyph {
+        width: 30px;
+        height: 30px;
+        filter: drop-shadow(0 0 10px rgba(124, 92, 255, 0.5));
+      }
+
+      .lockup .wordmark {
+        font-size: 17px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        color: var(--text);
+      }
+
+      .lockup .divider {
+        width: 1px;
+        height: 15px;
+        background: var(--hair);
+      }
+
+      .lockup .kicker {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.26em;
+        text-transform: uppercase;
+        color: var(--violet-pale);
+      }
+
+      h1.headline {
+        margin: 0;
+        font-size: 45px;
+        line-height: 1.12;
+        font-weight: 300;
+        letter-spacing: -0.028em;
+        color: #f6f4ff;
+      }
+
+      h1.headline .accent {
+        font-weight: 400;
+        background: linear-gradient(96deg, #c4b5fd 0%, #a78bfa 44%, #7c5cff 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: #a78bfa;
+      }
+
+      p.subcopy {
+        margin: 22px 0 0;
+        max-width: 430px;
+        font-size: 15px;
+        line-height: 1.62;
+        color: var(--muted);
+      }
+
+      p.subcopy b { color: var(--violet-pale); font-weight: 500; }
+
+      /* ---------- loopback diagram ---------- */
+
+      .diagram {
+        margin-top: 44px;
+        width: 466px;
+        padding: 24px 26px 22px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01)),
+          rgba(11, 9, 24, 0.55);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.05),
+          0 18px 40px rgba(0, 0, 0, 0.42);
+        backdrop-filter: blur(2px);
+      }
+
+      .diagram svg { display: block; filter: drop-shadow(0 6px 18px rgba(124, 92, 255, 0.28)); }
+
+      .diagram .label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--hair-soft);
+      }
+
+      .diagram .label .pin {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+        background: var(--violet-pale);
+        box-shadow: 0 0 10px 1px rgba(124, 92, 255, 0.75);
+      }
+
+      .diagram .label .txt {
+        font-size: 12.5px;
+        letter-spacing: 0.02em;
+        color: var(--muted);
+      }
+
+      .diagram .label .txt b { color: var(--text); font-weight: 500; }
+
+      /* =================================================================
+         RIGHT COLUMN: macOS Chrome window with the Umbra options page
+         ================================================================= */
+
+      .browser {
+        position: absolute;
+        top: 40px;
+        left: 628px;
+        width: 600px;
+        height: 744px;
+        z-index: 4;
+        border-radius: 15px;
+        overflow: hidden;
+        background: var(--void);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        box-shadow:
+          0 1px 0 rgba(255, 255, 255, 0.06) inset,
+          0 2px 6px rgba(0, 0, 0, 0.35),
+          0 18px 40px rgba(0, 0, 0, 0.45),
+          0 46px 90px rgba(0, 0, 0, 0.55),
+          0 30px 90px rgba(76, 29, 149, 0.22);
+      }
+
+      /* ----- title bar with traffic lights + tabs ----- */
+
+      .titlebar {
+        position: relative;
+        height: 40px;
+        display: flex;
+        align-items: flex-end;
+        gap: 0;
+        padding: 0 14px;
+        background: linear-gradient(180deg, #1a1728 0%, #141020 100%);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+      }
+
+      .lights {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 40px;
+        padding-right: 12px;
+      }
+
+      .lights i {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        display: block;
+        box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+      }
+
+      .lights .r { background: #ff5f57; }
+      .lights .y { background: #febc2e; }
+      .lights .g { background: #28c840; }
+
+      .tab {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 30px;
+        padding: 0 14px;
+        border-radius: 9px 9px 0 0;
+        font-size: 12px;
+        color: var(--muted);
+        max-width: 190px;
+      }
+
+      .tab .fav {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 auto;
+        filter: drop-shadow(0 0 5px rgba(124, 92, 255, 0.5));
+      }
+
+      .tab .ttl {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .tab.active {
+        background: var(--void);
+        color: var(--text);
+        box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.06) inset;
+      }
+
+      .tab.ghost { color: var(--faint); }
+      .tab.ghost .dotfav {
+        width: 12px; height: 12px; border-radius: 3px;
+        background: rgba(255,255,255,0.09);
+        flex: 0 0 auto;
+      }
+
+      .newtab {
+        display: flex; align-items: center; justify-content: center;
+        width: 26px; height: 26px; margin-bottom: 2px; margin-left: 4px;
+        color: var(--faint); font-size: 16px; line-height: 1;
+      }
+
+      /* ----- toolbar with omnibox ----- */
+
+      .toolbar {
+        height: 46px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 14px;
+        background: linear-gradient(180deg, #141020 0%, #100c1b 100%);
+        border-bottom: 1px solid var(--hair);
+      }
+
+      .navbtns { display: flex; align-items: center; gap: 14px; color: var(--faint); }
+      .navbtns svg { display: block; }
+      .navbtns .off { opacity: 0.4; }
+
+      .omni {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 30px;
+        padding: 0 13px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        color: var(--muted);
+        font-size: 12.5px;
+        letter-spacing: 0.01em;
+      }
+
+      .omni .lock { color: #8f88b0; flex: 0 0 auto; }
+      .omni .url { color: #b8b2d4; }
+      .omni .url .dim { color: var(--faint); }
+      .omni .star { margin-left: auto; color: var(--faint); flex: 0 0 auto; }
+
+      .ext-pill {
+        display: flex; align-items: center; gap: 7px;
+        height: 26px; padding: 0 9px;
+        border-radius: 8px;
+        background: rgba(124, 92, 255, 0.12);
+        border: 1px solid rgba(167, 139, 250, 0.28);
+      }
+      .ext-pill .g { width: 15px; height: 15px; filter: drop-shadow(0 0 5px rgba(124,92,255,0.5)); }
+
+      /* ----- the options viewport ----- */
+
+      .viewport {
+        position: relative;
+        height: 658px;
+        overflow: hidden;
+        background: var(--void);
+      }
+
+      .viewport::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(56% 30% at 50% 0%, rgba(124, 92, 255, 0.24), rgba(124, 92, 255, 0) 66%),
+          radial-gradient(72% 34% at 50% 102%, rgba(76, 29, 149, 0.22), rgba(76, 29, 149, 0) 74%);
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        padding: 22px 30px 20px;
+        color: var(--text);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      /* hero */
+      .o-hero { text-align: center; padding-bottom: 14px; }
+
+      .orb {
+        position: relative;
+        width: 58px;
+        height: 58px;
+        margin: 0 auto 11px;
+      }
+
+      .orb-disc {
+        position: absolute;
+        inset: 0;
+        isolation: isolate;
+        overflow: hidden;
+        border-radius: 50%;
+        background: var(--disc);
+        display: grid;
+        place-items: center;
+        box-shadow:
+          0 0 40px 6px rgba(124, 92, 255, 0.28),
+          0 0 80px 18px rgba(124, 92, 255, 0.10),
+          0 12px 30px rgba(0, 0, 0, 0.55);
+      }
+
+      .orb-disc img {
+        width: 48px;
+        height: 48px;
+        display: block;
+        mix-blend-mode: lighten;
+      }
+
+      .orb-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: conic-gradient(
+          from 225deg,
+          rgba(167, 139, 250, 0) 0deg,
+          rgba(167, 139, 250, 0.08) 46deg,
+          rgba(224, 214, 255, 0.95) 168deg,
+          rgba(124, 92, 255, 0.45) 254deg,
+          rgba(124, 92, 255, 0) 330deg
+        );
+        -webkit-mask: radial-gradient(closest-side circle, transparent calc(100% - 1.4px), #000 calc(100% - 1.4px));
+        mask: radial-gradient(closest-side circle, transparent calc(100% - 1.4px), #000 calc(100% - 1.4px));
+      }
+
+      .o-hero h1 {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.1;
+        font-weight: 300;
+        letter-spacing: -0.028em;
+        color: #fff;
+      }
+
+      .o-hero .tagline {
+        margin: 8px 0 0;
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.26em;
+        text-transform: uppercase;
+        color: var(--violet-pale);
+      }
+
+      .o-hero .lede {
+        max-width: 372px;
+        margin: 11px auto 0;
+        font-size: 11.5px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      .status-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 13px;
+        padding: 7px 15px 7px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--hair);
+        background: rgba(255, 255, 255, 0.022);
+        font-size: 11.5px;
+        color: var(--text);
+      }
+
+      .status-row .port { color: var(--faint); font-size: 10.5px; letter-spacing: 0.03em; }
+
+      .dot {
+        width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+        background: var(--violet-pale);
+        box-shadow:
+          0 0 0 3px rgba(124, 92, 255, 0.16),
+          0 0 0 6px rgba(124, 92, 255, 0.07),
+          0 0 12px 1px rgba(124, 92, 255, 0.7);
+      }
+
+      .dot.sm {
+        width: 6px; height: 6px;
+        box-shadow: 0 0 0 2px rgba(242,180,90,0.15), 0 0 9px 1px rgba(242,180,90,0.5);
+        background: var(--amber);
+      }
+
+      /* cards */
+      .card {
+        background: var(--surface);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 15px;
+        padding: 15px 18px 16px;
+        margin-bottom: 11px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 112px 1fr;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .card h2 {
+        margin: 0;
+        font-size: 13.5px;
+        font-weight: 500;
+        color: var(--text);
+      }
+
+      .side-note {
+        margin: 6px 0 0;
+        font-size: 11px;
+        line-height: 1.55;
+        color: #7d779c;
+      }
+
+      .field-label {
+        display: block;
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--faint);
+        margin-bottom: 8px;
+      }
+
+      .field-line {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        border-bottom: 1px solid var(--hair);
+      }
+
+      .field-line .key {
+        flex: 1;
+        padding: 6px 0 8px;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-size: 11.5px;
+        letter-spacing: 0.16em;
+        color: var(--violet-pale);
+        white-space: nowrap;
+        overflow: hidden;
+        -webkit-mask-image: linear-gradient(90deg, #000 84%, rgba(0, 0, 0, 0) 100%);
+        mask-image: linear-gradient(90deg, #000 84%, rgba(0, 0, 0, 0) 100%);
+      }
+
+      .field-line .reveal {
+        font-size: 9.5px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--faint);
+        white-space: nowrap;
+      }
+
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+      .pill {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.035);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 7px 12px;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+      }
+
+      .pill.primary {
+        background: linear-gradient(180deg, #8a6cff, #6b46f0);
+        border-color: rgba(167, 139, 250, 0.5);
+        color: #fff;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.18),
+          0 6px 18px rgba(108, 73, 240, 0.34);
+      }
+
+      .hint {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 9px;
+        align-items: start;
+        margin: 10px 0 0;
+        font-size: 11px;
+        line-height: 1.6;
+        color: #7d779c;
+      }
+      .hint .dot.sm { margin-top: 5px; }
+
+      /* connection */
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding-bottom: 13px;
+      }
+      .toggle-row .label { font-size: 12.5px; color: var(--text); }
+
+      .switch { position: relative; width: 36px; height: 20px; margin-left: auto; flex: 0 0 auto; }
+      .track {
+        position: absolute; inset: 0; border-radius: 999px;
+        background: linear-gradient(180deg, rgba(140,108,255,0.95), rgba(108,73,240,0.8));
+        border: 1px solid rgba(167, 139, 250, 0.55);
+        box-shadow: 0 0 16px rgba(124, 92, 255, 0.42);
+      }
+      .knob {
+        position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
+        border-radius: 50%; background: #fff; transform: translateX(16px);
+      }
+
+      .ports {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 16px;
+        align-items: end;
+        max-width: 300px;
+      }
+      .ports .dash { padding-bottom: 9px; color: var(--faint); }
+      .ports .field-line .num {
+        padding: 6px 0 8px;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-size: 13px;
+        color: var(--text);
+      }
+
+      .range-caption {
+        margin: 11px 0 0;
+        font-size: 11px;
+        color: var(--faint);
+        letter-spacing: 0.03em;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      }
+      .range-caption b { color: var(--violet-pale); font-weight: 500; }
+
+      /* footer */
+      .o-footer {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 11px;
+        margin: 16px 0 0;
+        padding-top: 14px;
+        border-top: 1px solid var(--hair);
+        font-size: 11px;
+        color: #7d779c;
+        letter-spacing: 0.04em;
+      }
+      .o-footer .sep { color: rgba(255, 255, 255, 0.16); }
+      .o-footer a { color: var(--muted); text-decoration: none; }
+
+      /* top sheen across the whole browser glass */
+      .browser .sheen {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        border-radius: 15px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+        z-index: 5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <div class="browser-glow" aria-hidden="true"></div>
+
+      <!-- ===================== LEFT: copy + diagram ===================== -->
+      <div class="copy">
+        <div class="lockup">
+          <svg class="glyph" viewBox="0 0 100 100" aria-hidden="true">
+            <defs>
+              <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#a78bfa" />
+                <stop offset="1" stop-color="#7c3aed" />
+              </linearGradient>
+            </defs>
+            <g fill="none" stroke="url(#lg)" stroke-linecap="round">
+              <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15" />
+              <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92" />
+            </g>
+          </svg>
+          <span class="wordmark">Umbra</span>
+          <span class="divider" aria-hidden="true"></span>
+          <span class="kicker">Local Only</span>
+        </div>
+
+        <h1 class="headline">
+          One paired key.<br />
+          Localhost only.<br />
+          <span class="accent">Nothing leaves your machine.</span>
+        </h1>
+
+        <p class="subcopy">
+          Umbra pairs this browser with a companion server on <b>your own machine</b> over a loopback
+          connection. No account, no cloud relay, no data in transit.
+        </p>
+
+        <!-- loopback diagram -->
+        <div class="diagram">
+          <svg width="414" height="132" viewBox="0 0 414 132" fill="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="dg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#c4b5fd" />
+                <stop offset="1" stop-color="#7c5cff" />
+              </linearGradient>
+            </defs>
+
+            <!-- LAPTOP (center) -->
+            <g stroke="url(#dg)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" fill="none">
+              <rect x="150" y="30" width="114" height="70" rx="9" fill="rgba(124,92,255,0.07)" />
+              <path d="M132 112 L282 112 L296 100 L118 100 Z" fill="rgba(124,92,255,0.06)" />
+              <line x1="188" y1="106" x2="226" y2="106" stroke-width="2.4" opacity="0.7" />
+            </g>
+            <!-- little umbra crescent inside the screen -->
+            <g transform="translate(184,44) scale(0.46)" fill="none" stroke="url(#dg)" stroke-linecap="round" opacity="0.95">
+              <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15" />
+              <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.9" />
+            </g>
+
+            <!-- LOOPBACK ARROW: exits the right of the laptop, arcs out and
+                 curves straight back into the left of the laptop -->
+            <g stroke="url(#dg)" stroke-width="2.8" fill="none" stroke-linecap="round">
+              <path d="M264 66
+                       C 322 40, 322 8, 268 8
+                       L 146 8
+                       C 92 8, 92 40, 150 66" />
+            </g>
+            <!-- arrowhead diving back into the laptop's left edge -->
+            <path d="M150 67 L136 60 L147 51 Z" fill="url(#dg)" stroke="url(#dg)" stroke-width="1.4" stroke-linejoin="round" />
+            <!-- motion pips riding the loop -->
+            <circle cx="207" cy="8" r="2.4" fill="#c4b5fd" />
+            <circle cx="299" cy="26" r="2.1" fill="#a78bfa" opacity="0.8" />
+            <circle cx="115" cy="26" r="2.1" fill="#a78bfa" opacity="0.8" />
+
+            <!-- blocked path toward the cloud -->
+            <path d="M300 96 L344 96" stroke="#6d6789" stroke-width="2" stroke-dasharray="3 5" stroke-linecap="round" />
+            <!-- CROSSED-OUT CLOUD (right, dimmed) -->
+            <g transform="translate(346,58)" opacity="0.55">
+              <path d="M12 34 A11 11 0 0 1 12 12 A16 16 0 0 1 43 8 A12 12 0 0 1 55 25 A11 11 0 0 1 52 34 Z"
+                    fill="rgba(157,150,185,0.06)" stroke="#6d6789" stroke-width="2.2" stroke-linejoin="round" />
+              <line x1="8" y1="40" x2="56" y2="2" stroke="#c4b5fd" stroke-width="2.6" stroke-linecap="round" />
+            </g>
+          </svg>
+
+          <div class="label">
+            <span class="pin" aria-hidden="true"></span>
+            <span class="txt"><b>loopback only</b> - nothing leaves this machine</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== RIGHT: Chrome window ===================== -->
+      <div class="browser">
+        <div class="sheen" aria-hidden="true"></div>
+
+        <!-- title bar -->
+        <div class="titlebar">
+          <div class="lights">
+            <i class="r"></i><i class="y"></i><i class="g"></i>
+          </div>
+          <div class="tab active">
+            <svg class="fav" viewBox="0 0 100 100" aria-hidden="true">
+              <g fill="none" stroke="url(#lg)" stroke-linecap="round">
+                <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15" />
+                <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92" />
+              </g>
+            </svg>
+            <span class="ttl">Umbra Settings</span>
+          </div>
+          <div class="tab ghost">
+            <span class="dotfav" aria-hidden="true"></span>
+            <span class="ttl">New Tab</span>
+          </div>
+          <div class="newtab" aria-hidden="true">+</div>
+        </div>
+
+        <!-- toolbar -->
+        <div class="toolbar">
+          <div class="navbtns" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            <svg class="off" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg>
+          </div>
+          <div class="omni">
+            <svg class="lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span class="url mono"><span class="dim">chrome-extension://</span>umbra<span class="dim">/options.html</span></span>
+            <svg class="star" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17.3l-5.4 3 1-6.1-4.4-4.3 6.1-.9L12 3l2.7 5.5 6.1.9-4.4 4.3 1 6.1z"/></svg>
+          </div>
+          <div class="ext-pill" aria-hidden="true">
+            <svg class="g" viewBox="0 0 100 100">
+              <g fill="none" stroke="url(#lg)" stroke-linecap="round">
+                <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15" />
+                <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92" />
+              </g>
+            </svg>
+          </div>
+        </div>
+
+        <!-- options viewport -->
+        <div class="viewport">
+          <div class="page">
+            <!-- hero -->
+            <div class="o-hero">
+              <div class="orb">
+                <span class="orb-disc"><img src="icon128.png" alt="Umbra" /></span>
+                <span class="orb-ring" aria-hidden="true"></span>
+              </div>
+              <h1>Umbra</h1>
+              <p class="tagline">Browser Control for AI Agents</p>
+              <p class="lede">
+                Pairs this browser with a companion server on your machine over loopback.
+              </p>
+              <div class="status-row">
+                <span class="dot" aria-hidden="true"></span>
+                <span>Connected to 2 local sessions.</span>
+                <span class="port mono">127.0.0.1 : 47821</span>
+              </div>
+            </div>
+
+            <!-- Pairing card -->
+            <div class="card">
+              <div class="split">
+                <div>
+                  <h2>Pairing</h2>
+                  <p class="side-note">The secret this browser and the server both hold. Generated here, never typed.</p>
+                </div>
+                <div>
+                  <span class="field-label">Shared Key</span>
+                  <div class="field-line">
+                    <span class="key mono">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span>
+                    <span class="reveal">Reveal</span>
+                  </div>
+                  <div class="actions">
+                    <span class="pill">Generate Key</span>
+                    <span class="pill">Copy Environment Line</span>
+                    <span class="pill primary">Save And Reconnect</span>
+                  </div>
+                  <p class="hint">
+                    <span class="dot sm" aria-hidden="true"></span>
+                    <span>A new key replaces the old one. Any server still holding the previous key stops pairing.</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Connection card -->
+            <div class="card">
+              <div class="split">
+                <div>
+                  <h2>Connection</h2>
+                  <p class="side-note">Umbra probes this loopback range for a server holding the same key.</p>
+                </div>
+                <div>
+                  <div class="toggle-row">
+                    <span class="label">Enable loopback scanning</span>
+                    <span class="switch">
+                      <span class="track" aria-hidden="true"></span>
+                      <span class="knob" aria-hidden="true"></span>
+                    </span>
+                  </div>
+                  <div class="ports">
+                    <div>
+                      <span class="field-label">Port Start</span>
+                      <div class="field-line"><span class="num mono">47821</span></div>
+                    </div>
+                    <span class="dash" aria-hidden="true">-</span>
+                    <div>
+                      <span class="field-label">Port End</span>
+                      <div class="field-line"><span class="num mono">47852</span></div>
+                    </div>
+                  </div>
+                  <p class="range-caption">Scanning <b>47821 - 47852</b> on 127.0.0.1</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- footer -->
+            <div class="o-footer">
+              <span class="mono">Umbra 0.5.0</span>
+              <span class="sep" aria-hidden="true">&middot;</span>
+              <a href="#">Setup guide and source</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

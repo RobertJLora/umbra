@@ -85,7 +85,7 @@ Umbra is a developer tool. It is not directed at children and collects no data f
 
 ## Removing your data
 
-Uninstalling the extension removes everything it stored, because everything it stored lived in that extension's own Chrome storage. To clear the pairing without uninstalling, open the options page and clear the key field, which also closes the bridge. To remove the companion server's key file, delete `~/.umbra/shared-key`.
+Uninstalling the extension removes everything it stored, because everything it stored lived in that extension's own Chrome storage. To clear the pairing without uninstalling, open the options page and clear the key field, which also closes the bridge. To remove the companion server's key file, delete `~/.umbra/shared-key` and any rotation backups matching `~/.umbra/shared-key.bak-*`.
 
 ## Changes to this policy
 

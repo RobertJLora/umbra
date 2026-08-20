@@ -16,7 +16,7 @@ That boundary is what makes this usable against a browser you are already logged
 
 WHAT YOU GET
 
-- 47 browser tools: navigation, page reads, an accessibility-based list of visible controls, clicking, typing, form fill, select, hover, keyboard input, file upload, scrolling, screenshots, console reads, and multi-step batches that run in a single call.
+- 46 browser tools: navigation, page reads, an accessibility-based list of visible controls, clicking, typing, form fill, select, hover, keyboard input, file upload, scrolling, screenshots, console reads, and multi-step batches that run in a single call.
 - Background operation. Opening, navigating, and DOM interaction default to inactive tabs, so routine agent work never pulls Chrome to the foreground. Ask for focus explicitly when a task genuinely needs it.
 - Many sessions in one browser. Each agent session gets its own tab group and its own view of the browser, and several can run at once in the same profile.
 - Tab adoption. Open a page by hand, sign in, then hand that exact tab to the agent instead of making it navigate there itself.

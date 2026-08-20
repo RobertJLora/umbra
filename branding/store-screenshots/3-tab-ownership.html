@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Umbra - Tab Ownership</title>
+<style>
+  /* ================================================================
+     Umbra - Chrome Web Store marketing screenshot 3 of N
+     Scene: TAB OWNERSHIP / ISOLATION
+     A focused Chrome window front and center showing two color-coded
+     tab groups - a violet session and a teal session - each owning
+     only the tabs it opened, plus one ungrouped personal tab held
+     apart with a lock. An inset Umbra sessions panel spells out which
+     session owns which tabs; a callout marks the personal tab as
+     invisible to every agent. Deep-space violet backdrop, brand
+     eclipse marks. Canvas locked to exactly 1280 x 800.
+     ================================================================ */
+
+  :root {
+    --void: #07060e;
+    --disc: #0d0b1e;
+    --panel: #16121f;
+    --text: #ece9f6;
+    --muted: #9c96b9;
+    --faint: #6d6789;
+    --violet: #7c5cff;
+    --violet-lift: #a78bfa;
+    --violet-pale: #c4b5fd;
+
+    /* teal / foam session accent */
+    --teal: #2ea3b8;
+    --teal-lift: #7fd6e4;
+    --teal-deep: #1f8194;
+
+    /* Chrome (macOS light) */
+    --cr-strip: #d7dbe1;
+    --cr-page: #f5f6f8;
+    --cr-ink: #22252a;
+    --cr-ink2: #565c65;
+    --cr-line: #e2e5ea;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { background: var(--void); }
+
+  body {
+    width: 1280px;
+    height: 800px;
+    overflow: hidden;
+    margin: 0;
+    position: relative;
+    background:
+      radial-gradient(118% 60% at 74% -14%, rgba(124, 92, 255, 0.24), rgba(124, 92, 255, 0) 60%),
+      radial-gradient(90% 64% at 96% 60%, rgba(46, 163, 184, 0.12), rgba(46, 163, 184, 0) 62%),
+      radial-gradient(85% 58% at 4% 108%, rgba(124, 92, 255, 0.14), rgba(124, 92, 255, 0) 68%),
+      linear-gradient(158deg, #0b0916 0%, #07060e 56%, #0a0813 100%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, monospace; }
+
+  /* corner-seating vignette, below the windows */
+  .vignette {
+    position: absolute; inset: 0; pointer-events: none; z-index: 1;
+    box-shadow: inset 0 0 220px 60px rgba(0, 0, 0, 0.52);
+  }
+
+  /* huge ambient crescent, low opacity, bottom-left bloom */
+  .ambient {
+    position: absolute;
+    left: -150px; bottom: -210px;
+    width: 600px; height: 600px;
+    z-index: 1; pointer-events: none;
+    opacity: 0.07;
+    filter: blur(3px) drop-shadow(0 0 60px rgba(124, 92, 255, 0.6));
+    transform: rotate(-8deg);
+  }
+
+  /* soft violet glow seated under the hero window */
+  .glow {
+    position: absolute; z-index: 4; pointer-events: none;
+    left: 470px; top: 150px; width: 780px; height: 560px;
+    background: radial-gradient(52% 46% at 52% 40%, rgba(124, 92, 255, 0.30), rgba(124, 92, 255, 0) 70%);
+    filter: blur(6px);
+  }
+
+  /* ---------------- eclipse mark (reusable brand glyph) ---------------- */
+
+  .mark { position: relative; display: inline-block; flex: 0 0 auto; }
+  .mark .disc {
+    position: absolute; inset: 0; border-radius: 27%;
+    background: radial-gradient(120% 120% at 32% 22%, #17132b, #0b0918 70%);
+    box-shadow:
+      0 0 24px 2px rgba(124, 92, 255, 0.38),
+      0 8px 20px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.07),
+      inset 0 0 0 1px rgba(167, 139, 250, 0.12);
+  }
+  .mark svg {
+    position: absolute; inset: 15%; width: 70%; height: 70%;
+    filter: drop-shadow(0 0 5px rgba(124, 92, 255, 0.6));
+  }
+
+  /* ---------------- header / headline column ---------------- */
+
+  .brand {
+    position: absolute; left: 64px; top: 50px; z-index: 30;
+    display: flex; align-items: center; gap: 13px;
+  }
+  .brand .mark { width: 44px; height: 44px; }
+  .brand .word { font-size: 21px; font-weight: 500; letter-spacing: 0.01em; color: #fff; line-height: 1; }
+  .brand .tag {
+    margin-top: 6px; font-size: 9.5px; font-weight: 600;
+    letter-spacing: 0.26em; text-transform: uppercase; color: var(--violet-pale);
+  }
+
+  .headline {
+    position: absolute; left: 64px; top: 134px; z-index: 30;
+    font-size: 41px; font-weight: 400; line-height: 1.12;
+    letter-spacing: -0.02em; margin: 0;
+  }
+  .headline .l1 { color: #f6f4fd; }
+  .headline .l2 { color: var(--violet-pale); }
+
+  .sub {
+    position: absolute; left: 64px; top: 238px; z-index: 30;
+    max-width: 384px; margin: 0;
+    font-size: 15px; line-height: 1.62; color: var(--muted);
+  }
+  .sub b { color: var(--text); font-weight: 500; }
+
+  /* ---------------- inset: Umbra sessions panel ---------------- */
+
+  .panel {
+    position: absolute; left: 64px; top: 366px; width: 378px; z-index: 30;
+    background:
+      radial-gradient(120% 90% at 12% 0%, rgba(124, 92, 255, 0.10), rgba(124, 92, 255, 0) 60%),
+      var(--disc);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    padding: 17px 18px 16px;
+    box-shadow:
+      0 30px 60px -22px rgba(0, 0, 0, 0.7),
+      0 0 42px -6px rgba(124, 92, 255, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+  .panel .p-head {
+    display: flex; align-items: center; gap: 9px; padding-bottom: 13px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .panel .p-head .mark { width: 17px; height: 17px; }
+  .panel .p-title {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .panel .p-live {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 7px;
+    font-size: 10.5px; color: var(--muted); letter-spacing: 0.02em;
+  }
+  .panel .p-live .g {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--violet-lift);
+    box-shadow: 0 0 9px 1px rgba(167, 139, 250, 0.9);
+  }
+
+  .srow { padding: 13px 0 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+  .srow:last-of-type { border-bottom: none; }
+  .srow .line { display: flex; align-items: center; gap: 10px; }
+  .srow .sw {
+    width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto;
+  }
+  .srow .sw.v { background: var(--violet); box-shadow: 0 0 10px 1px rgba(124, 92, 255, 0.7); }
+  .srow .sw.t { background: var(--teal); box-shadow: 0 0 10px 1px rgba(46, 163, 184, 0.7); }
+  .srow .sid { font-size: 13px; letter-spacing: 0.01em; }
+  .srow .sid.v { color: var(--violet-pale); }
+  .srow .sid.t { color: var(--teal-lift); }
+  .srow .owns { margin-left: auto; font-size: 10.5px; color: var(--faint); letter-spacing: 0.02em; }
+  .srow .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 0 19px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10.5px; letter-spacing: 0.01em;
+    padding: 3px 8px 3px 7px; border-radius: 7px;
+    white-space: nowrap;
+  }
+  .chip .d { width: 4px; height: 4px; border-radius: 50%; flex: 0 0 auto; }
+  .chip.v { background: rgba(124, 92, 255, 0.12); border: 1px solid rgba(167, 139, 250, 0.22); color: #c8bbf3; }
+  .chip.v .d { background: var(--violet-lift); }
+  .chip.t { background: rgba(46, 163, 184, 0.13); border: 1px solid rgba(127, 214, 228, 0.24); color: #a7dbe4; }
+  .chip.t .d { background: var(--teal-lift); }
+
+  .p-foot {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 13px; padding-top: 13px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  }
+  .p-foot .klock {
+    width: 20px; height: 20px; border-radius: 6px; flex: 0 0 auto;
+    display: grid; place-items: center;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    color: #8b86a6;
+  }
+  .p-foot .klock svg { width: 11px; height: 11px; display: block; }
+  .p-foot .pf-name { font-size: 12.5px; color: var(--muted); }
+  .p-foot .pf-meta { margin-left: auto; font-size: 10.5px; color: var(--faint); letter-spacing: 0.02em; }
+
+  /* ---------------- Chrome window (hero, focused) ---------------- */
+
+  .chrome {
+    position: absolute; left: 452px; top: 236px; width: 764px; height: 512px;
+    z-index: 10;
+    border-radius: 14px; overflow: hidden;
+    background: var(--cr-page);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow:
+      0 54px 104px -30px rgba(0, 0, 0, 0.66),
+      0 26px 56px -24px rgba(0, 0, 0, 0.55),
+      0 0 90px -18px rgba(124, 92, 255, 0.22);
+  }
+
+  .cr-tabs {
+    height: 46px; background: var(--cr-strip);
+    display: flex; align-items: flex-end; position: relative;
+  }
+  .lights { position: absolute; left: 15px; top: 16px; display: flex; gap: 8px; z-index: 3; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  /* FOCUSED window -> live colored traffic lights */
+  .lights i:nth-child(1) { background: #ff5f57; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.16); }
+  .lights i:nth-child(2) { background: #febc2e; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.16); }
+  .lights i:nth-child(3) { background: #28c840; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.16); }
+
+  .strip {
+    margin-left: 78px; display: flex; align-items: flex-end; gap: 6px;
+    flex: 1; min-width: 0; padding-right: 12px;
+  }
+
+  /* a tab group: colored rounded band holding a label + its tabs */
+  .grp {
+    align-self: flex-end;
+    display: flex; align-items: flex-end; gap: 3px;
+    padding: 0 4px; height: 40px;
+    border-radius: 11px 11px 0 0;
+  }
+  .grp.v { background: rgba(124, 92, 255, 0.15); }
+  .grp.t { background: rgba(46, 163, 184, 0.16); }
+  .glabel {
+    align-self: center; height: 22px; padding: 0 10px;
+    display: flex; align-items: center;
+    border-radius: 7px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.01em; color: #fff; white-space: nowrap;
+  }
+  .glabel.v { background: linear-gradient(180deg, #8a6cff, #6d4df0); box-shadow: 0 2px 7px rgba(108, 73, 240, 0.45); }
+  .glabel.t { background: linear-gradient(180deg, #34b0c4, #1f8fa4); box-shadow: 0 2px 7px rgba(31, 129, 164, 0.45); }
+
+  .cr-tab {
+    height: 34px; align-self: flex-end;
+    padding: 0 10px; display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--cr-ink2); max-width: 172px;
+    border-radius: 9px 9px 0 0;
+  }
+  .cr-tab .fav { width: 14px; height: 14px; border-radius: 4px; background: #b6bcc5; flex: 0 0 auto; }
+  .cr-tab .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cr-tab.active {
+    background: var(--cr-page); color: var(--cr-ink);
+    box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.05);
+  }
+  .cr-tab.active .fav { background: #7b8290; }
+
+  /* boundary between the last group and the ungrouped personal tab */
+  .boundary {
+    align-self: flex-end; width: 1px; height: 20px;
+    margin: 0 8px 8px; background: rgba(0, 0, 0, 0.16);
+  }
+  /* the ungrouped, personal tab - held apart, frosted, locked */
+  .cr-tab.personal {
+    background: rgba(150, 154, 168, 0.24);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+    color: #6b7280; padding: 0 12px;
+  }
+  .cr-tab.personal svg { width: 14px; height: 14px; display: block; color: #5f6672; }
+
+  .cr-newtab {
+    align-self: center; margin-left: 8px; color: #6b7078; font-size: 17px;
+    line-height: 1; padding-bottom: 2px;
+  }
+
+  .cr-toolbar {
+    height: 46px; background: var(--cr-page);
+    display: flex; align-items: center; gap: 12px; padding: 0 14px;
+    border-bottom: 1px solid var(--cr-line);
+  }
+  .cr-nav { display: flex; gap: 15px; color: #7c828b; font-size: 15px; }
+  .cr-nav .dim { color: #c2c6cc; }
+  .omni {
+    flex: 1; height: 30px; border-radius: 16px; background: #e9ecf1;
+    display: flex; align-items: center; gap: 9px; padding: 0 13px;
+    font-size: 12.5px; color: #5c626b;
+  }
+  .omni .lock { width: 11px; height: 9px; border: 1.6px solid #7a8089; border-top: none; border-radius: 0 0 3px 3px; position: relative; margin-top: 3px; flex: 0 0 auto; }
+  .omni .lock::before { content: ""; position: absolute; left: 1px; top: -6px; width: 7px; height: 7px; border: 1.6px solid #7a8089; border-bottom: none; border-radius: 5px 5px 0 0; }
+  .omni .u { color: #2f333a; }
+  .omni .star { margin-left: auto; width: 13px; height: 13px; border-radius: 3px; border: 1.5px solid #b7bcc4; }
+  .cr-ext { display: flex; align-items: center; gap: 13px; }
+  .cr-ext .puzzle { width: 17px; height: 17px; border-radius: 4px; background: #d4d8de; }
+  .cr-ext .avatar { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(140deg, #b9bfc7, #9aa0a8); }
+  /* Umbra extension pinned + active, keeping its violet glow */
+  .cr-ext .umbra-pin { position: relative; width: 23px; height: 23px; }
+  .cr-ext .umbra-pin .mark { width: 23px; height: 23px; }
+  .cr-ext .umbra-pin .st {
+    position: absolute; right: -2px; bottom: -2px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--violet-lift);
+    box-shadow: 0 0 8px 1px rgba(167, 139, 250, 0.9); border: 1.5px solid var(--cr-page);
+  }
+
+  /* the page: a calm generic SaaS app, idle */
+  .page { position: absolute; inset: 92px 0 0 0; display: flex; background: var(--cr-page); }
+  .side { width: 168px; background: #fff; border-right: 1px solid #e8ebef; padding: 16px 13px; }
+  .side .logo { display: flex; align-items: center; gap: 9px; margin-bottom: 20px; }
+  .side .logo .d { width: 22px; height: 22px; border-radius: 7px; background: linear-gradient(140deg, #aeb4bd, #8f95a0); }
+  .side .logo .n { width: 62px; height: 8px; border-radius: 4px; background: #d7dbe1; }
+  .side .nav { display: flex; flex-direction: column; gap: 4px; }
+  .side .nav .it { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; }
+  .side .nav .it .ic { width: 15px; height: 15px; border-radius: 4px; background: #cdd2d9; flex: 0 0 auto; }
+  .side .nav .it .tx { height: 8px; border-radius: 4px; background: #d7dbe1; }
+  .side .nav .it.on { background: #efeafe; }
+  .side .nav .it.on .ic { background: var(--violet); }
+  .side .nav .it.on .tx { background: #b9a9f2; }
+
+  .main { flex: 1; padding: 20px 22px; }
+  .main .top { display: flex; align-items: center; margin-bottom: 18px; }
+  .main .top .h { width: 132px; height: 15px; border-radius: 5px; background: #2c3038; }
+  .main .top .chip2 { margin-left: 14px; height: 25px; padding: 0 12px; display: flex; align-items: center; gap: 8px; border-radius: 13px; background: #eef0f3; }
+  .main .top .chip2 .cal { width: 11px; height: 11px; border-radius: 3px; border: 1.5px solid #9aa0a8; }
+  .main .top .chip2 .t { width: 52px; height: 7px; border-radius: 4px; background: #c7ccd3; }
+  .main .top .btn { margin-left: auto; height: 31px; padding: 0 15px; display: flex; align-items: center; gap: 8px; border-radius: 9px; background: linear-gradient(180deg, #8a6cff, #6b46f0); box-shadow: 0 7px 18px rgba(108,73,240,0.32); }
+  .main .top .btn .p { color: #fff; font-size: 16px; line-height: 1; margin-top: -1px; }
+  .main .top .btn .t { width: 46px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.9); }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; margin-bottom: 17px; }
+  .card { background: #fff; border: 1px solid #e8ebef; border-radius: 11px; padding: 14px 15px; }
+  .card .k { width: 48px; height: 8px; border-radius: 4px; background: #d7dbe1; margin-bottom: 12px; }
+  .card .v { width: 74px; height: 17px; border-radius: 5px; background: #333842; }
+  .card .v.violet { background: linear-gradient(90deg, #7c5cff, #a78bfa); width: 86px; }
+  .card .spark { margin-top: 12px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, #e6e8ec 60%, #f2f3f5 60%); }
+
+  .table { background: #fff; border: 1px solid #e8ebef; border-radius: 11px; overflow: hidden; }
+  .trow { display: grid; grid-template-columns: 1.7fr 1fr 1fr 0.7fr; gap: 15px; align-items: center; padding: 12px 16px; border-top: 1px solid #eef0f3; }
+  .trow.head { border-top: none; background: #fafbfc; }
+  .trow.head .c { height: 8px; background: #cdd2d9; border-radius: 4px; }
+  .trow .c { height: 9px; background: #e4e7eb; border-radius: 4px; }
+  .trow .c.s { width: 64%; }
+  .trow .c.xs { width: 44%; }
+  .trow .lead { display: flex; align-items: center; gap: 10px; }
+  .trow .lead .av { width: 18px; height: 18px; border-radius: 50%; background: #dde1e6; flex: 0 0 auto; }
+  .trow .c.pill { height: 17px; width: 58px; border-radius: 9px; }
+  .trow .c.pill.ok { background: #e6f3ee; }
+  .trow .c.pill.mut { background: #eef0f3; }
+
+  /* ---------------- callout on the ungrouped tab ---------------- */
+
+  .connector { position: absolute; z-index: 24; pointer-events: none; }
+  .connector .stem {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    top: 0; width: 1.5px; height: 100%;
+    background: linear-gradient(180deg, rgba(167,139,250,0.85), rgba(167,139,250,0.25));
+  }
+  .connector .tip {
+    position: absolute; left: 50%; bottom: -4px; transform: translateX(-50%);
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--violet-lift);
+    box-shadow: 0 0 10px 2px rgba(167,139,250,0.85);
+  }
+
+  .callout {
+    position: absolute; z-index: 40;
+    left: 924px; top: 150px; width: 280px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 13px 15px;
+    background:
+      radial-gradient(130% 120% at 12% 0%, rgba(124, 92, 255, 0.14), rgba(124, 92, 255, 0) 60%),
+      linear-gradient(180deg, #171226, #100c1c);
+    border: 1px solid rgba(167, 139, 250, 0.30);
+    border-radius: 14px;
+    box-shadow:
+      0 22px 44px -14px rgba(0, 0, 0, 0.72),
+      0 0 34px -6px rgba(124, 92, 255, 0.24),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+  .callout .ic {
+    width: 34px; height: 34px; border-radius: 10px; flex: 0 0 auto;
+    display: grid; place-items: center;
+    background: rgba(124, 92, 255, 0.16);
+    border: 1px solid rgba(167, 139, 250, 0.32);
+    color: var(--violet-pale);
+  }
+  .callout .ic svg { width: 17px; height: 17px; display: block; }
+  .callout .t1 { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0.005em; }
+  .callout .t2 { font-size: 11.5px; color: var(--muted); margin-top: 2px; letter-spacing: 0.01em; }
+</style>
+</head>
+<body>
+
+  <!-- ambient brand crescent, deep behind everything -->
+  <svg class="ambient" viewBox="0 0 100 100" aria-hidden="true">
+    <defs><linearGradient id="ambGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#6d28d9"/>
+    </linearGradient></defs>
+    <g fill="none" stroke="url(#ambGrad)" stroke-linecap="round">
+      <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15"/>
+      <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92"/>
+    </g>
+  </svg>
+
+  <div class="glow"></div>
+
+  <!-- brand lockup -->
+  <div class="brand">
+    <span class="mark">
+      <span class="disc"></span>
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <defs><linearGradient id="ug1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#bda6ff"/><stop offset="1" stop-color="#7c3aed"/>
+        </linearGradient></defs>
+        <g fill="none" stroke="url(#ug1)" stroke-linecap="round">
+          <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15"/>
+          <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92"/>
+        </g>
+      </svg>
+    </span>
+    <div>
+      <div class="word">Umbra</div>
+      <div class="tag">Browser Control for AI Agents</div>
+    </div>
+  </div>
+
+  <!-- headline -->
+  <h1 class="headline">
+    <span class="l1">Every session owns</span><br />
+    <span class="l2">only the tabs it opened.</span>
+  </h1>
+  <p class="sub">A tab you opened yourself stays <b>invisible to every agent.</b> Each session sees only the group it created, and nothing else in your browser.</p>
+
+  <!-- inset: Umbra sessions panel, listing which session owns which tabs -->
+  <div class="panel">
+    <div class="p-head">
+      <span class="mark">
+        <span class="disc"></span>
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <defs><linearGradient id="ug2" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#bda6ff"/><stop offset="1" stop-color="#7c3aed"/>
+          </linearGradient></defs>
+          <g fill="none" stroke="url(#ug2)" stroke-linecap="round">
+            <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15"/>
+            <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92"/>
+          </g>
+        </svg>
+      </span>
+      <span class="p-title">Active Sessions</span>
+      <span class="p-live"><span class="g"></span>2 connected</span>
+    </div>
+
+    <div class="srow">
+      <div class="line">
+        <span class="sw v"></span>
+        <span class="sid v mono">session a91f0c</span>
+        <span class="owns">owns 3 tabs</span>
+      </div>
+      <div class="tabs">
+        <span class="chip v"><span class="d"></span>Docs</span>
+        <span class="chip v"><span class="d"></span>Dashboard</span>
+        <span class="chip v"><span class="d"></span>app.example.com</span>
+      </div>
+    </div>
+
+    <div class="srow">
+      <div class="line">
+        <span class="sw t"></span>
+        <span class="sid t mono">session 4d2b71</span>
+        <span class="owns">owns 2 tabs</span>
+      </div>
+      <div class="tabs">
+        <span class="chip t"><span class="d"></span>Analytics</span>
+        <span class="chip t"><span class="d"></span>Pricing</span>
+      </div>
+    </div>
+
+    <div class="p-foot">
+      <span class="klock">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><rect x="4.5" y="10" width="15" height="10.5" rx="2.6" fill="currentColor"/></svg>
+      </span>
+      <span class="pf-name">Your personal tab</span>
+      <span class="pf-meta">outside every session</span>
+    </div>
+  </div>
+
+  <!-- Chrome window: focused, two owned groups + one ungrouped personal tab -->
+  <div class="chrome">
+    <div class="cr-tabs">
+      <span class="lights"><i></i><i></i><i></i></span>
+      <div class="strip">
+        <div class="grp v">
+          <span class="glabel v">session a91f0c</span>
+          <div class="cr-tab"><span class="fav"></span></div>
+          <div class="cr-tab"><span class="fav"></span></div>
+          <div class="cr-tab active"><span class="fav"></span><span class="lbl">app.example.com</span></div>
+        </div>
+        <div class="grp t">
+          <span class="glabel t">session 4d2b71</span>
+          <div class="cr-tab"><span class="fav"></span></div>
+          <div class="cr-tab"><span class="fav"></span></div>
+        </div>
+        <span class="boundary"></span>
+        <div class="cr-tab personal">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><rect x="4.5" y="10" width="15" height="10.5" rx="2.6" fill="currentColor"/></svg>
+        </div>
+        <span class="cr-newtab">+</span>
+      </div>
+    </div>
+    <div class="cr-toolbar">
+      <div class="cr-nav"><span>&#8592;</span><span class="dim">&#8594;</span><span>&#8635;</span></div>
+      <div class="omni"><span class="lock"></span><span class="u">app.example.com</span><span class="star"></span></div>
+      <div class="cr-ext">
+        <span class="puzzle"></span>
+        <span class="umbra-pin">
+          <span class="mark">
+            <span class="disc"></span>
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <defs><linearGradient id="ug3" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#bda6ff"/><stop offset="1" stop-color="#7c3aed"/>
+              </linearGradient></defs>
+              <g fill="none" stroke="url(#ug3)" stroke-linecap="round">
+                <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15"/>
+                <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92"/>
+              </g>
+            </svg>
+          </span>
+          <span class="st"></span>
+        </span>
+        <span class="avatar"></span>
+      </div>
+    </div>
+    <div class="page">
+      <div class="side">
+        <div class="logo"><span class="d"></span><span class="n"></span></div>
+        <div class="nav">
+          <div class="it"><span class="ic"></span><span class="tx" style="width:58px"></span></div>
+          <div class="it on"><span class="ic"></span><span class="tx" style="width:46px"></span></div>
+          <div class="it"><span class="ic"></span><span class="tx" style="width:64px"></span></div>
+          <div class="it"><span class="ic"></span><span class="tx" style="width:52px"></span></div>
+          <div class="it"><span class="ic"></span><span class="tx" style="width:60px"></span></div>
+        </div>
+      </div>
+      <div class="main">
+        <div class="top">
+          <span class="h"></span>
+          <span class="chip2"><span class="cal"></span><span class="t"></span></span>
+          <span class="btn"><span class="p">+</span><span class="t"></span></span>
+        </div>
+        <div class="cards">
+          <div class="card"><div class="k"></div><div class="v"></div><div class="spark"></div></div>
+          <div class="card"><div class="k"></div><div class="v violet"></div><div class="spark"></div></div>
+          <div class="card"><div class="k"></div><div class="v"></div><div class="spark"></div></div>
+        </div>
+        <div class="table">
+          <div class="trow head"><span class="c"></span><span class="c s"></span><span class="c xs"></span><span class="c xs"></span></div>
+          <div class="trow"><span class="lead"><span class="av"></span><span class="c s"></span></span><span class="c xs"></span><span class="c xs"></span><span class="c pill ok"></span></div>
+          <div class="trow"><span class="lead"><span class="av"></span><span class="c s"></span></span><span class="c xs"></span><span class="c xs"></span><span class="c pill mut"></span></div>
+          <div class="trow"><span class="lead"><span class="av"></span><span class="c s"></span></span><span class="c xs"></span><span class="c xs"></span><span class="c pill ok"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- connector from callout down to the personal tab -->
+  <div class="connector" style="left:1085px; top:210px; width:30px; height:40px;">
+    <span class="stem"></span>
+    <span class="tip"></span>
+  </div>
+
+  <!-- callout: the ungrouped tab is yours, invisible to agents -->
+  <div class="callout">
+    <span class="ic">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><rect x="4.5" y="10" width="15" height="10.5" rx="2.6" fill="currentColor"/></svg>
+    </span>
+    <span>
+      <div class="t1">Opened by you</div>
+      <div class="t2">Invisible to every agent</div>
+    </span>
+  </div>
+
+  <div class="vignette"></div>
+
+</body>
+</html>

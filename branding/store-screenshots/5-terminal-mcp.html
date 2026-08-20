@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Umbra - MCP-native</title>
+<style>
+  /* ------------------------------------------------------------------
+     Umbra Chrome Web Store screenshot 5 of 5: MCP-native terminal.
+     A large Ghostty terminal (Rose Pine Moon) running a real agent
+     workflow that drives Chrome through the Umbra MCP server, with the
+     paired "Connected" popup floating over the bottom-right corner.
+     Fixed 1280x800, self-contained, system fonts only.
+     ------------------------------------------------------------------ */
+
+  :root {
+    /* Umbra deep space */
+    --bg:        #0a0812;
+    --bg-lift:   #14102a;
+    --void:      #07060e;
+    --disc:      #0d0b1e;
+    --violet:    #7c5cff;
+    --violet-lift:#a78bfa;
+    --violet-pale:#c4b5fd;
+
+    /* Rose Pine Moon terminal */
+    --rp-base:   #232136;
+    --rp-surface:#2a2740;
+    --rp-over:   #393552;
+    --rp-text:   #e0def4;
+    --rp-subtle: #908caa;
+    --rp-muted:  #6e6a86;
+    --rp-iris:   #c4a7e7;
+    --rp-foam:   #9ccfd8;
+    --rp-gold:   #f6c177;
+    --rp-love:   #eb6f92;
+    --rp-pine:   #3e8fb0;
+    --ok:        #8ad6a4;
+
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Inter, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { background: var(--bg); }
+
+  body {
+    width: 1280px;
+    height: 800px;
+    overflow: hidden;
+    margin: 0;
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .stage {
+    position: relative;
+    width: 1280px;
+    height: 800px;
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  /* The eclipse field: violet light bleeding from above and a deep
+     purple pool below, plus a soft spotlight behind the terminal. */
+  .field {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(120% 60% at 16% -8%, rgba(124,92,255,0.22), rgba(124,92,255,0) 60%),
+      radial-gradient(90% 55% at 92% 116%, rgba(76,29,149,0.34), rgba(76,29,149,0) 66%),
+      radial-gradient(60% 60% at 60% 52%, rgba(124,92,255,0.10), rgba(124,92,255,0) 70%),
+      linear-gradient(160deg, #0b0916 0%, #0a0812 46%, #08060f 100%);
+  }
+  /* faint starfield of very small violet motes */
+  .field::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(1.2px 1.2px at 12% 30%, rgba(196,181,253,0.35), transparent 60%),
+      radial-gradient(1px 1px at 78% 18%, rgba(196,181,253,0.30), transparent 60%),
+      radial-gradient(1px 1px at 40% 74%, rgba(196,181,253,0.22), transparent 60%),
+      radial-gradient(1.4px 1.4px at 88% 66%, rgba(167,139,250,0.28), transparent 60%),
+      radial-gradient(1px 1px at 24% 88%, rgba(196,181,253,0.20), transparent 60%);
+  }
+
+  /* ============================ headline ============================ */
+
+  .head {
+    position: absolute;
+    left: 74px;
+    top: 42px;
+    width: 900px;
+    z-index: 4;
+  }
+
+  .brandrow {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    margin-bottom: 20px;
+  }
+  .brandrow .mark {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    display: block;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 20px rgba(124,92,255,0.28);
+  }
+  .brandrow .word {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #efecfb;
+  }
+  .brandrow .sep {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--rp-muted);
+  }
+  .brandrow .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.19em;
+    text-transform: uppercase;
+    color: var(--violet-lift);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 50px;
+    line-height: 1.02;
+    font-weight: 700;
+    letter-spacing: -0.022em;
+    color: #f5f2fe;
+  }
+  h1 .accent {
+    background: linear-gradient(180deg, #c4b5fd 0%, #8b6bff 92%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sub {
+    margin: 14px 0 0;
+    font-size: 22px;
+    line-height: 1.3;
+    font-weight: 400;
+    letter-spacing: -0.006em;
+    color: #a49ecb;
+  }
+  .sub .em { color: #efecfb; font-weight: 500; }
+
+  /* ============================ terminal ============================ */
+
+  .term {
+    position: absolute;
+    left: 72px;
+    top: 192px;
+    width: 1136px;
+    height: 566px;
+    border-radius: 15px;
+    background: var(--rp-base);
+    overflow: hidden;
+    z-index: 2;
+    box-shadow:
+      0 1px 0 0 rgba(255,255,255,0.05) inset,
+      0 0 0 1px rgba(255,255,255,0.045),
+      0 2px 8px rgba(0,0,0,0.4),
+      0 34px 90px rgba(0,0,0,0.62),
+      0 0 120px rgba(124,92,255,0.10);
+  }
+
+  .titlebar {
+    position: relative;
+    height: 46px;
+    display: flex;
+    align-items: center;
+    padding: 0 18px;
+    background: linear-gradient(180deg, #2b2842 0%, #262338 100%);
+    border-bottom: 1px solid rgba(0,0,0,0.35);
+  }
+  .titlebar::after {
+    content: "";
+    position: absolute; left: 0; right: 0; top: 0; height: 1px;
+    background: rgba(255,255,255,0.06);
+  }
+  .lights { display: flex; gap: 9px; }
+  .lights i {
+    width: 13px; height: 13px; border-radius: 50%; display: block;
+    box-shadow: inset 0 1px 1px rgba(255,255,255,0.45), inset 0 -1px 1px rgba(0,0,0,0.28);
+  }
+  .lights .r { background: radial-gradient(circle at 34% 30%, #ff8b84, #ff5f57); }
+  .lights .y { background: radial-gradient(circle at 34% 30%, #ffd479, #febc2e); }
+  .lights .g { background: radial-gradient(circle at 34% 30%, #6be787, #28c840); }
+
+  .tbtitle {
+    position: absolute; left: 0; right: 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.01em;
+    color: #837e9c;
+    pointer-events: none;
+  }
+  .tbtitle .u { color: var(--violet-lift); }
+
+  .body {
+    padding: 30px 38px 26px;
+    font-family: var(--mono);
+    font-size: 15.5px;
+    line-height: 1.5;
+    color: var(--rp-text);
+    font-variant-ligatures: none;
+  }
+
+  .cmt { color: var(--rp-muted); font-style: italic; margin-bottom: 20px; }
+
+  .prompt { display: flex; align-items: center; margin-bottom: 22px; letter-spacing: 0.005em; }
+  .sigil {
+    width: 20px; height: 20px; display: inline-block; margin-right: 11px;
+    filter: drop-shadow(0 0 7px rgba(167,139,250,0.75));
+    flex: 0 0 auto;
+  }
+  .path { color: var(--rp-foam); }
+  .parrow { color: var(--rp-iris); margin: 0 10px 0 12px; font-weight: 600; }
+  .cmd { color: var(--rp-text); }
+  .str { color: var(--rp-gold); }
+
+  .call { margin-bottom: 4px; letter-spacing: 0.005em; }
+  .bullet {
+    color: var(--rp-iris);
+    margin-right: 12px;
+    text-shadow: 0 0 10px rgba(196,167,231,0.7);
+  }
+  .tool { color: var(--rp-foam); font-weight: 600; }
+  .brace { color: var(--rp-muted); }
+  .key { color: var(--rp-iris); }
+  .bool { color: var(--rp-love); }
+
+  .res { margin-left: 32px; margin-bottom: 15px; color: var(--rp-subtle); letter-spacing: 0.005em; }
+  .arrow { color: var(--rp-muted); margin-right: 10px; }
+  .dot { color: var(--rp-muted); margin: 0 7px; }
+  .val { color: var(--rp-foam); }
+  .num { color: var(--rp-gold); font-weight: 700; }
+  .ok  { color: var(--ok); font-weight: 600; }
+
+  .done {
+    margin-top: 21px; margin-bottom: 20px;
+    padding: 9px 15px;
+    display: inline-flex; align-items: center;
+    border-radius: 9px;
+    background: rgba(138,214,164,0.09);
+    box-shadow: inset 0 0 0 1px rgba(138,214,164,0.24);
+    letter-spacing: 0.005em;
+  }
+  .done .soft { color: var(--rp-subtle); }
+
+  .cursor {
+    display: inline-block;
+    width: 9px; height: 20px;
+    background: var(--rp-iris);
+    box-shadow: 0 0 11px rgba(196,167,231,0.65);
+    border-radius: 1.5px;
+    vertical-align: -4px;
+    animation: blink 1.1s steps(1) infinite;
+  }
+  @keyframes blink { 0%,55%{opacity:1} 56%,100%{opacity:0.18} }
+
+  /* ============================ popup inset ============================ */
+
+  .popup {
+    position: absolute;
+    left: 944px;
+    top: 460px;
+    width: 282px;
+    padding: 15px 16px 15px;
+    border-radius: 15px;
+    background: var(--void);
+    color: #ece9f6;
+    font-size: 12.5px;
+    z-index: 6;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.055),
+      0 24px 60px rgba(0,0,0,0.72),
+      0 0 44px rgba(124,92,255,0.14);
+    overflow: hidden;
+  }
+  .popup::before {
+    content: "";
+    position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(120% 52% at 50% -8%, rgba(124,92,255,0.24), rgba(124,92,255,0) 62%),
+      radial-gradient(90% 42% at 50% 108%, rgba(76,29,149,0.30), rgba(76,29,149,0) 72%);
+  }
+  .popup > * { position: relative; z-index: 1; }
+
+  .pop-top { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; }
+  .pop-top img { width: 21px; height: 21px; border-radius: 6px; display: block; }
+  .pop-word { font-size: 13.5px; font-weight: 500; letter-spacing: 0.01em; color: #ece9f6; }
+  .pop-tag {
+    margin-left: auto;
+    font-size: 8.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--violet-pale);
+    padding: 3px 8px 2px; border-radius: 999px;
+    border: 1px solid rgba(167,139,250,0.3);
+    background: rgba(124,92,255,0.13);
+  }
+
+  .pop-hr { height: 1px; background: rgba(255,255,255,0.08); margin: 0 -16px; }
+
+  .pop-status { text-align: center; padding: 15px 0 13px; }
+  .orb { position: relative; width: 62px; height: 62px; margin: 0 auto 12px; }
+  .orb-disc {
+    position: absolute; inset: 0;
+    isolation: isolate; overflow: hidden; border-radius: 50%;
+    background: var(--disc);
+    display: grid; place-items: center;
+    box-shadow:
+      0 0 30px 4px rgba(124,92,255,0.28),
+      0 0 62px 14px rgba(124,92,255,0.10),
+      0 10px 24px rgba(0,0,0,0.55);
+  }
+  .orb-disc img { width: 52px; height: 52px; display: block; mix-blend-mode: lighten; }
+  .orb-ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: conic-gradient(from 225deg,
+      rgba(167,139,250,0) 0deg,
+      rgba(167,139,250,0.08) 46deg,
+      rgba(224,214,255,0.95) 168deg,
+      rgba(124,92,255,0.45) 254deg,
+      rgba(124,92,255,0) 330deg);
+    -webkit-mask: radial-gradient(closest-side circle, transparent calc(100% - 1.3px), #000 calc(100% - 1.3px));
+    mask: radial-gradient(closest-side circle, transparent calc(100% - 1.3px), #000 calc(100% - 1.3px));
+  }
+  .pop-status-text { font-size: 15px; font-weight: 300; letter-spacing: -0.01em; color: #b7b1d0; }
+  .pop-status-text b { font-weight: 600; color: #f2eff9; }
+  .pop-caption { margin-top: 7px; font-size: 10px; letter-spacing: 0.03em; color: #7d779c; }
+  .pop-caption b { color: var(--violet-pale); font-weight: 500; }
+
+  .pop-sessions { list-style: none; margin: 11px 0 2px; padding: 0; }
+  .pop-sessions li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; font-size: 11.5px;
+  }
+  .pop-sessions li + li { border-top: 1px solid rgba(255,255,255,0.05); }
+  .sw { width: 7px; height: 7px; border-radius: 2px; background: var(--violet); box-shadow: 0 0 8px rgba(124,92,255,0.6); flex: 0 0 auto; }
+  .sw.dim { background: #5b4bc4; box-shadow: 0 0 8px rgba(91,75,196,0.45); }
+  .sid { font-family: var(--mono); font-size: 10.5px; color: var(--violet-pale); letter-spacing: 0.02em; }
+  .sname { color: #ece9f6; }
+  .smeta { margin-left: auto; font-family: var(--mono); font-size: 10px; color: #7d779c; }
+
+  .pop-lead { font-size: 9px; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; color: #6d6789; padding-top: 12px; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="field"></div>
+
+    <!-- ---------------- headline ---------------- -->
+    <header class="head">
+      <div class="brandrow">
+        <img class="mark" src="icon128.png" alt="Umbra" />
+        <span class="word">Umbra</span>
+        <span class="sep"></span>
+        <span class="eyebrow">Model Context Protocol</span>
+      </div>
+      <h1><span class="accent">MCP-native.</span></h1>
+      <p class="sub">Your agent, your browser, <span class="em">your rules.</span></p>
+    </header>
+
+    <!-- ---------------- terminal ---------------- -->
+    <section class="term">
+      <div class="titlebar">
+        <span class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></span>
+        <span class="tbtitle">agent <span class="u">&#183;</span> ~/umbra <span class="u">&#183;</span> zsh</span>
+      </div>
+
+      <div class="body">
+        <div class="cmt"># agent drives Chrome via Umbra MCP</div>
+
+        <div class="prompt">
+          <svg class="sigil" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/>
+            </linearGradient></defs>
+            <g fill="none" stroke="url(#sg)" stroke-linecap="round">
+              <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15"/>
+              <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92"/>
+            </g>
+          </svg><span class="path">~/umbra</span><span class="parrow">&#10095;</span><span class="cmd">agent run</span>&nbsp;<span class="str">"open pricing, start the trial"</span>
+        </div>
+
+        <div class="call"><span class="bullet">&#9679;</span><span class="tool">browser_navigate</span>&nbsp;&nbsp;<span class="brace">{</span> <span class="key">url</span><span class="brace">:</span> <span class="str">"app.example.com/pricing"</span> <span class="brace">}</span></div>
+        <div class="res"><span class="arrow">&#8627;</span><span class="ok">200 OK</span><span class="dot">&#183;</span>dom ready in <span class="val">0.8s</span></div>
+
+        <div class="call"><span class="bullet">&#9679;</span><span class="tool">browser_read_page</span>&nbsp;&nbsp;<span class="brace">{ }</span></div>
+        <div class="res"><span class="arrow">&#8627;</span><span class="num">42</span>&nbsp;interactive elements<span class="dot">&#183;</span>a11y tree mapped</div>
+
+        <div class="call"><span class="bullet">&#9679;</span><span class="tool">browser_screenshot</span>&nbsp;&nbsp;<span class="brace">{</span> <span class="key">fullPage</span><span class="brace">:</span> <span class="bool">true</span> <span class="brace">}</span></div>
+        <div class="res"><span class="arrow">&#8627;</span>captured <span class="val">silently</span><span class="dot">&#183;</span>no focus steal</div>
+
+        <div class="call"><span class="bullet">&#9679;</span><span class="tool">browser_click</span>&nbsp;&nbsp;<span class="brace">{</span> <span class="key">ref</span><span class="brace">:</span> <span class="str">"ref_12"</span> <span class="brace">}</span></div>
+        <div class="res"><span class="arrow">&#8627;</span><span class="str">"Start free trial"</span> clicked<span class="dot">&#183;</span>nav settled</div>
+
+        <div class="done"><span class="ok">&#10003; done</span><span class="dot">&#183;</span>4 tool calls<span class="dot">&#183;</span><span class="soft">your browser, never touched by hand</span></div>
+
+        <div class="prompt" style="margin-bottom:0">
+          <svg class="sigil" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <g fill="none" stroke="url(#sg)" stroke-linecap="round">
+              <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74" stroke-width="15"/>
+              <path d="M30 22 C30 46 33 62 44 72" stroke-width="9" opacity="0.92"/>
+            </g>
+          </svg><span class="path">~/umbra</span><span class="parrow">&#10095;</span><span class="cursor"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------- connected popup ---------------- -->
+    <aside class="popup">
+      <div class="pop-top">
+        <img src="icon128.png" alt="" />
+        <span class="pop-word">Umbra</span>
+        <span class="pop-tag">Paired</span>
+      </div>
+      <div class="pop-hr"></div>
+
+      <div class="pop-status">
+        <div class="orb">
+          <span class="orb-disc"><img src="icon128.png" alt="Umbra" /></span>
+          <span class="orb-ring"></span>
+        </div>
+        <div class="pop-status-text"><b>Connected</b> to 2 local sessions.</div>
+        <div class="pop-caption">loopback 127.0.0.1 <span class="dot">&#183;</span> port <b>47821</b></div>
+      </div>
+      <div class="pop-hr"></div>
+
+      <ul class="pop-sessions">
+        <li><span class="sw"></span><span class="sid">a91f4c</span><span class="sname">Report Export</span><span class="smeta">3 tabs</span></li>
+        <li><span class="sw dim"></span><span class="sid">7d2b05</span><span class="sname">SERP Sweep</span><span class="smeta">2 tabs</span></li>
+      </ul>
+    </aside>
+  </div>
+</body>
+</html>
