@@ -83,7 +83,16 @@ const IDENTITY_PATTERNS = [
 // port, and the rest are image generators whose provenance metadata rides in
 // artwork. "cursor" is not on this list on purpose, because it is a CSS
 // property that appears legitimately in the options and popup stylesheets.
+//
+// The SEO vendor needle is assembled from fragments for the same reason the
+// identity needles are: written out it would be an occurrence of exactly the
+// name this gate exists to keep out of shipped bytes, so the gate would fail on
+// its own source. That vendor's page automation lives only in the optional
+// local plugins, which never ship.
+const SEO_VENDOR = ['ah', 'refs'].join('');
+
 const PRODUCT_NAME_PATTERNS = [
+  new RegExp(SEO_VENDOR, 'i'),
   /codex/i,
   /openai/i,
   /chatgpt/i,
@@ -105,7 +114,7 @@ const PRODUCT_NAME_PATTERNS = [
 // The store listing description is read before anything else, so it carries a
 // stricter bar than the rest of the package: no product name at all, including
 // the SEO tools whose page automation the extension can drive.
-const TRADEMARK_PATTERNS = [...PRODUCT_NAME_PATTERNS, /ahrefs/i, /semrush/i, /moz\b/i];
+const TRADEMARK_PATTERNS = [...PRODUCT_NAME_PATTERNS, /semrush/i, /moz\b/i];
 
 // Compiling a string into code. Chrome Web Store scanners flag these on
 // presence, and the manifest declares script-src 'self', so any hit here is

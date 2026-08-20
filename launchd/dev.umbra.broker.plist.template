@@ -14,7 +14,7 @@
   job whose StandardOutPath or StandardErrorPath directory does not exist, and
   it reports that as a generic spawn failure rather than a missing directory.
 
-  Also confirm __HOME__/.umbra/bin/umbra-rust-broker exists and is executable.
+  Also confirm __HOME__/.umbra/bin/Umbra Helper exists and is executable.
   Build it with `cargo build --release --manifest-path rust-broker/Cargo.toml`
   and copy rust-broker/target/release/umbra-rust-broker to that path. Point
   ProgramArguments straight at the build output instead if you would rather not
@@ -35,7 +35,7 @@
   <string>dev.umbra.broker</string>
   <key>ProgramArguments</key>
   <array>
-    <string>__HOME__/.umbra/bin/umbra-rust-broker</string>
+    <string>__HOME__/.umbra/bin/Umbra Helper</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__HOME__/.umbra</string>

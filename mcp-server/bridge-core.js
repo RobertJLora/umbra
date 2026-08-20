@@ -81,7 +81,7 @@ export class LocalBridgeServer {
     portEnd,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     bindTimeoutMs = DEFAULT_BIND_TIMEOUT_MS,
-    runAhrefsExport = null,
+    pluginHandlers = null,
   }) {
     this.sharedKey = sharedKey;
     this.sessionId = sessionId;
@@ -95,12 +95,13 @@ export class LocalBridgeServer {
     this.websocketServer = null;
     this.port = null;
 
-    // The Ahrefs orchestration is a local-only plugin: the published npm package
-    // omits ahrefs-export.js through its files allowlist. Taking the runner as a
-    // constructor argument keeps that module out of this file's static import
-    // graph, so the published package loads with the file absent.
-    this.runAhrefsExport = typeof runAhrefsExport === 'function' ? runAhrefsExport : null;
-    this.ahrefsExportLoad = null;
+    // Handlers for tools an optional local plugin contributed, answered in this
+    // process instead of being forwarded to the extension. They arrive as a
+    // constructor argument so no plugin module enters this file's import graph
+    // and a build with no plugins folder loads unchanged.
+    this.pluginHandlers = new Map(
+      Object.entries(pluginHandlers || {}).filter(([, handler]) => typeof handler === 'function'),
+    );
 
     this.registry.on('connected', (status) => {
       console.error(
@@ -392,8 +393,12 @@ export class LocalBridgeServer {
     if (tool === 'browser_wait_for_download') {
       return await this.waitForDownload(params);
     }
-    if (tool === 'browser_export_ahrefs') {
-      return await this.exportAhrefs(params);
+    const pluginHandler = this.pluginHandlers.get(tool);
+    if (pluginHandler) {
+      return await pluginHandler(
+        (childTool, childParams) => this.sendCommand(childTool, childParams),
+        params,
+      );
     }
 
     return await this.sendExtensionCommand(tool, params);
@@ -706,34 +711,6 @@ export class LocalBridgeServer {
       extension: params.extension || '',
       nameIncludes,
     });
-  }
-
-  // Returns the Ahrefs export runner, or null when this build has no plugin.
-  // The injected runner wins. Without one, the module is resolved lazily and at
-  // most once, so a checkout that still carries ahrefs-export.js keeps the tool
-  // working while a published package that omits the file resolves to null and
-  // reports it plainly instead of failing to load.
-  async resolveAhrefsExport() {
-    if (this.runAhrefsExport) {
-      return this.runAhrefsExport;
-    }
-    if (!this.ahrefsExportLoad) {
-      this.ahrefsExportLoad = import('./ahrefs-export.js')
-        .then((module) => (typeof module.runAhrefsExport === 'function' ? module.runAhrefsExport : null))
-        .catch(() => null);
-    }
-    this.runAhrefsExport = await this.ahrefsExportLoad;
-    return this.runAhrefsExport;
-  }
-
-  async exportAhrefs(params = {}) {
-    const runExport = await this.resolveAhrefsExport();
-    if (!runExport) {
-      throw new Error(
-        'Ahrefs export plugin is not installed in this build. browser_export_ahrefs needs ahrefs-export.js, which ships only with a full checkout.',
-      );
-    }
-    return await runExport((tool, toolParams) => this.sendCommand(tool, toolParams), params);
   }
 
 }

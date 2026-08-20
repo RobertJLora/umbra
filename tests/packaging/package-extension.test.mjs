@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
+import { SEO_VENDOR, SEO_VENDOR_RE } from '../identity-needles.mjs';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -174,11 +175,20 @@ test('the allowlist covers every script the extension loads at runtime', () => {
     );
   }
 
-  // The recipe path has to be genuinely referenced, otherwise this test would
-  // pass on a tree where the carve-out was reverted into the allowlist.
-  assert.ok(
-    local.some((value) => value.startsWith('recipes/')),
-    'no recipes/ file is referenced, so the local-only carve-out is not being exercised',
+  // The recipe path is built at runtime from the action name rather than
+  // written as a literal, which is what keeps the worker from naming any site
+  // it can automate. Assert the mechanism is still there, otherwise this file
+  // would pass on a tree that reverted to a hardcoded recipe map.
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  assert.match(
+    background,
+    /recipes\/\$\{namespace\}-actions\.js/,
+    'background.js should compute the recipe path from the action namespace',
+  );
+  assert.equal(
+    /['"]recipes\/[\w.-]+\.js['"]/.test(background),
+    false,
+    'background.js should name no individual recipe file',
   );
 });
 
@@ -355,14 +365,28 @@ test('a manifest that demands site access at install time fails', () => {
   assert.match(check.failures.join(' '), /host_permissions is non-empty/);
 });
 
-test('a trademark in the store description fails', () => {
+test('a third-party product name in the store description fails', () => {
+  // Built from a fragment, not written out: the literal is exactly what the
+  // gate scans shipped bytes for, and this file is one of them.
+  const description = `Drive Chrome from the shadow. ${SEO_VENDOR} exports, owned tabs.`;
   const report = verifyPackage({
-    entries: cleanEntries({ manifest: { description: 'Drive Chrome from the shadow. Ahrefs exports, owned tabs.' } }),
+    entries: cleanEntries({ manifest: { description } }),
     zipSize: 90_000,
   });
   const check = checkNamed(report, 'the manifest is store-ready');
   assert.equal(check.ok, false);
-  assert.match(check.failures.join(' '), /Ahrefs/i);
+  assert.match(check.failures.join(' '), SEO_VENDOR_RE);
+});
+
+test('a third-party product name anywhere in a shipped file fails', () => {
+  const entries = cleanEntries({
+    replace: [{ name: 'background.js', data: Buffer.from(`const recipe = 'recipes/${SEO_VENDOR}-actions.js';\n`, 'utf8') }],
+  });
+
+  const report = verifyPackage({ entries, zipSize: 90_000 });
+  const check = checkNamed(report, 'no third-party product name in any shipped byte');
+  assert.equal(check.ok, false);
+  assert.match(check.failures.join(' '), SEO_VENDOR_RE);
 });
 
 test('readPngChunkTypes reads the chunks a stripped icon keeps', () => {

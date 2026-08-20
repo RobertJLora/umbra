@@ -2777,32 +2777,52 @@ function toBridgeSafeValue(value, options = {}) {
   return convert(value, 0);
 }
 
-// Page actions whose implementation lives outside background.js, keyed by the
-// prefix of the action name. runPageAction is stringified into the tab by
-// chrome.scripting.executeScript, so its free identifiers resolve in the
-// injected world rather than in the service worker: the recipe has to be a file
-// injected into that same world, which is the default ISOLATED one, and cannot
-// be a module import.
-const PAGE_RECIPE_FILES = {
-  ahrefs: 'recipes/ahrefs-actions.js',
-};
+// Page actions runPageAction implements itself. Everything else is a page
+// recipe: an optional local file this build may or may not carry.
+const BUILTIN_PAGE_ACTIONS = new Set([
+  'render_wait',
+  'element_positions',
+  'inspect_controls',
+  'click_control',
+  'limit_table_rows',
+  'scroll_selector',
+  'restore_table_rows',
+  'wait_for_text',
+]);
+
+// A page action that is not built in is namespaced: the part of its name before
+// the first underscore names a recipe file at recipes/<namespace>-actions.js.
+// Nothing here lists the namespaces, so a build carries exactly the recipes its
+// recipes/ folder holds and no file names any of them.
+//
+// runPageAction is stringified into the tab by chrome.scripting.executeScript,
+// so its free identifiers resolve in the injected world rather than in the
+// service worker: a recipe has to be a file injected into that same world,
+// which is the default ISOLATED one, and cannot be a module import.
+function pageRecipeNamespace(action) {
+  const name = String(action || '');
+  if (!name || BUILTIN_PAGE_ACTIONS.has(name)) {
+    return '';
+  }
+  const [namespace = ''] = name.split('_');
+  return /^[a-z0-9]+$/.test(namespace) ? namespace : '';
+}
 
 async function ensurePageRecipe(tabId, action) {
-  const [namespace = ''] = String(action || '').split('_');
-  const file = Object.prototype.hasOwnProperty.call(PAGE_RECIPE_FILES, namespace)
-    ? PAGE_RECIPE_FILES[namespace]
-    : '';
-  if (!file) {
+  const namespace = pageRecipeNamespace(action);
+  if (!namespace) {
     return { namespace: '', installed: false };
   }
+  const file = `recipes/${namespace}-actions.js`;
 
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: [file] });
     return { namespace, installed: true };
   } catch (error) {
-    // The packaged public extension ships without recipe files. Reporting here
-    // would bury the reason, so the action runs and runPageAction names the
-    // missing recipe with the one error a caller can act on.
+    // A build without that recipe file is the normal case, not an anomaly.
+    // Reporting here would bury the reason, so the action runs and
+    // runPageAction names the missing recipe with the one error a caller can
+    // act on.
     return { namespace, installed: false, reason: error?.message || 'recipe_injection_failed' };
   }
 }
@@ -3036,19 +3056,22 @@ async function runPageAction(action, params = {}, options = {}) {
       return { found: false, elapsedMs: waitLimit, text: needle };
     }
 
-    // Ahrefs page automation lives in extension/recipes/ahrefs-actions.js, which
-    // background.js injects into this world before calling runPageAction. The
-    // packaged public extension ships without that file, so this reports what is
-    // missing instead of throwing an unresolved-identifier error.
-    if (typeof action === 'string' && action.startsWith('ahrefs_')) {
-      const recipe = globalThis.__umbraPageRecipes?.ahrefs?.[action];
+    // Anything else is a page recipe: an optional local file background.js
+    // injects into this world before calling runPageAction, registered under
+    // the namespace its action name starts with. A build without that file
+    // reports what is missing instead of throwing an unresolved-identifier
+    // error.
+    const namespace = typeof action === 'string' ? action.split('_')[0] : '';
+    const installed = namespace ? globalThis.__umbraPageRecipes?.[namespace] : null;
+    if (installed) {
+      const recipe = installed[action];
       if (typeof recipe !== 'function') {
-        throw new Error(`Page recipe not installed in this build: ${action}. Load Umbra unpacked from a checkout that includes extension/recipes/ahrefs-actions.js to use it.`);
+        throw new Error(`Unsupported page action: ${action}`);
       }
       return await recipe(params);
     }
 
-    throw new Error(`Unsupported page action: ${action}`);
+    throw new Error(`Page recipe not installed in this build: ${action}.`);
   })();
 
   const timeout = new Promise((_, reject) => {

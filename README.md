@@ -31,7 +31,7 @@ npm test
 
 Load `extension/` unpacked at `chrome://extensions` with Developer mode on, open the extension options page, click Generate Key, then click Copy Environment Line and paste that line into your MCP client config. Restart the client and the tools appear. Click Grant Site Access on the same page before the first page read, because Umbra requests no site access at install time.
 
-Without a checkout, `npx -y @umbra-mcp/server pair` generates the key, writes it to `~/.umbra/shared-key`, and prints the client config block. That published package leaves out the optional Ahrefs export plugin.
+Without a checkout, `npx -y @umbra-mcp/server pair` generates the key, writes it to `~/.umbra/shared-key`, and prints the client config block. That published package carries no optional local plugins.
 
 ## Tool surface
 
@@ -56,7 +56,7 @@ Without a checkout, `npx -y @umbra-mcp/server pair` generates the key, writes it
 **Escape hatches**
 `browser_javascript`, `browser_run_page_action`, `browser_wait_for_download`, `browser_reload_extension`
 
-`browser_export_ahrefs` is an optional local plugin rather than part of the published package. It appears in the tool list only when `mcp-server/ahrefs-export.js` and `extension/recipes/ahrefs-actions.js` are both present in the checkout you run. Everything else above ships in every build.
+The list above is the whole surface of every published build. A checkout can carry optional local page-recipe plugins, which are not part of any published build: a module in `mcp-server/plugins/` paired with a page recipe in `extension/recipes/`. Both folders are untracked and unpublished, and a plugin adds its own tools and its own `browser_run_page_action` values to the list only in the install that holds it.
 
 Notes worth knowing before you call these:
 

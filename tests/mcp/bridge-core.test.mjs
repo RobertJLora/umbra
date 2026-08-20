@@ -80,12 +80,16 @@ test('bridge exposes listener health without needing a WebSocket bind', () => {
   assert.match(source, /channel: status\.channel/);
 });
 
-test('bridge source carries no home directory default and no static Ahrefs import', () => {
+test('bridge source carries no home directory default and imports no local plugin', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'mcp-server', 'bridge-core.js'), 'utf8');
 
   assert.doesNotMatch(source, /\/Users\//);
   assert.match(source, /resolveDownloadDir/);
-  assert.doesNotMatch(source, /^import[^\n]*'\.\/ahrefs-export\.js'/m);
+  // Plugin handlers arrive through the constructor. A static or dynamic import
+  // of a plugin module would put a local-only file in the published package's
+  // import graph, where it does not exist.
+  assert.doesNotMatch(source, /['"]\.\/plugins\//);
+  assert.doesNotMatch(source, /import\(/);
 });
 
 test('legacy bridge handshake still advertises protocol v1', async () => {
@@ -116,29 +120,36 @@ test('an authenticated ping is answered with a pong', async () => {
   assert.equal(socket.closed, null);
 });
 
-test('exportAhrefs runs the injected plugin and names it plainly when it is missing', async () => {
+test('a plugin handler answers its own tool and gets a sendCommand back into the bridge', async () => {
   const seen = [];
-  const withPlugin = newBridge('sess_ahrefs_injected', {
-    runAhrefsExport: async (sendCommand, params) => {
-      seen.push({ hasSendCommand: typeof sendCommand === 'function', params });
-      return { ok: true, rowCount: 3 };
+  const withPlugin = newBridge('sess_plugin_installed', {
+    pluginHandlers: {
+      browser_export_vendor: async (sendCommand, params) => {
+        seen.push({ hasSendCommand: typeof sendCommand === 'function', params });
+        return { ok: true, rowCount: 3 };
+      },
+      notAFunction: 'ignored',
     },
   });
 
-  assert.deepEqual(await withPlugin.exportAhrefs({ report: 'organic-keywords' }), {
+  assert.deepEqual(await withPlugin.sendCommand('browser_export_vendor', { report: 'organic-keywords' }), {
     ok: true,
     rowCount: 3,
   });
   assert.deepEqual(seen, [{ hasSendCommand: true, params: { report: 'organic-keywords' } }]);
+  assert.equal(withPlugin.pluginHandlers.has('notAFunction'), false);
+});
 
-  const withoutPlugin = newBridge('sess_ahrefs_absent');
-  // Stands in for a published package whose files allowlist omits
-  // ahrefs-export.js, where the lazy import resolves to nothing.
-  withoutPlugin.ahrefsExportLoad = Promise.resolve(null);
+test('a build with no plugins forwards an unknown tool to the extension instead of guessing', async () => {
+  // Stands in for a published package, which has no plugins folder at all. The
+  // tool is never advertised there, so nothing routes it locally and the call
+  // takes the ordinary extension path, which is disconnected in this test.
+  const withoutPlugins = newBridge('sess_no_plugins');
+  assert.equal(withoutPlugins.pluginHandlers.size, 0);
 
   await assert.rejects(
-    withoutPlugin.exportAhrefs({}),
-    /Ahrefs export plugin is not installed in this build/,
+    withoutPlugins.sendCommand('browser_export_vendor', {}),
+    /extension/i,
   );
 });
 

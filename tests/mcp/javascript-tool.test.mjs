@@ -78,12 +78,12 @@ describe('browser_javascript tool', () => {
 
   it('blocks cookie headers, Set-Cookie, and long query-string secrets', () => {
     assert.equal(looksLikeSensitiveResult('ok'), false);
-    assert.equal(looksLikeSensitiveResult({ title: 'Ahrefs' }), false);
+    assert.equal(looksLikeSensitiveResult({ title: 'Dashboard' }), false);
     assert.equal(looksLikeSensitiveResult('Set-Cookie: sid=abc'), true);
     assert.equal(looksLikeSensitiveResult('cookie: session=abc'), true);
     assert.equal(looksLikeSensitiveResult('https://cdn.example.com/img.webp?url=abcdefghijklmnopqrstuvwxyz'), true);
     assert.equal(
-      looksLikeSensitiveResult('https://app.ahrefs.com/site-explorer/organic-keywords?hiddenColumns=AIContentLevel%7C%7CPageType%7C%7CStatus%7C%7CValue&country=us'),
+      looksLikeSensitiveResult('https://app.example.com/site-explorer/organic-keywords?hiddenColumns=AIContentLevel%7C%7CPageType%7C%7CStatus%7C%7CValue&country=us'),
       false,
     );
     assert.equal(

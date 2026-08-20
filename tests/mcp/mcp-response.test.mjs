@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -9,10 +10,10 @@ import {
   buildMcpResponse,
   compileSchemaValidator,
   createSchemaValidators,
-  loadAhrefsPlugin,
   resolveOutputPath,
   resolveToolDefinitions,
 } from '../../mcp-server/index.js';
+import { loadPlugins } from '../../mcp-server/plugins-loader.mjs';
 import { TOOL_DEFINITIONS } from '../../mcp-server/tools.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -153,27 +154,61 @@ describe('module resolution', () => {
   });
 });
 
-describe('optional Ahrefs plugin', () => {
-  it('resolves the plugin from this checkout', async () => {
-    const plugin = await loadAhrefsPlugin();
-    assert.equal(typeof plugin?.runAhrefsExport, 'function');
+describe('optional local plugins', () => {
+  it('loads nothing when the plugins folder does not exist', async () => {
+    const plugins = await loadPlugins({ dir: path.join(os.tmpdir(), 'umbra-no-such-plugin-dir') });
+    assert.deepEqual(plugins.toolDefinitions, []);
+    assert.deepEqual(plugins.pageActions, []);
+    assert.deepEqual(plugins.handlers, {});
+    assert.deepEqual(plugins.modules, []);
   });
 
-  it('returns null when the plugin file is absent from the package', async () => {
-    const plugin = await loadAhrefsPlugin('./ahrefs-export-not-in-this-package.js');
-    assert.equal(plugin, null);
-  });
-
-  it('lists browser_export_ahrefs only when the plugin loaded', () => {
-    const withPlugin = resolveToolDefinitions({ ahrefs: true }).map((tool) => tool.name);
-    const withoutPlugin = resolveToolDefinitions({ ahrefs: false }).map((tool) => tool.name);
-
-    assert.ok(withPlugin.includes('browser_export_ahrefs'));
-    assert.equal(withoutPlugin.includes('browser_export_ahrefs'), false);
-    assert.deepEqual(
-      withPlugin.filter((name) => name !== 'browser_export_ahrefs'),
-      withoutPlugin,
+  it('registers a plugin tool, its page actions, and its handler', async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'umbra-plugin-'));
+    await fsp.writeFile(
+      path.join(dir, 'sample.plugin.mjs'),
+      [
+        "export const toolDefinitions = [{ name: 'browser_export_vendor', description: 'x', inputSchema: { type: 'object', properties: {} } }];",
+        "export const pageActions = ['vendor_open_export'];",
+        "export const mcpLocalToolNames = ['browser_export_vendor'];",
+        'export const handlers = { browser_export_vendor: async () => ({ ok: true }) };',
+        '',
+      ].join('\n'),
+      'utf8',
     );
+
+    const plugins = await loadPlugins({ dir });
+    assert.deepEqual(plugins.toolDefinitions.map((tool) => tool.name), ['browser_export_vendor']);
+    assert.deepEqual(plugins.mcpLocalToolNames, ['browser_export_vendor']);
+    assert.equal(typeof plugins.handlers.browser_export_vendor, 'function');
+
+    const withPlugin = resolveToolDefinitions({ plugins }).map((tool) => tool.name);
+    const withoutPlugin = resolveToolDefinitions().map((tool) => tool.name);
+    assert.ok(withPlugin.includes('browser_export_vendor'));
+    assert.equal(withoutPlugin.includes('browser_export_vendor'), false);
+    assert.deepEqual(withPlugin.filter((name) => name !== 'browser_export_vendor'), withoutPlugin);
+
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it('skips a plugin that reports itself unavailable', async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'umbra-plugin-'));
+    await fsp.writeFile(
+      path.join(dir, 'unavailable.plugin.mjs'),
+      [
+        "export function isAvailable() { return { ok: false, reason: 'no download directory' }; }",
+        "export const toolDefinitions = [{ name: 'browser_export_vendor', description: 'x', inputSchema: { type: 'object', properties: {} } }];",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const messages = [];
+    const plugins = await loadPlugins({ dir, log: (message) => messages.push(message) });
+    assert.deepEqual(plugins.toolDefinitions, []);
+    assert.match(messages.join(' '), /no download directory/);
+
+    await fsp.rm(dir, { recursive: true, force: true });
   });
 });
 

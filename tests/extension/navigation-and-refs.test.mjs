@@ -10,7 +10,6 @@ import { AUTHOR_NAME_RE, AUTHOR_SURNAME_RE, HOME_PATH_RE } from '../identity-nee
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 const background = fs.readFileSync(path.join(repoRoot, 'extension', 'background.js'), 'utf8');
-const recipePath = path.join(repoRoot, 'extension', 'recipes', 'ahrefs-actions.js');
 
 function functionBlock(source, header, nextHeader) {
   const start = source.indexOf(header);
@@ -219,72 +218,48 @@ describe('navigation waits, ref resolution, and page recipes', () => {
     assert.match(block, /version: agent\.version \|\| ''/);
   });
 
-  it('dispatches ahrefs page actions through an injected recipe', () => {
-    // Roughly 720 lines of Ahrefs-only DOM automation lived inside
-    // runPageAction. The public package omits the recipe file, so the dispatch
-    // has to name what is missing rather than fail on an unresolved identifier.
+  it('dispatches namespaced page actions through an injected recipe it does not name', () => {
+    // Site-specific DOM automation used to live inside runPageAction. It moved
+    // behind a seam so a build can ship without it, and the seam names no site:
+    // the namespace comes from the action name, so background.js carries no
+    // list of the recipes a checkout might install.
     const runner = functionBlock(background, 'async function runPageAction', 'function getTechnicalSnapshot');
-    assert.match(runner, /globalThis\.__umbraPageRecipes\?\.ahrefs\?\.\[action\]/);
+    assert.match(runner, /globalThis\.__umbraPageRecipes\?\.\[namespace\]/);
     assert.match(runner, /Page recipe not installed in this build/);
     assert.doesNotMatch(runner, /const fireReact =/);
     assert.doesNotMatch(runner, /openTableExport/);
     assert.doesNotMatch(runner, /collectModalState/);
 
-    // wait_for_text is not Ahrefs-only and stays inline.
+    // wait_for_text is not site-specific and stays inline.
     assert.match(runner, /if \(action === 'wait_for_text'\)/);
 
-    assert.match(background, /ahrefs: 'recipes\/ahrefs-actions\.js'/);
     assert.match(background, /await ensurePageRecipe\(tab\.id, params\.action\)/);
     const ensure = functionBlock(background, 'async function ensurePageRecipe', 'async function runPageAction');
+    assert.match(ensure, /recipes\/\$\{namespace\}-actions\.js/);
     assert.match(ensure, /chrome\.scripting\.executeScript\(\{ target: \{ tabId \}, files: \[file\] \}\)/);
-
-    const recipe = fs.readFileSync(recipePath, 'utf8');
-    assert.match(recipe, /globalThis\.__umbraPageRecipes = \{ \.\.\.\(existing \|\| \{\}\), ahrefs \}/);
-    for (const action of [
-      'ahrefs_open_table_export',
-      'ahrefs_modal_state',
-      'ahrefs_submit_export',
-      'ahrefs_select_sheets',
-      'ahrefs_unhide_columns',
-      'ahrefs_include_top10',
-      'ahrefs_update_if_empty',
-      'ahrefs_paste_keywords',
-      'ahrefs_export_position_history',
-      'ahrefs_export_csv',
-    ]) {
-      assert.match(recipe, new RegExp(`\\b${action}\\(`), `${action} should be a recipe entry`);
-    }
-
-    // Re-injection is normal, once per page action, so the recipe guards on its
-    // own version rather than rebuilding on a page that already has it.
-    assert.match(recipe, /if \(existing\?\.ahrefs\?\.version === RECIPE_VERSION\)/);
   });
 
-  it('installs the ahrefs recipe on a page that has no DOM available yet', () => {
-    // The recipe is injected as a classic script, so loading it must touch
-    // nothing but globalThis. Any DOM access at load time would throw in a tab
-    // that is still committing a navigation.
-    const context = vm.createContext({ setTimeout });
-    const source = fs.readFileSync(recipePath, 'utf8');
-    vm.runInContext(source, context);
+  it('derives the recipe namespace from the action name and leaves built-ins alone', () => {
+    // pageRecipeNamespace is the whole reason no recipe has to be listed. Run
+    // the real function rather than matching its source, so a rewrite that
+    // reintroduces a hardcoded list still has to keep this behavior.
+    const block = functionBlock(background, 'const BUILTIN_PAGE_ACTIONS', 'async function ensurePageRecipe');
+    const context = vm.createContext({});
+    vm.runInContext(`${block}\nglobalThis.pageRecipeNamespace = pageRecipeNamespace;`, context);
+    const namespaceFor = vm.runInContext('pageRecipeNamespace', context);
 
-    const recipes = vm.runInContext('globalThis.__umbraPageRecipes', context);
-    assert.ok(recipes?.ahrefs, 'the recipe should register under __umbraPageRecipes.ahrefs');
-    assert.equal(typeof recipes.ahrefs.ahrefs_export_csv, 'function');
-    assert.equal(typeof recipes.ahrefs.ahrefs_paste_keywords, 'function');
-    assert.equal(typeof recipes.ahrefs.ahrefs_modal_state, 'function');
+    assert.equal(namespaceFor('wait_for_text'), '', 'a built-in action needs no recipe file');
+    assert.equal(namespaceFor('limit_table_rows'), '');
+    assert.equal(namespaceFor('vendor_open_export'), 'vendor');
+    assert.equal(namespaceFor('vendor_export_csv'), 'vendor');
+    assert.equal(namespaceFor(''), '');
+    assert.equal(namespaceFor('../escape_attempt'), '', 'a namespace that is not plain lowercase is refused');
+  });
 
-    // Every dispatch name the extension can be asked for has an entry, and the
-    // enum in mcp-server/tools.js still advertises all ten.
-    const dispatchNames = Object.keys(recipes.ahrefs).filter((key) => key.startsWith('ahrefs_'));
-    assert.equal(dispatchNames.length, 10);
-
-    // A second injection keeps the same object rather than rebuilding it, and
-    // it must not drop a recipe namespace another file registered.
-    vm.runInContext('globalThis.__umbraPageRecipes.other = { marker: true };', context);
-    vm.runInContext(source, context);
-    const reloaded = vm.runInContext('globalThis.__umbraPageRecipes', context);
-    assert.equal(reloaded.ahrefs, recipes.ahrefs);
-    assert.equal(reloaded.other.marker, true);
+  it('carries no page recipe of its own in the tracked tree', () => {
+    // extension/recipes/ is local-only and gitignored. A build with nothing in
+    // it is the public build, and it has to be the normal case rather than a
+    // broken one.
+    assert.doesNotMatch(background, /recipes\/[a-z0-9]+-actions\.js['"]/);
   });
 });

@@ -60,7 +60,7 @@ export class RustBrokerClient extends EventEmitter {
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     connectDeadlineMs = positiveNumber(process.env.UMBRA_BROKER_CONNECT_TIMEOUT_MS) || DEFAULT_CONNECT_DEADLINE_MS,
     socketFactory = null,
-    runAhrefsExport = null,
+    pluginHandlers = null,
   } = {}) {
     super();
     if (!sessionId) {
@@ -71,8 +71,12 @@ export class RustBrokerClient extends EventEmitter {
     this.requestTimeoutMs = requestTimeoutMs;
     this.connectDeadlineMs = connectDeadlineMs;
     this.socketFactory = socketFactory;
-    this.runAhrefsExport = typeof runAhrefsExport === 'function' ? runAhrefsExport : null;
-    this.ahrefsExportLoad = null;
+    // Tools an optional local plugin contributed, answered here rather than
+    // forwarded to the extension. Passed in so no plugin module enters this
+    // file's import graph.
+    this.pluginHandlers = new Map(
+      Object.entries(pluginHandlers || {}).filter(([, handler]) => typeof handler === 'function'),
+    );
     this.socket = null;
     this.chunks = [];
     this.pending = new Map();
@@ -245,8 +249,12 @@ export class RustBrokerClient extends EventEmitter {
     if (tool === 'browser_wait_for_download') {
       return await this.waitForDownload(params);
     }
-    if (tool === 'browser_export_ahrefs') {
-      return await this.exportAhrefs(params);
+    const pluginHandler = this.pluginHandlers.get(tool);
+    if (pluginHandler) {
+      return await pluginHandler(
+        (childTool, childParams) => this.sendCommand(childTool, childParams),
+        params,
+      );
     }
     return await this.sendExtensionCommand(tool, params);
   }
@@ -625,27 +633,4 @@ export class RustBrokerClient extends EventEmitter {
     });
   }
 
-  // The Ahrefs orchestration is a local-only plugin: the published package
-  // omits ahrefs-export.js, so it is resolved lazily and its absence has to
-  // read as a clear message rather than a module-resolution crash at import
-  // time. A checkout that has the file behaves exactly as before.
-  async loadAhrefsExporter() {
-    if (this.runAhrefsExport) {
-      return this.runAhrefsExport;
-    }
-    if (!this.ahrefsExportLoad) {
-      this.ahrefsExportLoad = import('./ahrefs-export.js')
-        .then((module) => (typeof module.runAhrefsExport === 'function' ? module.runAhrefsExport : null))
-        .catch(() => null);
-    }
-    return await this.ahrefsExportLoad;
-  }
-
-  async exportAhrefs(params = {}) {
-    const runExport = await this.loadAhrefsExporter();
-    if (typeof runExport !== 'function') {
-      throw new Error('Ahrefs export plugin is not installed in this build.');
-    }
-    return await runExport((tool, toolParams) => this.sendCommand(tool, toolParams), params);
-  }
 }

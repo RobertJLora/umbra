@@ -87,17 +87,11 @@ describe('CiC MCP tool contract', () => {
       'scroll_selector',
       'restore_table_rows',
       'wait_for_text',
-      'ahrefs_open_table_export',
-      'ahrefs_modal_state',
-      'ahrefs_submit_export',
-      'ahrefs_select_sheets',
-      'ahrefs_unhide_columns',
-      'ahrefs_include_top10',
-      'ahrefs_update_if_empty',
-      'ahrefs_paste_keywords',
-      'ahrefs_export_csv',
-      'ahrefs_export_position_history',
     ]);
+    // These are the actions runPageAction in extension/background.js
+    // implements itself. Anything else is a page recipe an optional local
+    // plugin contributes, and it reaches this enum only when that plugin is
+    // installed, so the published contract is exactly the list above.
     assert.equal(schema.properties.params.type, 'object');
     assert.equal(schema.properties.timeoutMs.type, 'number');
     assert.match(getToolDefinition('browser_run_page_action').description, /session-owned tab/);
@@ -238,7 +232,7 @@ describe('CiC MCP tool contract', () => {
     assert.equal(schemaFor('browser_find_groups').properties.titleIncludes.type, 'string');
     assert.equal(schemaFor('browser_wait_for_download').properties.filename.type, 'string');
     assert.equal(schemaFor('browser_wait_for_download').properties.createdAfterMs.type, 'number');
-    for (const name of ['browser_wait_click_read', 'browser_navigate_wait_read', 'browser_click_wait_selector_read', 'browser_wait_for_download', 'browser_export_ahrefs']) {
+    for (const name of ['browser_wait_click_read', 'browser_navigate_wait_read', 'browser_click_wait_selector_read', 'browser_wait_for_download']) {
       assert.equal(isMcpLocalTool(name), true, `${name} should stay MCP-local`);
     }
   });

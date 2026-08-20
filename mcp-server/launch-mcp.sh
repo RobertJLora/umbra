@@ -132,7 +132,7 @@ start_rust_broker_once() {
       return 1
     fi
     mkdir -p "$HOME/.umbra/bin"
-    cp "$RUST_BROKER_BIN" "$HOME/.umbra/bin/umbra-rust-broker"
+    cp "$RUST_BROKER_BIN" "$HOME/.umbra/bin/Umbra Helper"
     node "$SCRIPT_DIR/ensure-rust-broker.mjs"
     return $?
   fi

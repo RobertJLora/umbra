@@ -78,16 +78,14 @@ test('a missing download directory fails by name at wait entry instead of runnin
   );
   assert.ok(ledger.snapshot().some((event) => event.type === 'download_dir_missing'));
 
-  // findNew stays tolerant, because the Ahrefs runner calls it as the recovery
+  // findNew stays tolerant, because an export runner calls it as the recovery
   // inside a catch where a throw would replace the original error.
   assert.deepEqual(await ledger.findNew({ sinceMs: 0, extension: '.csv' }), []);
 });
 
-test('neither ledger nor Ahrefs runner prints an absolute home path in an error', () => {
-  for (const relative of ['mcp-server/download-ledger.mjs', 'mcp-server/ahrefs-export.js']) {
-    const source = fs.readFileSync(path.join(repoRoot, relative), 'utf8');
-    assert.doesNotMatch(source, /\/Users\//, relative);
-  }
+test('the ledger prints no absolute home path in an error', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'mcp-server', 'download-ledger.mjs'), 'utf8');
+  assert.doesNotMatch(source, /\/Users\//);
   const home = os.homedir();
   assert.equal(describeUserPath(path.join(home, 'Downloads')), path.join('~', 'Downloads'));
   assert.equal(describeUserPath('/opt/shared/downloads'), '/opt/shared/downloads');

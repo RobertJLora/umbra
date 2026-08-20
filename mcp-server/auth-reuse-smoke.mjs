@@ -4,9 +4,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { LocalBridgeServer } from './bridge-core.js';
 import { resolveSharedKeyPath } from './config.js';
 
-const DEFAULT_AUTH_CHECK_URL = 'https://app.ahrefs.com/dashboard';
-const DEFAULT_EXPECT_HOST = 'app.ahrefs.com';
-const DEFAULT_REJECT_PATTERN = String.raw`/user/login|/signin|/sign-in|accounts\.google\.com`;
+// Which signed-in page proves session reuse depends on what the running
+// account is signed into, so there is no useful default: the check is
+// configured per machine and refuses to run unconfigured rather than pretending
+// a public page proved anything.
+const AUTH_CHECK_URL = process.env.UMBRA_AUTH_CHECK_URL?.trim() || '';
+const DEFAULT_REJECT_PATTERN = String.raw`/user/login|/signin|/sign-in|/login`;
 const timeoutMs = Number(process.env.UMBRA_SMOKE_TIMEOUT_MS || 60000);
 
 // UMBRA_SHARED_KEY wins, then the key file, which defaults to the canonical
@@ -62,8 +65,16 @@ function waitForAuthenticatedBridge(bridge) {
   });
 }
 
-const authUrl = process.env.UMBRA_AUTH_CHECK_URL || DEFAULT_AUTH_CHECK_URL;
-const expectedHost = process.env.UMBRA_AUTH_EXPECT_HOST || DEFAULT_EXPECT_HOST;
+if (!AUTH_CHECK_URL) {
+  console.error(
+    'Set UMBRA_AUTH_CHECK_URL to a page your browser profile is already signed into, and'
+    + ' UMBRA_AUTH_EXPECT_HOST to the hostname it should land on.',
+  );
+  process.exit(1);
+}
+
+const authUrl = AUTH_CHECK_URL;
+const expectedHost = process.env.UMBRA_AUTH_EXPECT_HOST?.trim() || new URL(authUrl).hostname;
 const rejectPattern = new RegExp(process.env.UMBRA_AUTH_REJECT_URL_PATTERN || DEFAULT_REJECT_PATTERN, 'i');
 const bridge = new LocalBridgeServer({
   sharedKey: SHARED_KEY,

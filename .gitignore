@@ -22,3 +22,11 @@ docs/private-setup.md
 
 # Built extension packages from scripts/package-extension.sh.
 dist/
+
+# Local page-recipe plugins, never published. The extension recipe files, the
+# MCP plugin modules that pair with them, and the suites that exercise both.
+# Every build discovers whatever these folders hold, so a clone without them
+# runs green and advertises exactly the built-in tool surface.
+extension/recipes/
+mcp-server/plugins/
+tests/local/

@@ -71,40 +71,50 @@ test('V1.6 tool surface excludes sensitive extraction and browser downloads perm
   );
 });
 
-test('a build without the Ahrefs plugin advertises every tool except browser_export_ahrefs', () => {
-  const withAhrefs = buildToolDefinitions({ ahrefs: true });
-  const withoutAhrefs = buildToolDefinitions({ ahrefs: false });
+test('a build with no local plugin advertises exactly the built-in surface', () => {
+  const plugins = {
+    toolDefinitions: [{ name: 'browser_export_vendor', description: 'x', inputSchema: { type: 'object', properties: {} } }],
+    pageActions: ['vendor_open_export', 'vendor_export_csv'],
+    mcpLocalToolNames: ['browser_export_vendor'],
+  };
+  const withPlugin = buildToolDefinitions({ plugins });
+  const withoutPlugin = buildToolDefinitions();
 
-  assert.deepEqual(withAhrefs, TOOL_DEFINITIONS, 'the ahrefs build should match the full surface');
-  assert.deepEqual(buildToolDefinitions(), TOOL_DEFINITIONS, 'the default build should match the full surface');
+  assert.deepEqual(withoutPlugin, TOOL_DEFINITIONS, 'the default build should match the full surface');
+  assert.deepEqual(buildToolDefinitions({ plugins: null }), TOOL_DEFINITIONS);
 
-  const droppedNames = withAhrefs
+  const addedNames = withPlugin
     .map((tool) => tool.name)
-    .filter((name) => !withoutAhrefs.some((tool) => tool.name === name));
-  assert.deepEqual(droppedNames, ['browser_export_ahrefs']);
-  assert.equal(withoutAhrefs.length, TOOL_DEFINITIONS.length - 1);
+    .filter((name) => !withoutPlugin.some((tool) => tool.name === name));
+  assert.deepEqual(addedNames, ['browser_export_vendor']);
+  assert.equal(withPlugin.length, TOOL_DEFINITIONS.length + 1);
 
-  const localWithout = buildMcpLocalToolNames({ ahrefs: false });
-  assert.equal(localWithout.has('browser_export_ahrefs'), false);
+  const localWithout = buildMcpLocalToolNames();
+  assert.equal(localWithout.has('browser_export_vendor'), false);
   assert.equal(localWithout.has('browser_batch'), true);
-  assert.deepEqual([...buildMcpLocalToolNames({ ahrefs: true })], [...MCP_LOCAL_TOOL_NAMES]);
+  assert.deepEqual([...localWithout], [...MCP_LOCAL_TOOL_NAMES]);
+  assert.equal(buildMcpLocalToolNames({ plugins }).has('browser_export_vendor'), true);
 
-  // The extension owns the ahrefs_ page actions and reports its own clear error
-  // when the recipe file is absent, so the enum stays identical in both builds.
-  const pageAction = withoutAhrefs.find((tool) => tool.name === 'browser_run_page_action');
-  assert.ok(pageAction.inputSchema.properties.action.enum.includes('ahrefs_export_csv'));
+  // A plugin's page actions are implemented by the matching extension recipe,
+  // so they only appear when that plugin is installed.
+  const pageActionWith = withPlugin.find((tool) => tool.name === 'browser_run_page_action');
+  const pageActionWithout = withoutPlugin.find((tool) => tool.name === 'browser_run_page_action');
+  assert.ok(pageActionWith.inputSchema.properties.action.enum.includes('vendor_export_csv'));
+  assert.equal(pageActionWithout.inputSchema.properties.action.enum.includes('vendor_export_csv'), false);
+
+  // Extending the enum must not edit the shared catalog, or a second build
+  // would inherit the first build's plugin actions.
+  assert.deepEqual(
+    buildToolDefinitions().find((tool) => tool.name === 'browser_run_page_action').inputSchema.properties.action.enum,
+    pageActionWithout.inputSchema.properties.action.enum,
+  );
 });
 
-test('download-directory overrides exist on both tools that wait for a file', () => {
+test('the download-directory override exists on the tool that waits for a file', () => {
   const wait = getToolDefinition('browser_wait_for_download').inputSchema;
   assert.equal(wait.properties.dir.type, 'string');
   assert.match(wait.properties.dir.description, /UMBRA_DOWNLOAD_DIR/);
   assert.match(wait.properties.dir.description, /Absolute path/);
-
-  const exportAhrefs = getToolDefinition('browser_export_ahrefs').inputSchema;
-  assert.equal(exportAhrefs.properties.downloadDir.type, 'string');
-  assert.match(exportAhrefs.properties.downloadDir.description, /UMBRA_DOWNLOAD_DIR/);
-  assert.match(exportAhrefs.properties.downloadDir.description, /Absolute path/);
 });
 
 test('schema descriptions state the real limits and requirements', () => {
@@ -134,7 +144,7 @@ test('composite recipes and browser_batch document the ok failure contract', () 
 test('tool schemas carry no personal site as an example', () => {
   assert.doesNotMatch(toolsSource, AUTHOR_SITE_RE);
   assert.match(
-    getToolDefinition('browser_export_ahrefs').inputSchema.properties.target.description,
-    /example\.com/,
+    getToolDefinition('browser_navigate').inputSchema.properties.url.description,
+    /Destination URL/,
   );
 });

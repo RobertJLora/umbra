@@ -54,7 +54,7 @@ function lowerTokens(values) {
 // behaves exactly as this ledger did before:
 //   2. a file whose name equals a claimed `suggestedFilename` for this scope;
 //   1. a file matching the caller's filters and one of `nameIncludesAny`, which
-//      is how an Ahrefs report token separates an export from an unrelated file
+//      is how a report token separates an export from an unrelated file
 //      that happens to share the domain name;
 //   0. a file matching the caller's filters, which is the original behaviour.
 // Chrome renames on filename conflict, so a claimed name can legitimately fail
@@ -97,7 +97,7 @@ export class FileDownloadLedger {
   // Fail fast and by name when the download directory does not exist. Without
   // this a misconfigured directory reads as "no files yet" and every wait runs
   // its full timeout, which is 30 seconds for a download wait and 90 seconds for
-  // an Ahrefs export, with nothing in the error that names the cause.
+  // a plugin-driven report export, with nothing in the error that names the cause.
   async assertDownloadDirExists(context = 'wait') {
     if (this.downloadDirVerified) {
       return;
@@ -299,7 +299,7 @@ export class FileDownloadLedger {
   }
 
   // Stays tolerant of a missing directory on purpose: this runs as the recovery
-  // branch inside a catch in the Ahrefs export runner, where a throw would
+  // branch inside a catch in an export runner, where a throw would
   // replace the original error and lose the real cause. The named directory
   // error belongs at wait entry, which is assertDownloadDirExists.
   async findNew({

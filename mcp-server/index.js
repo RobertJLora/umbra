@@ -14,6 +14,7 @@ import { createSessionId } from './auth.js';
 import { LocalBridgeServer, parseEnvNumber } from './bridge-core.js';
 import { RustBrokerClient } from './rust-broker-client.js';
 import { resolveSharedKeyPath } from './config.js';
+import { loadPlugins } from './plugins-loader.mjs';
 // Namespace import on purpose: `buildToolDefinitions` is added by the tool-schema
 // work and a named import of a not-yet-present export fails at module link time.
 import * as toolCatalog from './tools.js';
@@ -28,9 +29,6 @@ const DEFAULT_SHUTDOWN_CLOSE_TIMEOUT_MS = 3_000;
 // Above this serialized size the summary key is hoisted to the front of the
 // payload so a client that truncates a long text block still reads it.
 export const COMPACT_SUMMARY_THRESHOLD_BYTES = 30_000;
-
-const AHREFS_TOOL_NAME = 'browser_export_ahrefs';
-const AHREFS_PLUGIN_SPECIFIER = './ahrefs-export.js';
 
 function resolveScreenshotMimeType(result, args = {}) {
   const reported = typeof result?.mimeType === 'string' ? result.mimeType.trim().toLowerCase() : '';
@@ -163,7 +161,7 @@ export function buildMcpResponse(toolName, result, args = {}) {
     content: [{ type: 'text', text }],
   };
 
-  // Batches, composites, and the Ahrefs export runner report their own failures
+  // Batches, composites, and MCP-local plugin handlers report their own failures
   // as `{ ok: false }` and resolve normally, so without this flag the same
   // failing step arrives as an error when run alone and as a success when run
   // inside a batch.
@@ -293,64 +291,15 @@ function createSchemaMismatchLogger() {
   };
 }
 
-function readPluginAvailability(module) {
-  const marker = module?.isAvailable;
-  if (marker === undefined || marker === null) {
-    return { available: true, reason: '' };
-  }
-  const value = typeof marker === 'function' ? marker() : marker;
-  if (value === true || value === undefined || value === null) {
-    return { available: true, reason: '' };
-  }
-  if (value === false) {
-    return { available: false, reason: 'the plugin reported itself unavailable' };
-  }
-  if (typeof value === 'object') {
-    const available = value.ok ?? value.available ?? true;
-    return { available: Boolean(available), reason: String(value.reason || '') };
-  }
-  return { available: Boolean(value), reason: '' };
-}
-
-// The Ahrefs orchestration is a local-only plugin: the published package omits
-// `ahrefs-export.js` through the files allowlist, so this import resolves to
-// null there and the tool never appears in the list. A checkout that has the
-// file keeps the capability untouched.
-export async function loadAhrefsPlugin(specifier = AHREFS_PLUGIN_SPECIFIER) {
-  let module = null;
-  try {
-    module = await import(specifier);
-  } catch (error) {
-    if (error?.code !== 'ERR_MODULE_NOT_FOUND') {
-      console.error(`[umbra] Ahrefs export plugin failed to load: ${error?.message || error}`);
-    }
-    return null;
-  }
-
-  if (typeof module?.runAhrefsExport !== 'function') {
-    console.error('[umbra] Ahrefs export plugin is present but exports no runAhrefsExport; disabling the tool.');
-    return null;
-  }
-
-  const { available, reason } = readPluginAvailability(module);
-  if (!available) {
-    console.error(
-      `[umbra] Ahrefs export plugin is present but unavailable${reason ? `: ${reason}` : ''}; disabling the tool.`,
-    );
-    return null;
-  }
-
-  return module;
-}
-
-export function resolveToolDefinitions({ ahrefs } = {}) {
+// The advertised tool surface for one server build: the built-in catalog, plus
+// whatever the optional local plugins in mcp-server/plugins/ register. An
+// install with no plugins folder gets the built-in catalog unchanged, which is
+// what the published package always sees.
+export function resolveToolDefinitions({ plugins = null } = {}) {
   if (typeof toolCatalog.buildToolDefinitions === 'function') {
-    return toolCatalog.buildToolDefinitions({ ahrefs: Boolean(ahrefs) });
+    return toolCatalog.buildToolDefinitions({ plugins });
   }
-  if (ahrefs) {
-    return toolCatalog.TOOL_DEFINITIONS;
-  }
-  return toolCatalog.TOOL_DEFINITIONS.filter((tool) => tool.name !== AHREFS_TOOL_NAME);
+  return toolCatalog.TOOL_DEFINITIONS.slice();
 }
 
 function loadSharedKey() {
@@ -404,9 +353,9 @@ export async function main() {
     throw new Error('UMBRA_PORT_END must be >= UMBRA_PORT_START.');
   }
 
-  const ahrefsPlugin = await loadAhrefsPlugin();
-  const runAhrefsExport = ahrefsPlugin?.runAhrefsExport || null;
-  const toolDefinitions = resolveToolDefinitions({ ahrefs: Boolean(runAhrefsExport) });
+  const plugins = await loadPlugins();
+  const pluginHandlers = plugins.handlers;
+  const toolDefinitions = resolveToolDefinitions({ plugins });
   const toolsByName = new Map(toolDefinitions.map((definition) => [definition.name, definition]));
   const schemaValidators = createSchemaValidators(toolDefinitions);
   const reportSchemaMismatch = createSchemaMismatchLogger();
@@ -419,7 +368,7 @@ export async function main() {
     ? new RustBrokerClient({
         sessionId,
         requestTimeoutMs,
-        runAhrefsExport,
+        pluginHandlers,
       })
     : new LocalBridgeServer({
         sharedKey,
@@ -428,7 +377,7 @@ export async function main() {
         portEnd,
         requestTimeoutMs,
         bindTimeoutMs,
-        runAhrefsExport,
+        pluginHandlers,
       });
 
   if (useRustBroker) {
@@ -461,12 +410,9 @@ export async function main() {
     const definition = toolsByName.get(toolName);
 
     if (!definition) {
-      if (toolName === AHREFS_TOOL_NAME) {
-        throw new Error(
-          `${AHREFS_TOOL_NAME} is not available in this install: the Ahrefs export plugin (ahrefs-export.js) is not present.`,
-        );
-      }
-      throw new Error(`Unknown tool: ${toolName}`);
+      throw new Error(
+        `Unknown tool: ${toolName}. Tools contributed by an optional local plugin appear only when that plugin is installed in mcp-server/plugins/.`,
+      );
     }
 
     const validate = schemaValidators.get(toolName);

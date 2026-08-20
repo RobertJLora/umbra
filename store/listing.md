@@ -66,7 +66,7 @@ Every factual claim in the description, checked against the code rather than aga
 
 | Claim | Source |
 |---|---|
-| 47 browser tools | `buildToolDefinitions` with the optional local plugin flag off returns 47 entries |
+| 47 browser tools | `buildToolDefinitions` with no optional local plugin installed returns 47 entries |
 | Per-session tab group and ownership map | `extension/session-state.js`, ownership resolved before every Chrome call |
 | Tab adoption | `browser_find_tabs`, `browser_adopt_tab`, `browser_find_groups`, `browser_adopt_group` |
 | Background tabs by default | create, navigate, click, fill, press, scroll all default to inactive tabs |

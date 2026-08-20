@@ -39,7 +39,7 @@ Or straight from npm, with no checkout at all:
 npx -y @umbra-mcp/server --help
 ```
 
-The published package omits the Ahrefs export plugin, so `browser_export_ahrefs` does not appear in the tool list. A checkout has it and lists it. Every other tool is the same in both.
+The published package carries no optional local page-recipe plugins, so it advertises the built-in tool list and nothing else. A checkout that installs a plugin under `mcp-server/plugins/` lists that plugin's tools as well. Every built-in tool is the same in both.
 
 ## 3. Generate the shared key
 
@@ -135,10 +135,10 @@ Every one of these has a portable default derived from your home directory, so a
 | `UMBRA_REQUEST_TIMEOUT_MS` | `60000` | Floor for how long one command may take. |
 | `UMBRA_KEEP_TABS_OPEN` | unset | Set to `1` to leave owned tabs open when the server shuts down. |
 | `UMBRA_CLOSE_ON_SHUTDOWN` | `1` | Set to `0` for the same effect as `UMBRA_KEEP_TABS_OPEN=1`. |
-| `UMBRA_BROKER_BIN` | `$HOME/.umbra/bin/umbra-rust-broker` | Broker binary the launchd job runs. |
+| `UMBRA_BROKER_BIN` | `$HOME/.umbra/bin/Umbra Helper` | Broker binary the launchd job runs. |
 | `UMBRA_BROKER_REQUIRED` | unset | Set to `1` to fail instead of falling back to the legacy bridge. |
 
-Set `UMBRA_DOWNLOAD_DIR` if you ever moved Chrome's download folder. The extension holds no `downloads` permission, so it cannot read your real setting, and every download-waiting tool watches this directory instead. A wrong value makes `browser_wait_for_download` and `browser_export_ahrefs` time out with nothing to show for it.
+Set `UMBRA_DOWNLOAD_DIR` if you ever moved Chrome's download folder. The extension holds no `downloads` permission, so it cannot read your real setting, and every download-waiting tool watches this directory instead. A wrong value makes `browser_wait_for_download`, and any plugin tool that waits on a download, time out with nothing to show for it.
 
 Changing the port range needs both sides to reload: restart the MCP client so new server processes inherit the environment, and reload the extension so its stored range is normalized.
 
@@ -151,7 +151,7 @@ Build and stage it:
 ```bash
 cargo build --release --manifest-path rust-broker/Cargo.toml
 mkdir -p ~/.umbra/bin
-cp rust-broker/target/release/umbra-rust-broker ~/.umbra/bin/
+cp "rust-broker/target/release/umbra-rust-broker" "$HOME/.umbra/bin/Umbra Helper"
 ```
 
 On macOS, keep it running under launchd:

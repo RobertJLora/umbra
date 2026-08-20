@@ -76,7 +76,7 @@ export function resolveBrokerBinPath() {
   }
   // The path launch-mcp.sh copies the built binary to, which is also where the
   // launchd job has always pointed.
-  return path.join(umbraHome(), 'bin', 'umbra-rust-broker');
+  return path.join(umbraHome(), 'bin', 'Umbra Helper');
 }
 
 export function resolveLogDir() {
@@ -527,9 +527,16 @@ export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync,
   fs.writeFileSync(job.plistPath, job.plist, { mode: 0o644 });
 
   // Booting out a job that is not loaded returns non-zero, which is the normal
-  // first-install case rather than a failure.
+  // first-install case rather than a failure. When a job WAS loaded, launchd
+  // tears it down asynchronously after bootout returns, and a bootstrap issued
+  // inside that window fails with a generic input/output error, so a failed
+  // bootstrap is retried briefly before it is reported.
   launchctl(['bootout', serviceTarget], spawn);
-  const bootstrapped = launchctl(['bootstrap', `gui/${uid}`, job.plistPath], spawn);
+  let bootstrapped = launchctl(['bootstrap', `gui/${uid}`, job.plistPath], spawn);
+  for (let attempt = 0; bootstrapped.status !== 0 && attempt < 4; attempt += 1) {
+    spawnSync('sleep', ['0.5']);
+    bootstrapped = launchctl(['bootstrap', `gui/${uid}`, job.plistPath], spawn);
+  }
   if (bootstrapped.status !== 0) {
     throw new CliError(
       `launchctl bootstrap failed for ${job.label}: ${(bootstrapped.stderr || bootstrapped.stdout || '').trim() || `exit ${bootstrapped.status}`}`,

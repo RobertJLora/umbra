@@ -64,4 +64,11 @@ SKIP_RELOAD=1 \
 UMBRA_SHARED_KEY="$SHARED_KEY" \
 UMBRA_PORT_START="$BRIDGE_PORT_START" \
 UMBRA_PORT_END="$BRIDGE_PORT_END" \
-node "$ROOT_DIR/mcp-server/export-click-fixture-smoke.mjs"
+SMOKE="$ROOT_DIR/mcp-server/plugins/export-click-fixture-smoke.mjs"
+# The smoke driver is an optional local plugin file, so a clone without it has
+# nothing to run and should say so rather than report a pass.
+if [[ ! -f "$SMOKE" ]]; then
+  echo "No local export-click smoke installed at $SMOKE." >&2
+  exit 2
+fi
+node "$SMOKE"

@@ -11,7 +11,9 @@ import { resolveBrokerSocketPath, resolveLaunchdLabel } from './config.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const socketPath = resolveBrokerSocketPath();
+const installedBrokerBin = path.join(os.homedir(), '.umbra', 'bin', 'Umbra Helper');
 const brokerBin = process.env.UMBRA_BROKER_BIN
+  || (fs.existsSync(installedBrokerBin) ? installedBrokerBin : null)
   || path.join(repoRoot, 'rust-broker', 'target', 'release', 'umbra-rust-broker');
 const label = resolveLaunchdLabel();
 const logPath = path.join(os.homedir(), '.umbra', 'logs', 'umbra-rust-broker.log');

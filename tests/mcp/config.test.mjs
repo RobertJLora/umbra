@@ -141,7 +141,7 @@ describe('mcp-server/package.json', () => {
     assert.equal(serverManifest.publishConfig.access, 'public');
   });
 
-  it('allowlists the runtime files and excludes the local-only Ahrefs plugin', () => {
+  it('allowlists the runtime files and nothing from the local-only plugins folder', () => {
     const files = serverManifest.files;
     assert.ok(Array.isArray(files));
     for (const required of [
@@ -160,10 +160,15 @@ describe('mcp-server/package.json', () => {
       'ensure-rust-broker.mjs',
       'check-rust-broker.mjs',
       'launch-mcp.sh',
+      'plugins-loader.mjs',
     ]) {
       assert.ok(files.includes(required), `files allowlist is missing ${required}`);
     }
-    assert.ok(!files.includes('ahrefs-export.js'));
+    // The loader ships. What it loads never does: plugins/ is local-only, and
+    // an allowlist entry naming it would put an unpublished path in the package.
+    for (const entry of files) {
+      assert.doesNotMatch(entry, /^plugins\//, `${entry} would publish a local-only plugin`);
+    }
     for (const entry of files) {
       assert.doesNotMatch(entry, /^(capture-|export-|benchmark-|demo-)|smoke/);
     }

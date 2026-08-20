@@ -82,7 +82,7 @@ Other lanes, all reading the key from `UMBRA_SHARED_KEY_FILE` when you do not wa
 | --- | --- |
 | `npm run smoke` | create, list, navigate, read, close on one session |
 | `npm run smoke:rust` | the same path through the Rust broker |
-| `npm run smoke:auth` | a signed-in page returns its title without dumping body content |
+| `npm run smoke:auth` | a signed-in page returns its title without dumping body content. Set `UMBRA_AUTH_CHECK_URL` to a page this browser profile is already signed into; there is no default, because which page proves session reuse depends on the account |
 | `npm run smoke:required` | two concurrent sessions, cross-session denial, one download |
 | `npm run smoke:groups` | five sessions, eight tabs each, one visible group per session |
 

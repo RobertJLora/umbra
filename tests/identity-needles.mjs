@@ -34,3 +34,13 @@ export const HOME_PATH_RE = /\/Users\/[A-Za-z]/;
 
 /** Matches the author's own website, used as an example in earlier drafts. */
 export const AUTHOR_SITE_RE = new RegExp(['travel', 'bag', 'experts'].join(''), 'i');
+
+/**
+ * The third-party SEO vendor whose page automation lives only in the optional
+ * local plugins. The public tree names it nowhere, and both gates enforce that:
+ * scripts/verify-package.mjs on shipped bytes and mcp-server/release-check.mjs
+ * on tracked files. Exported as a string too, because a test that needs to
+ * prove the gate fires has to build the offending input without writing it.
+ */
+export const SEO_VENDOR = ['ah', 'refs'].join('');
+export const SEO_VENDOR_RE = new RegExp(SEO_VENDOR, 'i');

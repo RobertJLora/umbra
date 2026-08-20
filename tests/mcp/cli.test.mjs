@@ -606,7 +606,7 @@ describe('launchd template rendering', () => {
       process.env.UMBRA_BROKER_BIN = '/opt/umbra/broker';
       assert.equal(resolveBrokerBinPath(), '/opt/umbra/broker');
       delete process.env.UMBRA_BROKER_BIN;
-      assert.equal(resolveBrokerBinPath(), path.join(os.homedir(), '.umbra', 'bin', 'umbra-rust-broker'));
+      assert.equal(resolveBrokerBinPath(), path.join(os.homedir(), '.umbra', 'bin', 'Umbra Helper'));
     } finally {
       if (previous === undefined) {
         delete process.env.UMBRA_BROKER_BIN;

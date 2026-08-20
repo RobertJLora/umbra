@@ -225,9 +225,9 @@ describe('CiC bridge hardening', () => {
     bridge.registry.setChannel({ socket: fakeOpenSocket(), port: 47821 });
     bridge.registry.markAuthenticated({ extensionInstanceId: 'install_a' });
 
-    // The extension clamps browser_run_page_action waits to 90,000 ms, so an
-    // Ahrefs export legitimately asks for 95,000 ms. Record what the bridge arms
-    // and fire it immediately so the call settles inside the test.
+    // The extension clamps browser_run_page_action waits to 90,000 ms, so a
+    // plugin-driven export legitimately asks for 95,000 ms. Record what the
+    // bridge arms and fire it immediately so the call settles inside the test.
     const armedDelays = [];
     const realSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = (handler, delay, ...args) => {
@@ -237,7 +237,7 @@ describe('CiC bridge hardening', () => {
 
     try {
       await assert.rejects(
-        bridge.sendCommand('browser_run_page_action', { action: 'ahrefs_wait_ready', timeoutMs: 95_000 }),
+        bridge.sendCommand('browser_run_page_action', { action: 'vendor_wait_ready', timeoutMs: 95_000 }),
         /Timed out waiting for browser_run_page_action result/,
       );
     } finally {

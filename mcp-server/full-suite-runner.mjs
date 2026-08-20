@@ -11,6 +11,7 @@ import { LocalBridgeServer } from './bridge-core.js';
 import { FileDownloadLedger } from './download-ledger.mjs';
 import { RustBrokerClient } from './rust-broker-client.js';
 import { resolveBrokerSocketPath, resolveDownloadDir, resolveSharedKeyPath } from './config.js';
+import { loadPlugins } from './plugins-loader.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE_ROOT = path.resolve(__dirname, '..');
@@ -19,7 +20,9 @@ const RUST_MANIFEST = path.join(BRIDGE_ROOT, 'rust-broker', 'Cargo.toml');
 const RUST_RELEASE_BINARY = path.join(BRIDGE_ROOT, 'rust-broker', 'target', 'release', 'umbra-rust-broker');
 const DOWNLOAD_DIR = resolveDownloadDir();
 const DEFAULT_SHARED_KEY_FILE = resolveSharedKeyPath();
-const DEFAULT_SUITES = ['baseline', 'concurrency', 'ahrefs', 'social', 'research', 'downloads', 'seo', 'cleanup'];
+// Suites every checkout has. An optional local plugin can add its own; see
+// resolveSuiteRunners below, which is where the default order picks them up.
+const BUILTIN_SUITES = ['baseline', 'concurrency', 'social', 'research', 'downloads', 'seo', 'cleanup'];
 const DEFAULT_PORT_START = 47829;
 const DEFAULT_PORT_END = 47852;
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -43,9 +46,16 @@ function displayPath(absolutePath) {
     : absolutePath;
 }
 
-function parseArgs(argv) {
+// Turn --some-flag into someFlag, so an unrecognized flag reaches a plugin
+// suite under a name it can read off options.plugin without this file knowing
+// any plugin's flag names.
+function camelCaseFlag(flag) {
+  return flag.replace(/^--/, '').replace(/-([a-z0-9])/g, (_, character) => character.toUpperCase());
+}
+
+function parseArgs(argv, { defaultSuites = BUILTIN_SUITES } = {}) {
   const options = {
-    suites: DEFAULT_SUITES,
+    suites: defaultSuites,
     portStart: Number(process.env.UMBRA_SUITE_PORT_START || DEFAULT_PORT_START),
     portEnd: Number(process.env.UMBRA_SUITE_PORT_END || DEFAULT_PORT_END),
     timeoutMs: Number(process.env.UMBRA_SUITE_TIMEOUT_MS || DEFAULT_TIMEOUT_MS),
@@ -53,15 +63,15 @@ function parseArgs(argv) {
     keepOpenOnFail: false,
     cleanupMode: 'closeTabs',
     brokerMode: process.env.UMBRA_BROKER_MODE === 'rust' ? 'rust' : 'legacy',
-    // The Ahrefs suite needs some domain to drive a report for. It is a
-    // placeholder, not a subject: set UMBRA_AHREFS_TARGET to run against a
-    // domain the running account actually has data for.
-    ahrefsTarget: process.env.UMBRA_AHREFS_TARGET || 'example.com',
     // The rendered-versus-raw check needs one page on the public internet that
-    // returns a title. Same rule as the Ahrefs target: a neutral placeholder
-    // ships, and UMBRA_PUBLIC_URL points the check at a real page when someone
-    // wants a heavier document than example.com.
+    // returns a title. A neutral placeholder ships, and UMBRA_PUBLIC_URL points
+    // the check at a real page when someone wants a heavier document than
+    // example.com.
     publicUrl: process.env.UMBRA_PUBLIC_URL || 'https://example.com/',
+    // Flags this runner does not recognize, handed to the plugin suites. A
+    // plugin reads its own key here and falls back to its own environment
+    // variable, so no plugin flag has to be listed in this file.
+    plugin: {},
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -96,12 +106,19 @@ function parseArgs(argv) {
       options.brokerMode = argv[++index];
     } else if (arg.startsWith('--broker-mode=')) {
       options.brokerMode = arg.slice('--broker-mode='.length);
-    } else if (arg === '--ahrefs-target') {
-      options.ahrefsTarget = argv[++index];
-    } else if (arg.startsWith('--ahrefs-target=')) {
-      options.ahrefsTarget = arg.slice('--ahrefs-target='.length);
     } else if (!arg.startsWith('-')) {
       options.suites = arg.split(',').map((suite) => suite.trim()).filter(Boolean);
+    } else if (arg.startsWith('--') && arg.includes('=')) {
+      const [flag, ...rest] = arg.split('=');
+      options.plugin[camelCaseFlag(flag)] = rest.join('=');
+    } else if (arg.startsWith('--')) {
+      const next = argv[index + 1];
+      if (next !== undefined && !next.startsWith('-')) {
+        options.plugin[camelCaseFlag(arg)] = next;
+        index += 1;
+      } else {
+        options.plugin[camelCaseFlag(arg)] = true;
+      }
     }
   }
 
@@ -269,7 +286,7 @@ ${evidenceRows.join('\n') || '| - | - | - | - | - | - |'}
 
 - Use Umbra for signed-in Chrome state, tab groups, concurrent browser sessions, and Chrome-initiated downloads.
 - Use Browser Use for fast public/in-app browsing where persistent auth and local downloads do not matter.
-- Use Google Sheets MCP for durable Ahrefs exports that need to be reopened by later agents.
+- Use Google Sheets MCP for durable exports that need to be reopened by later agents.
 - Use Firecrawl, curl, or Screaming Frog for public raw HTTP status, headers, large crawls, and repeatable technical SEO at scale.
 - Keep password manager, cookies, tokens, OTP, passkeys, and account-security pages out of the bridge.
 
@@ -881,43 +898,6 @@ async function waitForDownload(filename, timeoutMs) {
   });
 }
 
-async function waitForNewAhrefsCsv({ sinceMs, target, reportLabel, timeoutMs }) {
-  const expectedNameTokens = {
-    'top-pages': ['top-pages'],
-    'organic-keywords': ['organic-keywords'],
-    'referring-domains': ['refdomains', 'referring-domains'],
-  }[reportLabel] || [];
-  const ledger = new FileDownloadLedger({ downloadDir: DOWNLOAD_DIR, pollMs: 500 });
-  const targetToken = target.toLowerCase().replace(/^www\./, '');
-  const startedAt = Date.now();
-  ledger.record('wait_ahrefs_start', { sinceMs, timeoutMs, targetToken, expectedNameTokens });
-
-  while (Date.now() - startedAt <= timeoutMs) {
-    const targetMatches = await ledger.findNew({
-      sinceMs,
-      extension: '.csv',
-      nameIncludes: [targetToken],
-    });
-    const preferred = expectedNameTokens.length > 0
-      ? targetMatches.find((match) => expectedNameTokens.some((token) => match.filename.toLowerCase().includes(token)))
-      : targetMatches[0];
-    const fallback = targetMatches[0];
-    if (preferred || fallback) {
-      const match = preferred || fallback;
-      ledger.record('wait_ahrefs_complete', { filePath: match.filePath, bytes: match.bytes });
-      return {
-        ...match,
-        elapsedMs: Date.now() - startedAt,
-        ledgerEvents: ledger.snapshot(),
-      };
-    }
-    await delay(500);
-  }
-
-  ledger.record('wait_ahrefs_timeout', { sinceMs, timeoutMs, targetToken, expectedNameTokens });
-  throw new Error(`Timed out waiting for a new Ahrefs ${reportLabel || ''} CSV for ${target}.`);
-}
-
 async function waitForPageText(session, tabId, predicate, timeoutMs, task = 'wait-for-text') {
   const startedAt = Date.now();
   let lastText = '';
@@ -1405,176 +1385,6 @@ async function runSocial(context) {
   }
 }
 
-async function runAhrefs(context) {
-  const suite = 'ahrefs';
-  const target = context.options.ahrefsTarget;
-  const reports = [
-    {
-      label: 'top-pages',
-      url: `https://app.ahrefs.com/v2-site-explorer/top-pages?target=${encodeURIComponent(target)}&mode=subdomains&country=us&compareDate=prevMonth`,
-    },
-    {
-      label: 'organic-keywords',
-      url: `https://app.ahrefs.com/v2-site-explorer/organic-keywords?target=${encodeURIComponent(target)}&mode=subdomains&country=us&compareDate=prevMonth`,
-    },
-    {
-      label: 'referring-domains',
-      url: `https://app.ahrefs.com/v2-site-explorer/refdomains?target=${encodeURIComponent(target)}&mode=subdomains`,
-    },
-  ];
-  let session = null;
-  try {
-    session = await startBridgeSession(context, { suite, label: 'exports', requestTimeoutMs: Math.max(context.options.timeoutMs, 180_000) });
-    const overviewStartedAt = Date.now();
-    const overviewTab = await session.bridge.sendCommand('browser_create_tab', {
-      url: `https://app.ahrefs.com/v2-site-explorer/overview?target=${encodeURIComponent(target)}&mode=subdomains&country=us`,
-      activate: false,
-    });
-    session.tabs.push(overviewTab.tabId);
-    const overview = await waitForPageText(
-      session,
-      overviewTab.tabId,
-      (bodyText, page) => Boolean(page.title) && !/sign in|log in/i.test(page.title),
-      Math.max(context.options.timeoutMs, 90_000),
-      'ahrefs-overview',
-    );
-    const overviewHtml = await session.bridge.sendCommand('browser_get_page_content', {
-      tabId: overviewTab.tabId,
-      format: 'html',
-    });
-    await context.reporter.result({
-      suite,
-      task: 'overview-readable-text-html',
-      status: (overview.bodyText || overview.content || '').length > 200 && (overviewHtml.html || overviewHtml.content || '').length > 1000 ? 'pass' : 'warn',
-      sessionId: session.sessionId,
-      tabId: overviewTab.tabId,
-      url: overview.url,
-      title: overview.title,
-      htmlLength: (overviewHtml.html || overviewHtml.content || '').length,
-      elapsedMs: Date.now() - overviewStartedAt,
-      note: (overview.bodyText || overview.content || '').slice(0, 260),
-    });
-
-    await session.bridge.sendCommand('browser_group_tabs', {
-      title: `Suite ahrefs ${context.runId.slice(-6)}`,
-      color: 'yellow',
-    });
-
-    for (const report of reports) {
-      await exportAhrefsReport(context, session, { target, ...report });
-    }
-  } finally {
-    await stopBridgeSession(context, session, { closeTabs: context.options.cleanupMode === 'closeTabs' });
-  }
-}
-
-async function exportAhrefsReport(context, session, report) {
-  const suite = 'ahrefs';
-  const startedAt = Date.now();
-  const sinceMs = Date.now();
-  const tab = await session.bridge.sendCommand('browser_create_tab', {
-    url: report.url,
-    activate: true,
-  });
-  session.tabs.push(tab.tabId);
-
-  try {
-    await waitForPageText(
-      session,
-      tab.tabId,
-      (bodyText) => /export/i.test(bodyText),
-      Math.max(context.options.timeoutMs, 90_000),
-      `ahrefs-${report.label}-export-button`,
-    );
-    await session.bridge.sendCommand('browser_click_text', {
-      tabId: tab.tabId,
-      text: 'Export',
-      selector: 'button,[role="button"]',
-      exact: true,
-      index: -1,
-    });
-    await waitForPageText(
-      session,
-      tab.tabId,
-      (bodyText) => /CSV|Google Sheets|Export/i.test(bodyText),
-      20_000,
-      `ahrefs-${report.label}-export-modal`,
-    );
-
-    let selectedCsv = false;
-    const modalHtml = await session.bridge.sendCommand('browser_get_page_content', {
-      tabId: tab.tabId,
-      format: 'html',
-    }).catch(() => null);
-    const modalContent = modalHtml?.html || modalHtml?.content || '';
-    const csvUtf8AppearsSelected = /checked=\"\"[^>]+name=\"export-encoding-options\"[\s\S]{0,800}CSV \(UTF-8/i.test(modalContent);
-    for (const attempt of [
-      { text: 'CSV (UTF-8', selector: '[role="dialog"] label,[role="dialog"] span,[role="dialog"] div', exact: false },
-      { text: 'CSV', selector: '[role="dialog"] label,[role="dialog"] span,[role="dialog"] div', exact: false },
-    ]) {
-      if (csvUtf8AppearsSelected) {
-        selectedCsv = true;
-        break;
-      }
-      try {
-        await session.bridge.sendCommand('browser_click_text', {
-          tabId: tab.tabId,
-          ...attempt,
-        });
-        selectedCsv = true;
-        break;
-      } catch {
-        // Try the next visible label variant.
-      }
-    }
-
-    const csvSelectionNote = selectedCsv
-      ? 'CSV UTF-8 was selected or already selected in the export modal.'
-      : 'CSV UTF-8 selection was not confirmed before export; downloaded filename/type still decides pass/fail.';
-
-    await session.bridge.sendCommand('browser_click_text', {
-      tabId: tab.tabId,
-      text: 'Export',
-      selector: '[role="dialog"] button,button',
-      exact: true,
-      index: -1,
-    });
-    const downloaded = await waitForNewAhrefsCsv({
-      sinceMs,
-      target: report.target,
-      reportLabel: report.label,
-      timeoutMs: Math.max(context.options.timeoutMs, 180_000),
-    });
-    const lineCount = await countLines(downloaded.filePath);
-    await context.reporter.result({
-      suite,
-      task: `${report.label}-csv-export`,
-      status: 'pass',
-      sessionId: session.sessionId,
-      tabId: tab.tabId,
-      url: report.url,
-      downloadedFilePath: downloaded.filePath,
-      filePath: downloaded.filePath,
-      bytes: downloaded.bytes,
-      lines: lineCount,
-      elapsedMs: Date.now() - startedAt,
-      note: `Ahrefs CSV landed in the configured download directory via the signed-in Chrome profile. ${csvSelectionNote}`,
-    });
-  } catch (error) {
-    await recordFailure(context, {
-      suite,
-      task: `${report.label}-csv-export`,
-      sessionId: session.sessionId,
-      tabId: tab.tabId,
-      url: report.url,
-      error: error?.message || String(error),
-      failureText: error?.message || String(error),
-      elapsedMs: Date.now() - startedAt,
-      proposedFix: 'Retest the Ahrefs export modal selector flow; if the modal changed, patch browser_click_text or add a narrow export helper.',
-    });
-  }
-}
-
 async function countLines(filePath) {
   const text = await fsp.readFile(filePath, 'utf8').catch(() => '');
   if (!text) {
@@ -1734,10 +1544,9 @@ function runCommand(command, args, { timeoutMs = 10_000 } = {}) {
   });
 }
 
-const suiteRunners = {
+const BUILTIN_SUITE_RUNNERS = {
   baseline: runBaseline,
   concurrency: runConcurrency,
-  ahrefs: runAhrefs,
   social: runSocial,
   research: runResearch,
   downloads: runDownloads,
@@ -1745,8 +1554,42 @@ const suiteRunners = {
   cleanup: runCleanup,
 };
 
+// The pieces of this runner a plugin suite needs to drive a session and file
+// results. Handing them over explicitly is what lets a suite live outside this
+// file without importing it.
+const SUITE_HELPERS = {
+  delay,
+  displayPath,
+  countLines,
+  recordFailure,
+  startBridgeSession,
+  stopBridgeSession,
+  waitForPageText,
+  downloadDir: DOWNLOAD_DIR,
+  FileDownloadLedger,
+};
+
+// Built-in suites, plus whatever the optional local plugins register. Plugin
+// suites run before cleanup, which stays last because it asserts that nothing
+// was left listening.
+async function resolveSuiteRunners() {
+  const plugins = await loadPlugins();
+  const runners = { ...BUILTIN_SUITE_RUNNERS };
+  const order = BUILTIN_SUITES.filter((name) => name !== 'cleanup');
+  for (const [name, suite] of Object.entries(plugins.suites)) {
+    if (runners[name]) {
+      console.error(`[full-suite] a local plugin suite is named after a built-in one and was skipped: ${name}`);
+      continue;
+    }
+    runners[name] = (context) => suite(context, SUITE_HELPERS);
+    order.push(name);
+  }
+  return { runners, defaultSuites: [...order, 'cleanup'] };
+}
+
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const { runners: suiteRunners, defaultSuites } = await resolveSuiteRunners();
+  const options = parseArgs(process.argv.slice(2), { defaultSuites });
   const sharedKey = loadSharedKey();
   if (!sharedKey) {
     throw new Error(`Missing shared key. Set UMBRA_SHARED_KEY or UMBRA_SHARED_KEY_FILE.`);

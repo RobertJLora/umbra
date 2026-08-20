@@ -20,7 +20,6 @@ export const MCP_LOCAL_TOOL_NAMES = new Set([
   'browser_navigate_wait_read',
   'browser_click_wait_selector_read',
   'browser_wait_for_download',
-  'browser_export_ahrefs',
 ]);
 
 const GROUP_COLOR_SCHEMA = {
@@ -428,8 +427,8 @@ export const TOOL_DEFINITIONS = [
         tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
         action: {
           type: 'string',
-          enum: ['render_wait', 'element_positions', 'inspect_controls', 'click_control', 'limit_table_rows', 'scroll_selector', 'restore_table_rows', 'wait_for_text', 'ahrefs_open_table_export', 'ahrefs_modal_state', 'ahrefs_submit_export', 'ahrefs_select_sheets', 'ahrefs_unhide_columns', 'ahrefs_include_top10', 'ahrefs_update_if_empty', 'ahrefs_paste_keywords', 'ahrefs_export_csv', 'ahrefs_export_position_history'],
-          description: 'Named action to run.'
+          enum: ['render_wait', 'element_positions', 'inspect_controls', 'click_control', 'limit_table_rows', 'scroll_selector', 'restore_table_rows', 'wait_for_text'],
+          description: 'Named action to run. An installed local page-recipe plugin adds its own namespaced actions to this list.'
         },
         params: { type: 'object', description: 'Action-specific JSON parameters.' },
         timeoutMs: { type: 'number', description: 'Maximum wait time in milliseconds. Defaults to 10000.' },
@@ -686,59 +685,6 @@ export const TOOL_DEFINITIONS = [
     }
   },
   {
-    name: 'browser_export_ahrefs',
-    description: 'One-shot official Ahrefs table export in the signed-in Chrome session. Creates a background tab, runs the Export modal, writes CSV or Google Sheets, then closes owned tabs.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        target: { type: 'string', description: 'Domain, URL, or seed keyword to export, such as example.com.' },
-        report: {
-          type: 'string',
-          enum: ['organic-keywords', 'top-pages', 'refdomains', 'backlinks', 'organic-competitors', 'backlinks-internal', 'linked-anchors-internal', 'keywords-explorer', 'batch-analysis', 'content-gap', 'position-history'],
-          description: 'Ahrefs report to export. Defaults to organic-keywords. position-history is the Keywords Explorer 2-year chart CSV (Date column).'
-        },
-        country: { type: 'string', description: 'Ahrefs country code. Defaults to us.' },
-        mode: { type: 'string', description: 'Ahrefs target mode: subdomains, prefix, or exact. Defaults to subdomains.' },
-        compareDate: { type: 'string', description: 'Optional Ahrefs compareDate such as prevMonth for KPI change columns.' },
-        destination: {
-          type: 'string',
-          enum: ['csv', 'sheets'],
-          description: 'Export destination. csv downloads a file. sheets writes to Google Drive. Defaults to csv.'
-        },
-        includeTop10: { type: 'boolean', description: 'Keywords Explorer only. When true, check Include top 10 positions from SERP for each keyword.' },
-        unhideColumns: { type: 'boolean', description: 'Unhide common hidden columns before opening the export modal. Defaults to true when destination is sheets.' },
-        targets: {
-          oneOf: [
-            { type: 'string' },
-            { type: 'array', items: { type: 'string' } },
-          ],
-          description: 'Batch Analysis domain list. Accepts a string or an array of domains.'
-        },
-        keywords: {
-          oneOf: [
-            { type: 'string' },
-            { type: 'array', items: { type: 'string' } },
-          ],
-          description: 'Keywords Explorer paste list. Accepts a string or an array of keywords.'
-        },
-        competitors: {
-          oneOf: [
-            { type: 'string' },
-            { type: 'array', items: { type: 'string' } },
-          ],
-          description: 'Content Gap competitor list. Accepts a string or an array. Only the first competitor is applied in the URL.'
-        },
-        out: { type: 'string', description: 'Optional absolute path to copy the CSV to.' },
-        downloadDir: { type: 'string', description: 'Absolute path to the folder Chrome saves the CSV into, which is where the file is watched for. Defaults to UMBRA_DOWNLOAD_DIR when that variable is set, otherwise the Downloads folder inside the home directory of the account running the companion server. Set this per call when Chrome saves downloads somewhere else. This is where the file lands; out is where it is copied afterwards.' },
-        keepTabs: { type: 'boolean', description: 'When true, leave the owned Ahrefs tab open. Defaults to false.' },
-        groupTitle: { type: 'string', description: 'Chrome tab group title. Defaults to Ahrefs Export.' },
-        navigateTimeoutMs: { type: 'number', description: 'Navigation wait in milliseconds. Defaults to 45000.' },
-        downloadTimeoutMs: { type: 'number', description: 'CSV wait in milliseconds. Defaults to 90000.' }
-      },
-      required: ['target']
-    }
-  },
-  {
     name: 'browser_reload_extension',
     description: 'Reload the unpacked Umbra extension without opening chrome://extensions. Use after syncing extension files to the Active folder.',
     inputSchema: {
@@ -835,29 +781,49 @@ export function isMcpLocalTool(name) {
   return MCP_LOCAL_TOOL_NAMES.has(name);
 }
 
-// Tools that only work when the local Ahrefs export plugin is installed alongside
-// the server. The published package omits that file, so a build without it must
-// not advertise these tools at all.
-export const AHREFS_PLUGIN_TOOL_NAMES = new Set(['browser_export_ahrefs']);
+export const PAGE_ACTION_TOOL_NAME = 'browser_run_page_action';
 
-// Build the advertised tool list for one server build. Pass ahrefs: false when
-// the Ahrefs export plugin is absent, which drops browser_export_ahrefs from the
-// list the MCP client sees. The ahrefs_ values in the browser_run_page_action
-// enum stay in either build: those actions live in the extension, and the
-// extension reports a clear error when its recipe file is not installed.
-export function buildToolDefinitions({ ahrefs = true } = {}) {
-  if (ahrefs) {
+// Build the advertised tool list for one server build. TOOL_DEFINITIONS is the
+// surface every build has. `plugins` is the aggregate an optional local
+// page-recipe plugin contributes, from loadPlugins() in plugins-loader.mjs:
+// extra tool definitions, and extra namespaced values for the page-action enum
+// whose implementations live in the matching extension recipe file. No plugin
+// installed means no additions, which is what a published package sees.
+export function buildToolDefinitions({ plugins = null } = {}) {
+  const extraTools = Array.isArray(plugins?.toolDefinitions) ? plugins.toolDefinitions : [];
+  const extraActions = Array.isArray(plugins?.pageActions) ? plugins.pageActions : [];
+  if (extraTools.length === 0 && extraActions.length === 0) {
     return TOOL_DEFINITIONS.slice();
   }
-  return TOOL_DEFINITIONS.filter((tool) => !AHREFS_PLUGIN_TOOL_NAMES.has(tool.name));
+
+  const definitions = TOOL_DEFINITIONS.map((tool) => {
+    if (tool.name !== PAGE_ACTION_TOOL_NAME || extraActions.length === 0) {
+      return tool;
+    }
+    // Copied rather than mutated: TOOL_DEFINITIONS is the shared catalog and a
+    // second call would otherwise keep appending to the same enum array.
+    const action = tool.inputSchema.properties.action;
+    const merged = [...action.enum, ...extraActions.filter((name) => !action.enum.includes(name))];
+    return {
+      ...tool,
+      inputSchema: {
+        ...tool.inputSchema,
+        properties: {
+          ...tool.inputSchema.properties,
+          action: { ...action, enum: merged },
+        },
+      },
+    };
+  });
+
+  const known = new Set(definitions.map((tool) => tool.name));
+  return [...definitions, ...extraTools.filter((tool) => !known.has(tool.name))];
 }
 
 // The MCP-local tool names for one server build, matching buildToolDefinitions.
-// A tool that is not advertised can never be dispatched, so dropping its
-// membership here keeps the two lists describing the same surface.
-export function buildMcpLocalToolNames({ ahrefs = true } = {}) {
-  if (ahrefs) {
-    return new Set(MCP_LOCAL_TOOL_NAMES);
-  }
-  return new Set([...MCP_LOCAL_TOOL_NAMES].filter((name) => !AHREFS_PLUGIN_TOOL_NAMES.has(name)));
+// A plugin tool is answered inside this process rather than forwarded to the
+// extension, so it belongs in this set whenever its plugin is installed.
+export function buildMcpLocalToolNames({ plugins = null } = {}) {
+  const extra = Array.isArray(plugins?.mcpLocalToolNames) ? plugins.mcpLocalToolNames : [];
+  return new Set([...MCP_LOCAL_TOOL_NAMES, ...extra]);
 }

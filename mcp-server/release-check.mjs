@@ -21,10 +21,11 @@ const activeExtensionDir = activeExtensionDirFromEnv
 const comparingAgainstSelf = path.resolve(activeExtensionDir) === path.resolve(canonicalExtensionDir);
 
 // Identity gate. A release fails when any file that would ship carries the
-// author's name or an absolute home directory, which is the class of leak this
-// whole sanitize pass exists to remove. Two knobs keep it usable while other
-// work is in flight: --identity-only skips the test run, and --paths narrows
-// the scan to named subdirectories.
+// author's name, an absolute home directory, or the third-party SEO product
+// whose automation stays in the local-only plugins. That is the class of leak
+// this whole sanitize pass exists to remove. Two knobs keep it usable while
+// other work is in flight: --identity-only skips the test run, and --paths
+// narrows the scan to named subdirectories.
 //
 // The two name needles are assembled from fragments on purpose. Written out as
 // literals they would match this file itself on every run, which leaves only
@@ -33,6 +34,11 @@ const comparingAgainstSelf = path.resolve(activeExtensionDir) === path.resolve(c
 const AUTHOR_GIVEN_NAME = ['rob', 'ert'].join('');
 const AUTHOR_SURNAME = ['lo', 'ra'].join('');
 const AUTHOR_HANDLE = `rj${AUTHOR_SURNAME}`;
+// The SEO vendor whose page automation the optional local plugins drive. Those
+// plugins are gitignored, so the gate skips them and every remaining hit is a
+// tracked file naming a third-party product the public tree has no reason to
+// mention. Assembled from fragments for the same reason the names above are.
+const SEO_VENDOR = ['ah', 'refs'].join('');
 
 const IDENTITY_PATTERNS = [
   { name: 'author-name', regex: new RegExp(AUTHOR_GIVEN_NAME, 'i') },
@@ -41,6 +47,7 @@ const IDENTITY_PATTERNS = [
   // as "exploration" and an unbounded match would bury real leaks in noise.
   { name: 'author-surname', regex: new RegExp(`(?<![a-z])${AUTHOR_SURNAME}(?![a-z])`, 'i') },
   { name: 'home-path', regex: /\/Users\/[A-Za-z]/ },
+  { name: 'seo-vendor', regex: new RegExp(SEO_VENDOR, 'i') },
 ];
 
 // Directories the scan never walks, whatever .gitignore says. `.git` holds
@@ -254,7 +261,7 @@ const identity = options.skipIdentity
   : await scanForIdentityLeaks(options.paths);
 
 if (identity.findings.length > 0) {
-  console.error(`Identity gate failed. ${identity.findings.length} line(s) carry an author name or an absolute home path:`);
+  console.error(`Identity gate failed. ${identity.findings.length} line(s) carry an author name, an absolute home path, or a third-party product name:`);
   for (const finding of identity.findings.slice(0, 50)) {
     console.error(`  ${finding.file}:${finding.line} [${finding.pattern}] ${finding.text}`);
   }
