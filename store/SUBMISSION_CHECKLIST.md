@@ -1,6 +1,6 @@
 # Chrome Web Store Submission Checklist
 
-Everything between a verified package and a published listing, in the order it has to happen. Version at the time of writing: `0.4.7`, built to `dist/umbra-0.4.7.zip` at 93,877 bytes.
+Everything between a verified package and a published listing, in the order it has to happen. The version comes from `extension/manifest.json` and the package is written to `dist/umbra-<version>.zip`; no step below pins a version number, because a pinned one goes stale on the next bump and a stale zip is the most avoidable rejection there is.
 
 Two of these steps cost money or need a human at a keyboard with the account password. They are marked and grouped first so they are not discovered at the end.
 
@@ -18,13 +18,31 @@ None of these can be automated, delegated, or done by an agent. They need the ow
 
 **OWNER: declare trader status.** The dashboard requires each developer to state whether they publish as a trader or a non-trader for distribution in the European Union. Non-trader is the honest answer for an unpaid personal project; picking wrong is a compliance problem, not a formatting one, so read the definition on the form rather than guessing.
 
-**OWNER: host the privacy policy at a public URL.** `store/privacy-policy.md` has to be reachable without a login before the listing can reference it. The URL goes in two places: the Privacy practices tab of the dashboard, and the listing itself. Any stable public host works. The lowest-effort option that stays in one place is GitHub Pages on the repository already named in `homepage_url` (`https://github.com/umbra-bridge/umbra`). Record the final URL here once it exists:
+**OWNER: host the privacy policy at a public URL.** `store/privacy-policy.md` has to be reachable without a login before the listing can reference it. The URL goes in two places: the Privacy practices tab of the dashboard, and the listing itself. Any stable public host works. The lowest-effort option that stays in one place is GitHub Pages on the repository already named in `homepage_url` (`https://github.com/getumbra/umbra`). Record the final URL here once it exists:
 
 ```
 Privacy policy URL: ______________________________________
 ```
 
 **OWNER: confirm the item name is free.** Search the store for "Umbra" before uploading. A name collision is a rename, and a rename after the listing copy is written is rework in four files.
+
+---
+
+## 1b. Blockers that are still open
+
+Two links and one command in the listing copy do not resolve yet. Each of them is a rejection on its own, so none of section 2 is worth running until all three are true:
+
+- `https://github.com/getumbra/umbra` returns 200. It is `homepage_url` in the manifest and it is linked twice from `store/description.txt`.
+- `https://github.com/getumbra/umbra/blob/main/docs/install.md` returns 200 on the default branch.
+- `npm view @umbra-mcp/server version` returns a version. `store/description.txt` gives `npx -y @umbra-mcp/server pair` as the one-line install, and a 404 there leaves a reviewer with no working path at all.
+
+Check all three in one go:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://github.com/getumbra/umbra
+curl -s -o /dev/null -w '%{http_code}\n' https://github.com/getumbra/umbra/blob/main/docs/install.md
+npm view @umbra-mcp/server version
+```
 
 ---
 
@@ -35,10 +53,12 @@ Run all four and read the output. A submission built from a stale zip is the mos
 ```bash
 # from the repository root
 bash scripts/package-extension.sh
-node scripts/verify-package.mjs dist/umbra-0.4.7.zip
-cd mcp-server && npm test
-~/.cargo/bin/cargo test --manifest-path ../rust-broker/Cargo.toml
+node scripts/verify-package.mjs "dist/umbra-$(node -p "require('./extension/manifest.json').version").zip"
+npm test
+~/.cargo/bin/cargo test --manifest-path rust-broker/Cargo.toml
 ```
+
+`package-extension.sh` runs the gate itself and writes `dist/umbra-<version>.zip` only when it passes, so a rejected build leaves nothing at the upload path. The explicit `verify-package.mjs` line above re-checks the file that is actually going to be uploaded.
 
 `verify-package.mjs` is the gate that matters for the store. It asserts, and must report ok on every line: archive size under budget, every entry on the allowlist, no local-only directory shipped, no author identity in any shipped byte, no third-party product name in any shipped byte, no source file compiling a string into code, no icon carrying provenance metadata, and a store-ready manifest.
 
@@ -59,7 +79,7 @@ Bump `version` in `extension/manifest.json` before every resubmission, including
 | Screenshots | At least one, five maximum | Assets below |
 | Small promo tile | 440 by 280 | Assets below |
 | Marquee promo tile | 1400 by 560, optional | Assets below |
-| Homepage URL | `https://github.com/umbra-bridge/umbra`, matching `extension/manifest.json:6` | Already set |
+| Homepage URL | `https://github.com/getumbra/umbra`, matching `extension/manifest.json:6` | Already set |
 | Support URL | The repository issue tracker | `store/listing.md` |
 
 Two consistency checks before pasting anything. The description names a tool count; if the public build gained or lost a tool since the copy was written, that number is wrong and a reviewer can count. Both URLs in the description point at the repository named in `homepage_url`, and a description link that does not load is a rejection reason by itself, so open both.
@@ -85,7 +105,7 @@ This is the tab that gets the submission held or rejected. Fill every field, the
 | Personally identifiable information | No | Nothing identifying is read or stored. The only stored id is a random local hex string. |
 | Health information | No | No such path exists. |
 | Financial and payment information | No | No such path exists. |
-| Authentication information | No | No `cookies` permission, no credential storage, and JavaScript results that look like a token or a JWT are blocked before they return (`extension/javascript-safety.js:36`). |
+| Authentication information | No | No `cookies` permission and no credential storage. A JavaScript result that looks like a cookie jar, a set-cookie header, a JWT, a prefixed bearer token, or a long query-string secret is blocked before it returns (`looksLikeSensitiveResult` in `extension/javascript-safety.js`). |
 | Personal communications | No | Nothing reads mail, messages, or contacts as a category. |
 | Location | No | No geolocation API is called. |
 | Web history | No | No `history` permission. Tab URLs are read only for tabs the calling session opened. |
@@ -154,11 +174,11 @@ Plan for a slow review with at least one round trip. An extension that declares 
 
 **The `debugger` permission is the single largest factor.** It cannot be declared optional, it needs no host permission to work, and through `Runtime.evaluate`, `DOM.setFileInputFiles`, and `Page.captureScreenshot` it carries the most sensitive capabilities in the package. Moving `<all_urls>` to `optional_host_permissions` removed the install-time "read and change all your data on all websites" warning, which is a real win for users, but it does not move the item out of the manual review bucket. Expect a human to read the code.
 
-**The likeliest rejection is not a permission. It is testability.** A reviewer installs the zip, opens it, and sees a settings form asking for a key they do not have, with no way to exercise a single feature. Without the screencast, the `npx` command, and the disclosure in the description, that reviewer has no path to a working state and the honest outcome from their side is a rejection. Closing that gap is what the reviewer notes field and the external-dependency line in the description are for, and neither is optional here.
+**The likeliest rejection is not a permission. It is testability.** A reviewer installs the zip, opens it, and sees a settings form asking for a key they do not have, with no way to exercise a single feature. Without the screencast, a companion-server command that actually runs, and the disclosure in the description, that reviewer has no path to a working state and the honest outcome from their side is a rejection. Closing that gap is what the reviewer notes field and the external-dependency line in the description are for, and neither is optional here.
 
 **The second likeliest is the remote-code question.** `Runtime.evaluate` running a caller-supplied string looks like remote code to a scanner and to a reviewer skimming. The package has no `eval`, no `new Function`, no `AsyncFunction`, and `script-src 'self'`, and the string comes from a local process the user started. That answer belongs in the dashboard field and in the reviewer notes, in the same words, before anyone asks.
 
-**A third, cheaper one: an obfuscated-code false positive.** `background.js` is 182 KB and 5,300 lines, which is large enough to trip a size heuristic. It is plain readable source, not minified and not packed, and it ships with its comments intact. If that flag comes back, the reply is one sentence plus a line count.
+**A third, cheaper one: an obfuscated-code false positive.** `background.js` is a few hundred kilobytes and several thousand lines, which is large enough to trip a size heuristic. It is plain readable source, not minified and not packed, and it ships with its comments intact. If that flag comes back, the reply is one sentence plus a line count.
 
 **Precedents worth knowing about.** The plan itself names none, so treat these as a starting point rather than a citation, and open each live listing to confirm its current permission set before repeating any of it to anyone:
 

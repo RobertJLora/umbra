@@ -4,15 +4,17 @@ import path from 'node:path';
 import net from 'node:net';
 import { EventEmitter } from 'node:events';
 import { MAX_BROWSER_BATCH_CALLS, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
-import { resolveBatchParams } from './batch-refs.js';
-import { FileDownloadLedger } from './download-ledger.mjs';
-import { resolveBrokerSocketPath, resolveDownloadDir } from './config.js';
+import { copyResolvedParams, resolveBatchParams } from './batch-refs.js';
+import { resolveDownloadWait } from './download-ledger.mjs';
+import { resolveBrokerSocketPath } from './config.js';
 import {
-  COMMAND_TIMEOUT_SLACK_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  MAX_COMMAND_TIMEOUT_MS,
   MIN_CHILD_CALL_TIMEOUT_MS,
+  maxBatchTimeoutMs,
   resolveBrokerRequestTimeoutMs,
   resolveChildCallTimeoutMs,
+  resolveTransportTimeoutMs,
 } from './timeouts.js';
 
 // Re-exported so callers and tests keep importing the command-timeout helper
@@ -268,9 +270,13 @@ export class RustBrokerClient extends EventEmitter {
       params = { ...params, filePath: assertLocalUploadFile(params.filePath) };
     }
     const resolvedTimeoutMs = resolveBrokerRequestTimeoutMs(this.requestTimeoutMs, params);
+    // Adding a flat COMMAND_TIMEOUT_SLACK_MS on top of a budget whose own floor
+    // is MIN_CHILD_CALL_TIMEOUT_MS made every transport timer at least 6,000 ms,
+    // so no batch deadline under six seconds was enforceable at all. The slack
+    // now scales with the budget.
     const timeoutMs = budgetMs === null
       ? resolvedTimeoutMs
-      : resolveChildCallTimeoutMs(budgetMs + COMMAND_TIMEOUT_SLACK_MS, resolvedTimeoutMs);
+      : resolveTransportTimeoutMs(budgetMs, resolvedTimeoutMs);
     try {
       return await this.sendBrokerRequest('command', {
         session_id: this.sessionId,
@@ -447,7 +453,10 @@ export class RustBrokerClient extends EventEmitter {
     const stopOnError = params.stopOnError !== false;
     const rawTimeoutMs = Number(params.timeoutMs);
     const timeoutMs = Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
-      ? Math.min(Math.floor(rawTimeoutMs), this.requestTimeoutMs * MAX_BROWSER_BATCH_CALLS)
+      // Bounded by the number of children actually queued as well as by the
+      // 25-call ceiling, so a one-call batch cannot hold an MCP client for the
+      // 25 minutes the constant alone allowed.
+      ? Math.min(Math.floor(rawTimeoutMs), maxBatchTimeoutMs(this.requestTimeoutMs, calls.length))
       : DEFAULT_BATCH_TIMEOUT_MS;
     const startedAt = Date.now();
     const deadlineAt = startedAt + timeoutMs;
@@ -517,8 +526,19 @@ export class RustBrokerClient extends EventEmitter {
           call.params && typeof call.params === 'object' && !Array.isArray(call.params)
             ? call.params
             : {};
-        const childParams = resolveBatchParams(rawChildParams, results);
-        const reservedMs = (calls.length - index - 1) * CHILD_BUDGET_RESERVE_MS;
+        // A bare {"$ref": "..."} resolves by identity, so a budget written into
+        // it would land inside the result an earlier step already reported.
+        const childParams = copyResolvedParams(resolveBatchParams(rawChildParams, results));
+        // The reserve protects the LAST steps, so it must never eat the whole
+        // remaining budget. Unclamped, a batch of 16 or more calls reserved more
+        // than the default 30,000 ms deadline and collapsed child 0 to the
+        // 1,000 ms floor while 29,000 ms went unused.
+        const reservedMs = Math.min(
+          Math.floor(remainingMs / 2),
+          (calls.length - index - 1) * CHILD_BUDGET_RESERVE_MS,
+        );
+        const requestedChildMs = Number(rawChildParams.timeoutMs);
+        const hasRequestedChildMs = Number.isFinite(requestedChildMs) && requestedChildMs > 0;
         const childBudgetMs = resolveChildCallTimeoutMs(
           Math.max(MIN_CHILD_CALL_TIMEOUT_MS, remainingMs - reservedMs),
           rawChildParams.timeoutMs,
@@ -529,8 +549,12 @@ export class RustBrokerClient extends EventEmitter {
           && childParams
           && typeof childParams === 'object'
           && !Array.isArray(childParams)
+          // Clamp downward only, the way the legacy lane already does. Writing
+          // unconditionally raised a caller's deliberate 200 ms wait to the
+          // 1,000 ms floor, so the two transports disagreed on the same batch.
+          && (!hasRequestedChildMs || childBudgetMs < requestedChildMs)
         ) {
-          childParams.timeoutMs = childBudgetMs;
+          childParams.timeoutMs = Math.min(childBudgetMs, MAX_COMMAND_TIMEOUT_MS);
         }
         const result = await this.sendExtensionCommand(toolName, childParams, { budgetMs: childBudgetMs });
         results.push({
@@ -616,21 +640,7 @@ export class RustBrokerClient extends EventEmitter {
   }
 
   async waitForDownload(params = {}) {
-    const requestedDir = typeof params.dir === 'string' && params.dir.trim() ? params.dir.trim() : '';
-    const downloadDir = requestedDir || resolveDownloadDir();
-    const ledger = new FileDownloadLedger({ downloadDir });
-    const timeoutMs = Number.isFinite(Number(params.timeoutMs)) && Number(params.timeoutMs) > 0
-      ? Math.min(Number(params.timeoutMs), 300_000)
-      : 30_000;
-    if (typeof params.filename === 'string' && params.filename.trim()) {
-      return await ledger.waitForExact({ filename: params.filename.trim(), timeoutMs });
-    }
-    return await ledger.waitForNew({
-      sinceMs: Number.isFinite(Number(params.createdAfterMs)) ? Number(params.createdAfterMs) : Date.now() - 1_000,
-      timeoutMs,
-      extension: params.extension || '',
-      nameIncludes: typeof params.pattern === 'string' && params.pattern.trim() ? [params.pattern.trim()] : [],
-    });
+    return await resolveDownloadWait(params, () => this.isConnected(), this.sessionId);
   }
 
 }

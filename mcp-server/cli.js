@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
+  expandUserPath,
   resolveBrokerSocketPath,
   resolveLaunchdLabel,
   resolveSharedKeyPath,
@@ -30,6 +31,10 @@ const SHARED_KEY_FILE_MODE = 0o600;
 const SHARED_KEY_DIR_MODE = 0o700;
 const LOG_DIR_NAME = 'logs';
 const PLACEHOLDER_PATTERN = /__[A-Z0-9_]+__/g;
+// A separate non-global copy. `test` on a global regex advances lastIndex, so
+// reusing PLACEHOLDER_PATTERN inside a replace callback would corrupt the very
+// scan that invoked it.
+const PLACEHOLDER_PROBE = /__[A-Z0-9_]+__/;
 
 const USAGE = `umbra - companion server for the Umbra Chrome extension
 
@@ -38,6 +43,8 @@ Usage:
                              block to paste into your MCP client config. With no
                              key, an existing key is reused and a missing one is
                              generated. Pass --rotate to replace an existing key.
+                             A key passed as an argument lands in shell history and
+                             in ps output, so prefer --stdin or --key-file.
   umbra start                Run the MCP server on stdio. This is the command an
                              MCP client should invoke.
   umbra doctor [options]     Run the local diagnostic and print its JSON report.
@@ -45,6 +52,17 @@ Usage:
   umbra broker install       Install and start the optional launchd job that keeps
                              the Rust broker running. Pass --dry-run to print the
                              rendered job and the commands without touching launchd.
+
+Options for "umbra pair":
+  --rotate                   Replace an existing key with a fresh one
+  --stdin                    Read the key from standard input
+  --key-file <path>          Read the key from a file
+  --quiet                    Confirm the pairing without reprinting the key
+
+Options for "umbra broker install":
+  --dry-run                  Print the rendered job and the commands only
+  --force                    Install even when the rendered job disagrees with
+                             this server's resolved label
 
 Options:
   -h, --help                 Show this help
@@ -87,23 +105,152 @@ export function generateSharedKey() {
   return crypto.randomBytes(SHARED_KEY_BYTES).toString('hex');
 }
 
-export function readSharedKeyFile(keyPath) {
+// A key file that exists but cannot be read is a different situation from one
+// that is absent: the first must never be silently replaced with a fresh key,
+// because the extension is still paired on the key nobody can read.
+export function inspectSharedKeyFile(keyPath) {
+  let stat;
+  try {
+    stat = fs.lstatSync(keyPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { state: 'absent', key: null, mode: null };
+    }
+    return { state: 'unreadable', key: null, mode: null, code: error?.code || 'EACCES' };
+  }
+  if (stat.isSymbolicLink()) {
+    return { state: 'symlink', key: null, mode: null };
+  }
+  if (stat.isDirectory()) {
+    return { state: 'directory', key: null, mode: null };
+  }
   try {
     const contents = fs.readFileSync(keyPath, 'utf8').trim();
-    return contents.length > 0 ? contents : null;
-  } catch {
-    return null;
+    return {
+      state: contents.length > 0 ? 'present' : 'empty',
+      key: contents.length > 0 ? contents : null,
+      mode: stat.mode & 0o777,
+    };
+  } catch (error) {
+    return { state: 'unreadable', key: null, mode: stat.mode & 0o777, code: error?.code || 'EACCES' };
   }
 }
 
+export function readSharedKeyFile(keyPath) {
+  return inspectSharedKeyFile(keyPath).key;
+}
+
+// Ordinary, user-fixable filesystem states. Reporting them as a Node stack sends
+// a person hunting a bug in this file instead of running the one command that
+// clears the condition.
+function keyFileWriteError(error, keyPath) {
+  const remedies = {
+    EISDIR: `${keyPath} is a directory. Remove it and rerun "umbra pair".`,
+    ENOTDIR: `A path component of ${keyPath} is a file, not a directory. Remove it and rerun "umbra pair".`,
+    EACCES: `No permission to write ${keyPath}. Fix the mode on it or on its parent directory.`,
+    EPERM: `No permission to write ${keyPath}. Fix the mode on it or on its parent directory.`,
+    EROFS: `${keyPath} is on a read-only filesystem. Set UMBRA_SHARED_KEY_FILE to a writable path.`,
+    ENOSPC: `No space left to write ${keyPath}.`,
+  };
+  const remedy = remedies[error?.code];
+  if (!remedy) {
+    return error;
+  }
+  return new CliError(`Cannot write the shared key: ${remedy}`, {
+    hint: 'Or set UMBRA_SHARED_KEY_FILE to a path you can write.',
+  });
+}
+
 // writeFileSync applies its mode only when it creates the file, so an existing
-// key file keeps whatever mode it already had. The explicit chmod repairs a key
-// that was created by hand with a readable mode.
+// key file keeps whatever mode it already had, and mkdirSync applies its mode
+// only when it creates the directory. Both are repaired explicitly. The write
+// goes to a private temp file and is renamed onto the final path, so two
+// concurrent `umbra pair --rotate` runs cannot interleave a partial write, and
+// the caller can read the file back to learn which key actually won.
 export function writeSharedKeyFile(keyPath, key) {
-  fs.mkdirSync(path.dirname(keyPath), { recursive: true, mode: SHARED_KEY_DIR_MODE });
-  fs.writeFileSync(keyPath, `${key}\n`, { mode: SHARED_KEY_FILE_MODE });
-  fs.chmodSync(keyPath, SHARED_KEY_FILE_MODE);
+  const directory = path.dirname(keyPath);
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: SHARED_KEY_DIR_MODE });
+    const directoryMode = fs.statSync(directory).mode & 0o777;
+    if (directoryMode & 0o077) {
+      fs.chmodSync(directory, SHARED_KEY_DIR_MODE);
+    }
+
+    // Writing through a symlink truncates whatever it points at, and the link
+    // survives, so the substitution is invisible in a later listing.
+    const existing = fs.lstatSync(keyPath, { throwIfNoEntry: false });
+    if (existing?.isSymbolicLink()) {
+      throw new CliError(`The shared key path ${keyPath} is a symlink.`, {
+        hint: 'Remove the link and rerun "umbra pair", or point UMBRA_SHARED_KEY_FILE at a real file.',
+      });
+    }
+    if (existing?.isDirectory()) {
+      throw new CliError(`Cannot write the shared key: ${keyPath} is a directory.`, {
+        hint: 'Remove it and rerun "umbra pair".',
+      });
+    }
+
+    const tempPath = `${keyPath}.tmp-${process.pid}`;
+    fs.writeFileSync(tempPath, `${key}\n`, { mode: SHARED_KEY_FILE_MODE, flag: 'w' });
+    fs.chmodSync(tempPath, SHARED_KEY_FILE_MODE);
+    fs.renameSync(tempPath, keyPath);
+  } catch (error) {
+    if (error instanceof CliError) {
+      throw error;
+    }
+    throw keyFileWriteError(error, keyPath);
+  }
   return keyPath;
+}
+
+// The previous secret exists in exactly one place on disk, so replacing it is
+// irreversible unless a copy is kept. Timestamped so a second rotation does not
+// overwrite the first backup.
+export function backupSharedKeyFile(keyPath, key) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = `${keyPath}.bak-${stamp}`;
+  try {
+    fs.writeFileSync(backupPath, `${key}\n`, { mode: SHARED_KEY_FILE_MODE, flag: 'w' });
+    fs.chmodSync(backupPath, SHARED_KEY_FILE_MODE);
+    return backupPath;
+  } catch {
+    return '';
+  }
+}
+
+// The generator emits 32 random bytes as 64 hex characters. Anything without
+// that much entropy is not a key, and a value carrying whitespace or a control
+// character silently breaks both the printed environment block and the file
+// round trip, because the loader trims what it reads.
+export const SHARED_KEY_PATTERN = /^[A-Za-z0-9_-]{32,512}$/;
+
+export function assertUsableSharedKey(key) {
+  const value = String(key ?? '');
+  if (!SHARED_KEY_PATTERN.test(value)) {
+    throw new CliError(
+      'That key is not a usable shared key.',
+      {
+        hint: [
+          'A key is 32 to 512 characters of letters, digits, "-" or "_", with no spaces,',
+          'newlines, or control characters. The generator writes 64 hex characters.',
+          'Run "umbra pair --rotate" to have one generated, or paste the value the',
+          'extension options page Generate button produced.',
+        ].join('\n'),
+      },
+    );
+  }
+  return value;
+}
+
+// Any path this CLI prints for a person to paste has to survive a shell. A home
+// directory with a space in it, and the binary name "Umbra Helper", both break
+// an unquoted command line.
+export function shellQuote(value) {
+  const text = String(value ?? '');
+  if (text !== '' && /^[A-Za-z0-9_@%+=:,./-]+$/.test(text)) {
+    return text;
+  }
+  return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
 export function describeFileMode(filePath) {
@@ -121,13 +268,13 @@ export function describeFileMode(filePath) {
 // The block a user pastes into an MCP client config. The key file is the
 // recommended form because the key then lives in one place with a private mode;
 // the inline variable is there for clients that cannot read a file path.
-export function buildEnvBlock({ key, keyPath }) {
+export function buildEnvBlock({ key, keyPath, quiet = false }) {
   return [
     `UMBRA_SHARED_KEY_FILE=${keyPath}`,
     '',
     'or, for a client that cannot reference a file:',
     '',
-    `UMBRA_SHARED_KEY=${key}`,
+    quiet ? 'UMBRA_SHARED_KEY=<the key in that file>' : `UMBRA_SHARED_KEY=${key}`,
   ];
 }
 
@@ -179,58 +326,174 @@ export function parseArgs(argv) {
   const command = positionals[0] || '';
   const subcommand = command === 'broker' ? positionals[1] || '' : '';
   const rest = command === 'broker' ? positionals.slice(2) : positionals.slice(1);
-  return { command, subcommand, positionals: rest, flags };
+  // The raw tail in its original order. Splitting argv into flags and
+  // positionals hoists a space-separated option value in front of the flag it
+  // belongs to, so anything forwarded to a child process gets the untouched
+  // sequence instead.
+  const skip = command === 'broker' ? 2 : (command ? 1 : 0);
+  let seen = 0;
+  const raw = args.filter((arg) => {
+    if (!arg.startsWith('-') && seen < skip) {
+      seen += 1;
+      return false;
+    }
+    return true;
+  });
+  return { command, subcommand, positionals: rest, flags, raw };
 }
 
-function rejectUnknownFlags(flags, allowed, command) {
-  const unknown = flags.filter((flag) => !allowed.includes(flag.split('=')[0]));
-  if (unknown.length > 0) {
-    throw new CliError(`Unknown option for "umbra ${command}": ${unknown.join(' ')}`, {
+// A boolean flag that arrives with a value is rejected rather than allowlisted
+// and then ignored. `--rotate=true` used to pass this check and then fail the
+// exact-match test in commandPair, so a person who believed they had rotated a
+// compromised key had not.
+function rejectUnknownFlags(flags, allowed, command, { valueFlags = [] } = {}) {
+  const problems = [];
+  for (const flag of flags) {
+    const name = flag.split('=')[0];
+    if (!allowed.includes(name)) {
+      problems.push(`Unknown option for "umbra ${command}": ${flag}`);
+      continue;
+    }
+    if (flag.includes('=') && !valueFlags.includes(name)) {
+      problems.push(`"umbra ${command}" option ${name} takes no value, but got ${flag}`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new CliError(problems.join('\n'), {
       hint: 'Run "umbra --help" for the full command list.',
     });
   }
 }
 
-export function commandPair({ positionals, flags, stdout }) {
-  rejectUnknownFlags(flags, ['--rotate'], 'pair');
+function flagValue(rawArgs, name) {
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === name) {
+      return rawArgs[index + 1] ?? '';
+    }
+    if (arg.startsWith(`${name}=`)) {
+      return arg.slice(name.length + 1);
+    }
+  }
+  return null;
+}
+
+function readKeyFromFile(rawPath) {
+  const keyFilePath = path.resolve(expandUserPath(String(rawPath || '').trim()));
+  let contents;
+  try {
+    contents = fs.readFileSync(keyFilePath, 'utf8');
+  } catch (error) {
+    throw new CliError(`Could not read the key file ${keyFilePath}: ${error?.code || error?.message}.`, {
+      hint: 'Point --key-file at a readable file holding the key on its own line.',
+    });
+  }
+  return contents.trim();
+}
+
+function readKeyFromStdin() {
+  let contents;
+  try {
+    contents = fs.readFileSync(0, 'utf8');
+  } catch (error) {
+    throw new CliError(`Could not read the key from standard input: ${error?.code || error?.message}.`);
+  }
+  return contents.trim();
+}
+
+export function commandPair({ positionals, flags, raw = [], stdout, stderr = () => {} }) {
+  rejectUnknownFlags(flags, ['--rotate', '--stdin', '--key-file', '--quiet'], 'pair', {
+    valueFlags: ['--key-file'],
+  });
   if (positionals.length > 1) {
     throw new CliError('umbra pair accepts at most one key argument.');
   }
 
   const keyPath = resolveSharedKeyPath();
-  const supplied = positionals[0]?.trim() || '';
   const rotate = flags.includes('--rotate');
-  const existing = readSharedKeyFile(keyPath);
+  const quiet = flags.includes('--quiet');
+  const useStdin = flags.includes('--stdin');
+  const keyFileArg = flagValue(raw, '--key-file');
+  const existing = inspectSharedKeyFile(keyPath);
+
+  const sources = [];
+  if (positionals[0]?.trim()) sources.push('a key argument');
+  if (useStdin) sources.push('--stdin');
+  if (keyFileArg !== null) sources.push('--key-file');
+  if (sources.length > 1) {
+    throw new CliError(`Pass the key exactly one way, but got ${sources.join(' and ')}.`);
+  }
+
+  let supplied = '';
+  if (positionals[0]?.trim()) {
+    supplied = positionals[0].trim();
+    stderr('Note: a key passed as an argument lands in shell history and in ps output. Prefer "umbra pair --stdin" or "umbra pair --key-file <path>".\n');
+  } else if (useStdin) {
+    supplied = readKeyFromStdin();
+  } else if (keyFileArg !== null) {
+    if (!String(keyFileArg).trim()) {
+      throw new CliError('umbra pair --key-file needs a path.');
+    }
+    supplied = readKeyFromFile(keyFileArg);
+  }
 
   if (supplied && rotate) {
     throw new CliError('Pass either a key or --rotate, not both.');
+  }
+  if (supplied) {
+    assertUsableSharedKey(supplied);
+  }
+
+  if (existing.state === 'unreadable') {
+    throw new CliError(`The shared key file ${keyPath} exists but cannot be read (${existing.code}).`, {
+      hint: 'Fix its mode, or move it aside first. Generating a replacement over a key nobody can read would silently unpair the extension.',
+    });
   }
 
   let key = supplied;
   let action = 'wrote the key you supplied to';
   if (!key) {
-    if (existing && !rotate) {
-      key = existing;
+    if (existing.key && !rotate) {
+      key = existing.key;
       action = 'reused the existing key at';
     } else {
       key = generateSharedKey();
-      action = existing ? 'replaced the key at' : 'generated a new key at';
+      action = existing.key ? 'replaced the key at' : 'generated a new key at';
     }
   }
 
+  const replacing = Boolean(existing.key) && existing.key !== key;
+  const backupPath = replacing ? backupSharedKeyFile(keyPath, existing.key) : '';
+
   writeSharedKeyFile(keyPath, key);
+  // Read the file back rather than trusting the in-memory value, so two
+  // concurrent runs both report the key that actually won the rename.
+  const onDisk = readSharedKeyFile(keyPath);
+  if (onDisk && onDisk !== key) {
+    key = onDisk;
+    action = 'found another pairing run had just written';
+  }
   const mode = describeFileMode(keyPath);
+
+  if (existing.mode !== null && (existing.mode & 0o077)) {
+    stderr(`Note: the previous key file was mode ${existing.mode.toString(8)}, so other accounts on this machine could read it. Rotate it with "umbra pair --rotate" if that key was ever live.\n`);
+  }
 
   const lines = [
     `Umbra ${action} ${keyPath} (${mode})`,
-    '',
-    'Paste this key into the extension options page, in the Shared key field:',
-    '',
-    `  ${key}`,
+    ...(backupPath ? ['', `The previous key was copied to ${backupPath}`] : []),
+    ...(quiet
+      ? ['', 'The key is on disk. Rerun without --quiet to print it.']
+      : [
+        '',
+        'Paste this key into the extension options page, in the Shared key field:',
+        '',
+        `  ${key}`,
+      ]),
     '',
     'Then give your MCP client this environment:',
     '',
-    ...buildEnvBlock({ key, keyPath }).map((line) => (line ? `  ${line}` : '')),
+    ...buildEnvBlock({ key, keyPath, quiet }).map((line) => (line ? `  ${line}` : '')),
     '',
     'A full client entry looks like this:',
     '',
@@ -296,9 +559,15 @@ export async function commandStart({ flags, env = process.env }) {
 // dependencies, not the development harness, so doctor.mjs is present in a
 // checkout and absent from an npm install. Say which one this is rather than
 // letting node report a module it cannot find.
+// doctor.mjs exits with this status after printing a plain one-line message for
+// a bad option, so the wrapper can report it the way every other subcommand
+// reports a bad option instead of letting a child stack trace through.
+export const DOCTOR_USAGE_EXIT_CODE = 2;
+
 export function commandDoctor({
   flags,
   positionals,
+  raw = null,
   stdout,
   stderr,
   spawn = spawnSync,
@@ -311,7 +580,11 @@ export function commandDoctor({
     });
   }
 
-  const result = spawn(process.execPath, [script, ...positionals, ...flags], {
+  // Forward the tail exactly as it was typed. Rebuilding it from the split
+  // positionals and flags moved `--ttl-ms 5000` to `5000 --ttl-ms`, so every
+  // space-separated option value failed while its `=` form worked.
+  const forwarded = Array.isArray(raw) ? raw : [...positionals, ...flags];
+  const result = spawn(process.execPath, [script, ...forwarded], {
     stdio: 'inherit',
     env: process.env,
   });
@@ -321,6 +594,11 @@ export function commandDoctor({
   if (result.signal) {
     stderr(`umbra doctor stopped on signal ${result.signal}\n`);
     return 1;
+  }
+  if (result.status === DOCTOR_USAGE_EXIT_CODE) {
+    throw new CliError('The diagnostic rejected one of its options.', {
+      hint: 'Doctor options are --fix, --dry-run, --verify-health, --ttl-ms <ms>, and --min-age-ms <ms>.',
+    });
   }
   void stdout;
   return result.status ?? 1;
@@ -368,6 +646,11 @@ export const BUILTIN_LAUNCHD_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
   <true/>
   <key>ThrottleInterval</key>
   <integer>2</integer>
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>4096</integer>
+  </dict>
   <key>StandardOutPath</key>
   <string>__LOG_DIR__/broker.log</string>
   <key>StandardErrorPath</key>
@@ -376,19 +659,44 @@ export const BUILTIN_LAUNCHD_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
+// The repository template carries an authoring comment explaining how to render
+// it. Substituting inside that comment produces an installed job file whose own
+// instructions contradict it, so the comments come out before rendering and the
+// two templates then render byte-identical output for the same inputs.
+export function stripPlistComments(text) {
+  return String(text).replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*\n?/gm, '');
+}
+
 export function loadLaunchdTemplate(repoRoot = path.resolve(__dirname, '..')) {
   const templatePath = path.join(repoRoot, 'launchd', 'dev.umbra.broker.plist.template');
   try {
-    return { source: templatePath, text: fs.readFileSync(templatePath, 'utf8') };
+    return { source: templatePath, text: stripPlistComments(fs.readFileSync(templatePath, 'utf8')) };
   } catch {
     return { source: 'built-in template', text: BUILTIN_LAUNCHD_TEMPLATE };
   }
 }
 
+// One pass over the document, so a value that happens to contain another
+// placeholder is inserted verbatim rather than rescanned and expanded by a later
+// iteration. Placeholders the caller did not supply survive for the guard below,
+// which is what tells a template apart from a bad value.
 export function renderLaunchdPlist(template, values) {
-  let rendered = template;
-  for (const [name, value] of Object.entries(values)) {
-    rendered = rendered.split(`__${name}__`).join(xmlEscape(value));
+  const supplied = new Map(Object.entries(values).map(([name, value]) => [`__${name}__`, value]));
+  const inserted = [];
+  const rendered = String(template).replace(PLACEHOLDER_PATTERN, (match) => {
+    if (!supplied.has(match)) {
+      return match;
+    }
+    const value = String(supplied.get(match));
+    if (PLACEHOLDER_PROBE.test(value)) {
+      inserted.push(`${match} was filled with ${value}, which itself contains a placeholder`);
+    }
+    return xmlEscape(value);
+  });
+  if (inserted.length > 0) {
+    throw new CliError(`A launchd job value carries a template placeholder: ${inserted.join('; ')}`, {
+      hint: 'Set the offending environment variable to a literal path.',
+    });
   }
   const unresolved = [...new Set(rendered.match(PLACEHOLDER_PATTERN) || [])];
   if (unresolved.length > 0) {
@@ -463,8 +771,9 @@ function launchctl(args, spawn) {
 }
 
 export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync, buildJob = buildBrokerJob }) {
-  rejectUnknownFlags(flags, ['--dry-run'], 'broker install');
+  rejectUnknownFlags(flags, ['--dry-run', '--force'], 'broker install');
   const dryRun = flags.includes('--dry-run');
+  const force = flags.includes('--force');
   const job = buildJob();
   const uid = process.getuid?.() ?? os.userInfo().uid;
   const serviceTarget = `gui/${uid}/${job.label}`;
@@ -473,15 +782,28 @@ export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync,
   // server resolves means the server would look for a broker that is not there.
   // Say so at install time instead of leaving it to a failed connection later.
   for (const [name, fromPlist, resolved] of [
-    ['Label', job.label, job.configuredLabel],
     ['broker socket', job.socketPath, resolveBrokerSocketPath()],
     ['shared key file', job.sharedKeyFile, resolveSharedKeyPath()],
+    ['broker binary', job.brokerBin, resolveBrokerBinPath()],
   ]) {
     if (fromPlist && resolved && fromPlist !== resolved) {
       stderr(
         `Note: the job file sets ${name} to ${fromPlist} while this server resolves ${resolved}. The job file wins; set the matching environment variable for the server, or edit ${job.templateSource}.\n`,
       );
     }
+  }
+
+  // The Label is different in kind from the other three: install boots out and
+  // replaces the service the rendered Label names, so a template whose Label
+  // disagrees with the configured one tears down a job the caller never asked
+  // about. Refuse instead of warning.
+  if (!force && job.label && job.configuredLabel && job.label !== job.configuredLabel) {
+    throw new CliError(
+      `The rendered job is labelled ${job.label} while this install resolves ${job.configuredLabel}.`,
+      {
+        hint: `Installing would boot out and replace ${job.label}. Fix ${job.templateSource} so its Label renders from __LABEL__, unset UMBRA_BROKER_LAUNCHD_LABEL, or pass --force to install over ${job.label} on purpose.`,
+      },
+    );
   }
 
   if (dryRun) {
@@ -491,9 +813,9 @@ export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync,
         `Would write: ${job.plistPath}`,
         `Binary:      ${job.brokerBin}`,
         `Log files:   ${job.logPaths.join(' and ')}`,
-        `Would run:   launchctl bootstrap gui/${uid} ${job.plistPath}`,
-        `             launchctl enable ${serviceTarget}`,
-        `             launchctl kickstart -k ${serviceTarget}`,
+        `Would run:   launchctl bootstrap gui/${uid} ${shellQuote(job.plistPath)}`,
+        `             launchctl enable ${shellQuote(serviceTarget)}`,
+        `             launchctl kickstart -k ${shellQuote(serviceTarget)}`,
         '',
         job.plist,
       ].join('\n'),
@@ -512,8 +834,8 @@ export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync,
       hint: [
         'Build and stage it first:',
         '  cargo build --release --manifest-path rust-broker/Cargo.toml',
-        `  mkdir -p ${path.dirname(job.brokerBin)} && cp rust-broker/target/release/umbra-rust-broker ${job.brokerBin}`,
-        'Or set UMBRA_BROKER_BIN to an existing binary. The broker is optional: without it the companion server uses the pure-Node bridge.',
+        `  mkdir -p ${shellQuote(path.dirname(job.brokerBin))} && cp rust-broker/target/release/umbra-rust-broker ${shellQuote(job.brokerBin)}`,
+        'Or set UMBRA_BROKER_BIN to an existing binary and rerun. The broker is optional: without it the companion server uses the pure-Node bridge.',
       ].join('\n'),
     });
   }
@@ -557,7 +879,7 @@ export function commandBrokerInstall({ flags, stdout, stderr, spawn = spawnSync,
         ? '  status:   started'
         : `  status:   bootstrapped but not started yet (launchctl kickstart exit ${kicked.status})`,
       '',
-      `Check it with: node ${path.join(__dirname, 'check-rust-broker.mjs')}`,
+      `Check it with: node ${shellQuote(path.join(__dirname, 'check-rust-broker.mjs'))}`,
     ].join('\n') + '\n',
   );
   return 0;

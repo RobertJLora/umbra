@@ -360,3 +360,85 @@ describe('CiC bridge hardening', () => {
     }
   });
 });
+
+describe('batch deadline enforcement', () => {
+  it('a hung child cannot hold a batch past the deadline the caller declared', async () => {
+    const bridge = new LocalBridgeServer({
+      sharedKey: 'k',
+      sessionId: 'sess_deadline',
+      portStart: 1,
+      portEnd: 1,
+      requestTimeoutMs: 60_000,
+    });
+    // A channel that accepts the command and never answers, which is what a wedged
+    // extension looks like from here.
+    bridge.registry.channel = { socket: { send() {} }, authenticated: true };
+    bridge.registry.isConnected = () => true;
+
+    const startedAt = Date.now();
+    const result = await bridge.sendBatch({
+      timeoutMs: 1_000,
+      stopOnError: false,
+      calls: [
+        { tool: 'browser_wait', params: { tabId: 1, selector: 'main' } },
+        { tool: 'browser_get_page_content', params: { tabId: 1 } },
+      ],
+    });
+    const elapsed = Date.now() - startedAt;
+
+    assert.ok(elapsed < 6_000, `a 1,000 ms batch held the caller for ${elapsed} ms`);
+    assert.equal(result.ok, false);
+    });
+
+  it('composite slices leave the payload step a budget at a small deadline', async () => {
+    const bridge = new LocalBridgeServer({
+      sharedKey: 'k',
+      sessionId: 'sess_slices',
+      portStart: 1,
+      portEnd: 1,
+      requestTimeoutMs: 60_000,
+    });
+
+    const seen = [];
+    bridge.registry.isConnected = () => true;
+    bridge.sendExtensionCommand = async (tool, params) => {
+      seen.push({ tool, timeoutMs: params.timeoutMs });
+      return { tabId: 1 };
+    };
+
+    for (const totalMs of [1_200, 1_500, 2_000, 15_000]) {
+      seen.length = 0;
+      const result = await bridge.sendNavigateWaitRead({ url: 'https://example.com', waitSelector: 'main', timeoutMs: totalMs });
+      const waiting = seen.filter((call) => typeof call.timeoutMs === 'number');
+      const sum = waiting.reduce((total, call) => total + call.timeoutMs, 0);
+      assert.ok(
+        sum < totalMs,
+        `at ${totalMs} ms the waiting steps claimed ${sum} ms, leaving nothing for the read step`,
+      );
+      assert.equal(result.results.length, 3, `the read step never ran at ${totalMs} ms`);
+    }
+    });
+});
+
+describe('batch reference resolution', () => {
+  it('treats ordinary data that looks like a reference as the literal it is', async () => {
+    const { resolveBatchParams } = await import('../../mcp-server/batch-refs.js');
+    const results = [{ ok: true, label: 'create', result: { tabId: 42 } }];
+
+    // A currency amount, a password, and a jQuery-style identifier are data. The
+    // bare-string shorthand ran over every string in every child's params, so
+    // these used to fail the whole batch while the same value sent outside a
+    // batch went through untouched.
+    for (const literal of ['$5', '$1250.00', '$Password1', '$config']) {
+      assert.equal(resolveBatchParams(literal, results), literal);
+    }
+
+    // The shorthand still resolves when it points at something real.
+    assert.equal(resolveBatchParams('$create.tabId', results), 42);
+    assert.equal(resolveBatchParams('$prev.tabId', results), 42);
+
+    // The documented object form still fails loudly, because there it is
+    // unambiguous that a reference was intended.
+    assert.throws(() => resolveBatchParams({ $ref: 'nope.tabId' }, results), /Could not resolve/);
+  });
+});

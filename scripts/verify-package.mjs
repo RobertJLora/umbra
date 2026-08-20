@@ -93,6 +93,10 @@ const SEO_VENDOR = ['ah', 'refs'].join('');
 
 const PRODUCT_NAME_PATTERNS = [
   new RegExp(SEO_VENDOR, 'i'),
+  // Case sensitive on purpose: `CiC` is the third-party product abbreviation,
+  // while `cic:` and `cic-content-agent` are this extension's own internal wire
+  // identifiers and are not a product name.
+  /\bCiC\b/,
   /codex/i,
   /openai/i,
   /chatgpt/i,
@@ -121,8 +125,17 @@ const TRADEMARK_PATTERNS = [...PRODUCT_NAME_PATTERNS, /semrush/i, /moz\b/i];
 // both a review risk and a contradiction of the extension's own policy.
 const REMOTE_CODE_PATTERNS = [
   { label: 'AsyncFunction constructor', re: /AsyncFunction/ },
-  { label: 'new Function(', re: /new\s+Function\s*\(/ },
+  // Bare `Function(...)` is a constructor call too, and it is the spelling a
+  // minifier emits.
+  { label: 'Function( constructor', re: /(^|[^\w.$])Function\s*\(/ },
   { label: 'eval(', re: /(^|[^\w.$])eval\s*\(/ },
+  // Reaching AsyncFunction through the prototype chain is how it is actually
+  // written; the literal string above is the one form nobody uses.
+  { label: 'AsyncFunction via getPrototypeOf', re: /getPrototypeOf\s*\(\s*async\s+function/ },
+  { label: 'import() or require() of a remote URL', re: /\b(?:import|require)\s*\(\s*["'`]https?:/ },
+  { label: 'a string body passed to setTimeout or setInterval', re: /\bset(?:Timeout|Interval)\s*\(\s*["'`]/ },
+  { label: 'a computed property that reassembles eval', re: /\[\s*["'`]ev["'`]\s*\+/ },
+  { label: 'a remote script tag', re: /<script[^>]+src\s*=\s*["']https?:/i },
 ];
 
 // PNG chunks a shipped icon may carry. Everything else is dropped at build
@@ -218,6 +231,13 @@ export function readPngChunkTypes(buffer) {
     types.push(type);
     cursor += 12 + length;
     if (type === 'IEND') break;
+  }
+  // A chunk walk that stops at IEND never sees what was appended after it, and
+  // an author name or home path pasted there survives every other check while
+  // Chrome still renders the icon normally. The marker fails the allowed-chunk
+  // test the same way a stray tEXt chunk does.
+  if (cursor < buffer.length) {
+    types.push('trailing-data');
   }
   return types;
 }
@@ -385,15 +405,55 @@ export function verifyPackage({ entries, zipSize }) {
     if (!description) {
       manifestFailures.push('description is empty');
     }
-    for (const re of TRADEMARK_PATTERNS) {
-      const match = re.exec(description);
-      if (match) manifestFailures.push(`description names ${match[0]}, a third-party trademark`);
+    // The name is the single most visible string in a listing and the homepage
+    // link is right under it, so both carry the same bar the description does.
+    for (const [field, value] of [
+      ['description', description],
+      ['name', String(manifest.name ?? '')],
+      ['homepage_url', String(manifest.homepage_url ?? '')],
+    ]) {
+      for (const re of TRADEMARK_PATTERNS) {
+        const match = re.exec(value);
+        if (match) manifestFailures.push(`${field} names ${match[0]}, a third-party trademark`);
+      }
     }
   }
   add('the manifest is store-ready', manifestFailures);
 
+  add('the store listing text carries no third-party name or author identity', checkStoreListingText());
+
   const failed = checks.filter((check) => !check.ok);
   return { ok: failed.length === 0, checks, failures: failed.flatMap((check) => check.failures) };
+}
+
+// store/description.txt is the text pasted into the listing, and listing.md and
+// permission-justifications.md are the text pasted into the dashboard. None of
+// them ship inside the zip, so nothing was reading them for the very names the
+// stricter bar exists to keep out of a listing.
+export const STORE_TEXT_FILES = [
+  'store/description.txt',
+  'store/listing.md',
+  'store/permission-justifications.md',
+];
+
+export function checkStoreListingText(root = REPO_ROOT, files = STORE_TEXT_FILES) {
+  const failures = [];
+  for (const relative of files) {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(root, relative), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const pattern of [...TRADEMARK_PATTERNS, ...IDENTITY_PATTERNS]) {
+      const re = pattern.re ?? pattern;
+      const match = re.exec(text);
+      if (!match) continue;
+      const line = text.slice(0, match.index).split('\n').length;
+      failures.push(`${relative}:${line} names ${match[0]}`);
+    }
+  }
+  return failures;
 }
 
 export function verifyPackageFile(zipPath) {

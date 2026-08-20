@@ -230,13 +230,17 @@ class CountingNode extends FakeNode {
 function createPage(children) {
   const body = new FakeNode('body', {}, children);
   const document = new FakeNode('html', {}, [body]);
-  const bind = (node) => {
+  // Iterative on purpose: a deep-page test builds a tree thousands of levels
+  // deep, and a recursive bind would overflow the stack in the fixture rather
+  // than in the code under test.
+  const pending = [document];
+  while (pending.length > 0) {
+    const node = pending.pop();
     node.ownerDocument = document;
     for (const child of node.children) {
-      bind(child);
+      pending.push(child);
     }
-  };
-  bind(document);
+  }
   document.body = body;
   return { document, body };
 }
@@ -448,6 +452,79 @@ describe('AX tree helpers', () => {
     assert.equal(wrapper.closestCalls, 0);
     assert.equal(wrapper.innerTextReads, 0);
     assert.equal(button.rectReads, 1);
+  });
+});
+
+describe('AX tree walk budgets', () => {
+  beforeEach(() => {
+    Ax.expireRefStore(Ax.getSharedRefStore(), 0);
+  });
+
+  it('truncates a pathologically deep page instead of blowing the stack', () => {
+    let node = new FakeNode('button', { 'aria-label': 'Deep button' }, ['Deep button']);
+    for (let depth = 0; depth < 10_000; depth += 1) {
+      node = new FakeNode('div', {}, [node]);
+    }
+    const { document, body } = createPage([node]);
+    // The fixture's own querySelectorAll recurses, so it is stubbed out here to
+    // keep the assertion about walkAxTree rather than about the double.
+    document.querySelectorAll = () => [];
+
+    // A RangeError here used to take out browser_read_page, browser_read_interactive
+    // and browser_find for the whole tab, with a message naming neither the page
+    // nor the cause.
+    const walked = Ax.walkAxTree(
+      body,
+      { filter: 'interactive', maxNodes: 500 },
+      { document, refStore: Ax.getSharedRefStore(), domVersion: 1 },
+    );
+    assert.equal(walked.truncated, true);
+  });
+
+  it('stops walking a huge page that matches nothing rather than visiting every element', () => {
+    let styleCalls = 0;
+    const children = Array.from({ length: 60_000 }, () => new FakeNode('div', {}));
+    const { document, body } = createPage(children);
+
+    const walked = Ax.walkAxTree(
+      body,
+      { filter: 'interactive', maxNodes: 1 },
+      {
+        document,
+        refStore: Ax.getSharedRefStore(),
+        domVersion: 1,
+        getComputedStyle: () => {
+          styleCalls += 1;
+          return { display: 'block', visibility: 'visible', opacity: '1' };
+        },
+      },
+    );
+
+    assert.equal(walked.nodes.length, 0);
+    assert.equal(walked.truncated, true, 'a budget stop must report as a truncation');
+    assert.ok(styleCalls < 60_000, `the walk still visited ${styleCalls} elements with no ceiling`);
+  });
+
+  it('floors a fractional maxNodes and find limit at one instead of zero', () => {
+    const { document, body } = createPage(
+      Array.from({ length: 20 }, (_unused, index) => new FakeNode('button', { 'aria-label': `Button ${index}` })),
+    );
+
+    for (const maxNodes of [0.5, 0.9, 1e-6]) {
+      const walked = Ax.walkAxTree(
+        body,
+        { filter: 'interactive', maxNodes },
+        { document, refStore: Ax.createRefStore(), domVersion: 1 },
+      );
+      assert.equal(walked.nodes.length, 1, `maxNodes ${maxNodes} returned an empty read of a page full of controls`);
+    }
+
+    const found = Ax.findAxNodes(
+      body,
+      { query: 'Button', limit: 0.5 },
+      { document, refStore: Ax.createRefStore(), domVersion: 1 },
+    );
+    assert.ok(found.matches.length >= 1, 'a fractional find limit returned nothing');
   });
 });
 

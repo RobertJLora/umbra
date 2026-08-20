@@ -253,6 +253,17 @@ el('grantButton').addEventListener(
   }),
 );
 
+// Pure DOM: flips the key field between masked and visible so the value can be
+// checked before copying. A status refresh re-masks it via renderState, which
+// is the intended resting state.
+el('revealButton').addEventListener('click', () => {
+  const field = el('sharedKey');
+  const button = el('revealButton');
+  const shown = field.type === 'text';
+  field.type = shown ? 'password' : 'text';
+  button.textContent = shown ? 'Reveal' : 'Hide';
+});
+
 chrome.permissions.onAdded.addListener(() => {
   void refreshSiteAccess();
 });

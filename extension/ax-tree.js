@@ -12,6 +12,15 @@
   const DEFAULT_MAX_NODES = 200;
   const ABSOLUTE_MAX_NODES = 500;
   const DEFAULT_FIND_LIMIT = 10;
+  // Far past any real page. The walk recurses once per DOM level and burns about
+  // two stack frames per level, so a hostile page nested a few thousand deep
+  // used to throw RangeError out of every read tool.
+  const MAX_WALK_DEPTH = 1_000;
+  // A ceiling on elements visited, not on nodes kept. Generous enough that a
+  // normal page never reaches it and tight enough that a 100,000-node document
+  // cannot make one read walk the whole tree.
+  const VISIT_BUDGET_FACTOR = 40;
+  const MIN_VISIT_BUDGET = 20_000;
 
   const INTERACTIVE_ROLES = new Set([
     'button',
@@ -88,12 +97,15 @@
     return String(value || '').replace(/["\\]/g, '\\$&');
   }
 
+  // Floored at one node. A value between 0 and 1 passed the `<= 0` guard and
+  // then floored to zero, so a page full of controls came back as an empty read
+  // with truncated: true, which is both wrong and self-contradictory.
   function clampMaxNodes(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       return DEFAULT_MAX_NODES;
     }
-    return Math.min(Math.floor(parsed), ABSOLUTE_MAX_NODES);
+    return Math.min(Math.max(1, Math.floor(parsed)), ABSOLUTE_MAX_NODES);
   }
 
   function clampFindLimit(value) {
@@ -101,7 +113,7 @@
     if (!Number.isFinite(parsed) || parsed <= 0) {
       return DEFAULT_FIND_LIMIT;
     }
-    return Math.min(Math.floor(parsed), ABSOLUTE_MAX_NODES);
+    return Math.min(Math.max(1, Math.floor(parsed)), ABSOLUTE_MAX_NODES);
   }
 
   function attrMap(element) {
@@ -624,12 +636,32 @@
     const labelForMap = buildLabelForMap(documentRef);
     const nodes = [];
     let truncated = false;
+    // maxNodes bounds the output, not the work. A page where nothing matches the
+    // filter never reaches that ceiling, so the walk used to cost one
+    // getComputedStyle per element in the whole document with no limit at all,
+    // on the page's own main thread. The visit budget puts a ceiling on the
+    // traversal itself and reports the stop as a truncation.
+    const maxVisits = Math.max(MIN_VISIT_BUDGET, maxNodes * VISIT_BUDGET_FACTOR);
+    let visits = 0;
 
-    const visit = (element, parentAx, context) => {
+    const visit = (element, parentAx, context, depth = 0) => {
       if (!element || nodes.length >= maxNodes) {
         if (element && nodes.length >= maxNodes) {
           truncated = true;
         }
+        return;
+      }
+      // A deeply nested page used to blow the JavaScript stack, and the
+      // RangeError took out every read tool for that tab with a message naming
+      // neither the page nor the cause. Stopping the descent degrades to a
+      // truncated read instead, which is what maxNodes already does for width.
+      if (depth > MAX_WALK_DEPTH) {
+        truncated = true;
+        return;
+      }
+      visits += 1;
+      if (visits > maxVisits) {
+        truncated = true;
         return;
       }
       const tag = String(element.tagName || '').toLowerCase();
@@ -691,11 +723,15 @@
           truncated = true;
           break;
         }
-        visit(child, nextParent, nextContext);
+        if (visits > maxVisits) {
+          truncated = true;
+          break;
+        }
+        visit(child, nextParent, nextContext, depth + 1);
       }
     };
 
-    visit(root, null, { insideSection: false });
+    visit(root, null, { insideSection: false }, 0);
     return {
       nodes,
       filter,

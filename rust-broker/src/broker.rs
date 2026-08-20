@@ -89,11 +89,58 @@ impl Default for BrokerConfig {
     }
 }
 
+/// Read an environment variable the way `trimmedEnv` in `mcp-server/config.js`
+/// does: surrounding whitespace is stripped, and a value that is empty or only
+/// whitespace counts as unset.
+///
+/// The two resolvers have to agree exactly. Before this, a padded
+/// `UMBRA_BROKER_SOCKET` made the broker treat the raw value as a relative path
+/// and build a mirror tree under its working directory, while Node trimmed the
+/// same value and looked for a socket that was never created.
+fn trimmed_env(key: &str) -> Option<String> {
+    match env::var(key) {
+        Ok(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+/// Expand a leading `~` the way `expandUserPath` in `mcp-server/config.js` does.
+/// A launchd plist and an MCP client config are both JSON, so a tilde arrives
+/// unexpanded and used to be created as a directory literally named `~`.
+fn expand_user_with_home(value: &str, home: &str) -> String {
+    let home = home.trim();
+    if home.is_empty() {
+        return value.to_string();
+    }
+    if value == "~" {
+        return home.to_string();
+    }
+    if let Some(rest) = value.strip_prefix("~/") {
+        return Path::new(home).join(rest).to_string_lossy().into_owned();
+    }
+    value.to_string()
+}
+
+fn expand_user(value: &str) -> String {
+    expand_user_with_home(value, &env::var("HOME").unwrap_or_default())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "::1" | "localhost" | "[::1]")
+}
+
 impl BrokerConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         let mut config = Self::default();
         config.shared_key = load_shared_key_from_env()?;
-        config.host = env::var("UMBRA_HOST").unwrap_or(config.host);
+        config.host = trimmed_env("UMBRA_HOST").unwrap_or(config.host);
         config.port_start = parse_env_u16("UMBRA_PORT_START", config.port_start)?;
         config.port_end = parse_env_u16("UMBRA_PORT_END", config.port_end)?;
         config.request_timeout_ms = parse_env_u64(
@@ -117,9 +164,10 @@ impl BrokerConfig {
             config.idle_reaper_interval_ms,
         )?;
         config.broker_session_id =
-            env::var("UMBRA_BROKER_SESSION_ID").unwrap_or(config.broker_session_id);
-        config.socket_path =
-            env::var("UMBRA_BROKER_SOCKET").unwrap_or(config.socket_path);
+            trimmed_env("UMBRA_BROKER_SESSION_ID").unwrap_or(config.broker_session_id);
+        if let Some(socket_path) = trimmed_env("UMBRA_BROKER_SOCKET") {
+            config.socket_path = expand_user(&socket_path);
+        }
         config.mode = BrokerMode::RustBroker;
 
         if config.port_start > config.port_end {
@@ -131,6 +179,28 @@ impl BrokerConfig {
 
         if config.shared_key.is_empty() {
             return Err(ConfigError::MissingSharedKey);
+        }
+
+        // A relative socket path binds under whatever working directory the
+        // process happened to start in, which under launchd is the user's home,
+        // and the Node side resolves the same value to an absolute path. A
+        // broker nothing can reach is worse than a broker that refuses to start.
+        if !Path::new(&config.socket_path).is_absolute() {
+            return Err(ConfigError::RelativeSocketPath {
+                path: config.socket_path.clone(),
+            });
+        }
+
+        // docs/install.md states that the extension and the server talk only
+        // over loopback, and mcp-server/bridge-core.js enforces it. Binding
+        // every interface exposes the signed-in browser to the whole network to
+        // anyone holding the key, so it takes a second, explicit opt-in.
+        if !is_loopback_host(&config.host)
+            && trimmed_env("UMBRA_ALLOW_NON_LOOPBACK_HOST").as_deref() != Some("1")
+        {
+            return Err(ConfigError::NonLoopbackHost {
+                host: config.host.clone(),
+            });
         }
 
         Ok(config)
@@ -150,6 +220,8 @@ pub enum ConfigError {
     InvalidPortRange { start: u16, end: u16 },
     MissingSharedKey,
     SharedKeyReadFailed { path: String, message: String },
+    RelativeSocketPath { path: String },
+    NonLoopbackHost { host: String },
 }
 
 impl fmt::Display for ConfigError {
@@ -174,6 +246,14 @@ impl fmt::Display for ConfigError {
                     "could not read shared key file {path}: {message}"
                 )
             }
+            Self::RelativeSocketPath { path } => write!(
+                formatter,
+                "UMBRA_BROKER_SOCKET must be an absolute path, got {path}"
+            ),
+            Self::NonLoopbackHost { host } => write!(
+                formatter,
+                "UMBRA_HOST is {host}, which is not a loopback address. Umbra listens on loopback only; set UMBRA_ALLOW_NON_LOOPBACK_HOST=1 to override, which exposes the signed-in browser to every host that can reach this machine"
+            ),
         }
     }
 }
@@ -341,26 +421,67 @@ fn parse_env_u64(key: &'static str, fallback: u64) -> Result<u64, ConfigError> {
 }
 
 fn load_shared_key_from_env() -> Result<String, ConfigError> {
-    if let Ok(value) = env::var("UMBRA_SHARED_KEY") {
-        let trimmed = value.trim().to_string();
-        if !trimmed.is_empty() {
-            return Ok(trimmed);
-        }
+    if let Some(value) = trimmed_env("UMBRA_SHARED_KEY") {
+        return Ok(value);
     }
 
-    let Ok(path) = env::var("UMBRA_SHARED_KEY_FILE") else {
+    let Some(raw_path) = trimmed_env("UMBRA_SHARED_KEY_FILE") else {
         return Ok(String::new());
     };
+    let path = expand_user(&raw_path);
     let contents = fs::read_to_string(&path).map_err(|error| ConfigError::SharedKeyReadFailed {
         path: path.clone(),
         message: error.to_string(),
     })?;
+    // A blank key file is a truncated write or a half-finished install, never a
+    // request for a zero-length HMAC key. from_env turns the empty string into
+    // MissingSharedKey, which is the message that names the fix.
     Ok(contents.trim().to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_padded_or_blank_environment_value_resolves_the_way_the_node_side_resolves_it() {
+        // config.js treats an exported-but-blank variable as unset and trims the
+        // rest. The two resolvers have to produce the identical string, or the
+        // broker binds one path and the companion dials another.
+        std::env::set_var("UMBRA_TEST_TRIMMED", "  /tmp/spaced.sock  ");
+        assert_eq!(trimmed_env("UMBRA_TEST_TRIMMED").as_deref(), Some("/tmp/spaced.sock"));
+        std::env::set_var("UMBRA_TEST_TRIMMED", "   ");
+        assert_eq!(trimmed_env("UMBRA_TEST_TRIMMED"), None);
+        std::env::set_var("UMBRA_TEST_TRIMMED", "");
+        assert_eq!(trimmed_env("UMBRA_TEST_TRIMMED"), None);
+        std::env::remove_var("UMBRA_TEST_TRIMMED");
+        assert_eq!(trimmed_env("UMBRA_TEST_TRIMMED"), None);
+    }
+
+    #[test]
+    fn a_tilde_path_expands_rather_than_becoming_a_directory_named_tilde() {
+        // The home is a parameter, so this asserts the expansion rule without
+        // mutating a process-wide variable other tests read.
+        let home = "/tmp/umbra-home";
+        assert_eq!(
+            expand_user_with_home("~/.umbra/run/broker.sock", home),
+            "/tmp/umbra-home/.umbra/run/broker.sock"
+        );
+        assert_eq!(expand_user_with_home("~", home), "/tmp/umbra-home");
+        assert_eq!(expand_user_with_home("/already/absolute", home), "/already/absolute");
+        // A tilde in the middle is part of the name, not a home reference.
+        assert_eq!(expand_user_with_home("/opt/~/x", home), "/opt/~/x");
+    }
+
+    #[test]
+    fn only_loopback_hosts_count_as_loopback() {
+        for host in ["127.0.0.1", "::1", "localhost", "[::1]"] {
+            assert!(is_loopback_host(host), "{host} should be loopback");
+        }
+        for host in ["0.0.0.0", "192.168.0.13", "::", "example.test"] {
+            assert!(!is_loopback_host(host), "{host} must not count as loopback");
+        }
+    }
 
     #[test]
     fn the_default_shim_socket_is_per_user_and_outside_tmp() {

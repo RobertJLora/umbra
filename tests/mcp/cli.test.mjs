@@ -210,8 +210,127 @@ describe('umbra pair', () => {
       assert.notEqual(rotated, first);
       assert.match(rotated, /^[0-9a-f]{64}$/);
 
-      commandPair({ positionals: ['supplied-key-value'], flags: [], stdout: collector() });
-      assert.equal(readSharedKeyFile(keyPath), 'supplied-key-value');
+      const supplied = 'a'.repeat(64);
+      commandPair({ positionals: [supplied], flags: [], stdout: collector(), stderr: collector() });
+      assert.equal(readSharedKeyFile(keyPath), supplied);
+    });
+  });
+
+  it('refuses a key that is too short, carries whitespace, or carries a control character', () => {
+    withKeyPath((keyPath) => {
+      for (const bad of ['x', 'notahexkey', `${'a'.repeat(32)} ${'b'.repeat(32)}`, `AAAA\nBBBB`, 'a'.repeat(31)]) {
+        assert.throws(
+          () => commandPair({ positionals: [bad], flags: [], stdout: collector(), stderr: collector() }),
+          /not a usable shared key/,
+          `pair accepted ${JSON.stringify(bad)}`,
+        );
+      }
+      assert.equal(readSharedKeyFile(keyPath), null, 'a rejected key must not reach disk');
+    });
+  });
+
+  it('rejects a boolean flag that arrives with a value instead of ignoring it', () => {
+    withKeyPath((keyPath) => {
+      commandPair({ positionals: [], flags: [], stdout: collector(), stderr: collector() });
+      const original = readSharedKeyFile(keyPath);
+
+      for (const flag of ['--rotate=true', '--rotate=false']) {
+        assert.throws(
+          () => commandPair({ positionals: [], flags: [flag], stdout: collector(), stderr: collector() }),
+          /takes no value/,
+        );
+      }
+      assert.equal(readSharedKeyFile(keyPath), original, 'a rejected flag must not change the key');
+    });
+  });
+
+  it('backs the previous key up before replacing it, and reports the backup path', () => {
+    withKeyPath((keyPath) => {
+      commandPair({ positionals: [], flags: [], stdout: collector(), stderr: collector() });
+      const first = readSharedKeyFile(keyPath);
+
+      const out = collector();
+      commandPair({ positionals: [], flags: ['--rotate'], stdout: out, stderr: collector() });
+      const rotated = readSharedKeyFile(keyPath);
+      assert.notEqual(rotated, first);
+
+      const backups = fs
+        .readdirSync(path.dirname(keyPath))
+        .filter((name) => name.startsWith(`${path.basename(keyPath)}.bak-`));
+      assert.equal(backups.length, 1, 'rotation kept no copy of the only existing secret');
+      const backupPath = path.join(path.dirname(keyPath), backups[0]);
+      assert.equal(fs.readFileSync(backupPath, 'utf8').trim(), first);
+      assert.equal(describeFileMode(backupPath), '-rw-------');
+      assert.ok(out.text().includes(backupPath), 'the backup path was not named in the output');
+    });
+  });
+
+  it('refuses to write the key through a symlink, and never truncates the link target', () => {
+    withKeyPath((keyPath) => {
+      const victim = path.join(path.dirname(keyPath), 'victim.txt');
+      fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+      fs.writeFileSync(victim, 'IMPORTANT UNRELATED CONTENT\n');
+      fs.symlinkSync(victim, keyPath);
+
+      assert.throws(
+        () => commandPair({ positionals: [], flags: ['--rotate'], stdout: collector(), stderr: collector() }),
+        /is a symlink/,
+      );
+      assert.equal(fs.readFileSync(victim, 'utf8'), 'IMPORTANT UNRELATED CONTENT\n');
+    });
+  });
+
+  it('reads a key from a file and from stdin without putting it in argv', () => {
+    withKeyPath((keyPath) => {
+      const supplied = 'b'.repeat(64);
+      const keyFile = path.join(path.dirname(keyPath), 'supplied.key');
+      fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+      fs.writeFileSync(keyFile, `${supplied}\n`);
+
+      commandPair({
+        positionals: [],
+        flags: ['--key-file'],
+        raw: ['--key-file', keyFile],
+        stdout: collector(),
+        stderr: collector(),
+      });
+      assert.equal(readSharedKeyFile(keyPath), supplied);
+    });
+  });
+
+  it('keeps the key out of the printed block when asked to stay quiet', () => {
+    withKeyPath(() => {
+      const out = collector();
+      commandPair({ positionals: [], flags: ['--quiet'], stdout: out, stderr: collector() });
+      const printed = out.text();
+      assert.ok(!/[0-9a-f]{64}/.test(printed), 'the key was printed despite --quiet');
+      assert.ok(printed.includes('UMBRA_SHARED_KEY_FILE='));
+    });
+  });
+
+  it('refuses to generate a replacement over a key file it cannot read', () => {
+    withKeyPath((keyPath) => {
+      fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+      fs.writeFileSync(keyPath, `${'c'.repeat(64)}\n`);
+      fs.chmodSync(keyPath, 0o000);
+      try {
+        assert.throws(
+          () => commandPair({ positionals: [], flags: [], stdout: collector(), stderr: collector() }),
+          /cannot be read/,
+        );
+      } finally {
+        fs.chmodSync(keyPath, 0o600);
+      }
+    });
+  });
+
+  it('reports a key path that is a directory as a fixable state, not a stack trace', () => {
+    withKeyPath((keyPath) => {
+      fs.mkdirSync(keyPath, { recursive: true });
+      assert.throws(
+        () => commandPair({ positionals: [], flags: [], stdout: collector(), stderr: collector() }),
+        (error) => error.name === 'CliError' && /is a directory/.test(error.message),
+      );
     });
   });
 
@@ -579,6 +698,53 @@ describe('launchd template rendering', () => {
     assert.equal(template.text, BUILTIN_LAUNCHD_TEMPLATE);
   });
 
+  it('renders the same job from the repository template and the built-in copy', () => {
+    const previous = {
+      bin: process.env.UMBRA_BROKER_BIN,
+      label: process.env.UMBRA_BROKER_LAUNCHD_LABEL,
+      socket: process.env.UMBRA_BROKER_SOCKET,
+      key: process.env.UMBRA_SHARED_KEY_FILE,
+    };
+    const dir = makeTempDir();
+    process.env.UMBRA_BROKER_BIN = path.join(dir, 'custom-broker');
+    process.env.UMBRA_BROKER_LAUNCHD_LABEL = 'dev.umbra.scratch';
+    process.env.UMBRA_BROKER_SOCKET = path.join(dir, 'scratch.sock');
+    process.env.UMBRA_SHARED_KEY_FILE = path.join(dir, 'scratch-key');
+    try {
+      const fromRepo = buildBrokerJob({ repoRoot });
+      const fromBuiltIn = buildBrokerJob({ repoRoot: dir });
+      // A checkout install and an npm install have to produce the same job for
+      // the same environment, or the two paths install different services.
+      assert.equal(fromRepo.plist, fromBuiltIn.plist);
+      assert.equal(fromRepo.label, 'dev.umbra.scratch');
+      assert.equal(fromRepo.brokerBin, process.env.UMBRA_BROKER_BIN);
+      assert.equal(fromRepo.socketPath, process.env.UMBRA_BROKER_SOCKET);
+      assert.equal(fromRepo.sharedKeyFile, process.env.UMBRA_SHARED_KEY_FILE);
+      // The installed file is the job, not the authoring notes for the template.
+      assert.doesNotMatch(fromRepo.plist, /<!--/);
+    } finally {
+      for (const [name, value] of [
+        ['UMBRA_BROKER_BIN', previous.bin],
+        ['UMBRA_BROKER_LAUNCHD_LABEL', previous.label],
+        ['UMBRA_BROKER_SOCKET', previous.socket],
+        ['UMBRA_SHARED_KEY_FILE', previous.key],
+      ]) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
+  it('fills every placeholder in one pass, so a value holding one is not expanded', () => {
+    assert.throws(
+      () => renderLaunchdPlist('<string>__BIN__</string><string>__LOG_DIR__</string>', {
+        BIN: '/opt/__LOG_DIR__/broker',
+        LOG_DIR: '/var/log',
+      }),
+      /carries a template placeholder/,
+    );
+  });
+
   it('refuses to write a plist that still holds placeholders', () => {
     assert.throws(
       () => renderLaunchdPlist('<string>__HOME__</string><string>__MYSTERY__</string>', { HOME: '/h' }),
@@ -655,6 +821,39 @@ describe('umbra cli as a process', () => {
     const report = JSON.parse(result.stdout);
     assert.equal(typeof report, 'object');
     assert.notEqual(report, null);
+  });
+
+  it('forwards a space-separated doctor option in the order it was typed', async () => {
+    const dir = makeTempDir();
+    const result = await runCliProcess(['doctor', '--ttl-ms', '5000'], {
+      UMBRA_SHARED_KEY_FILE: path.join(dir, 'shared-key'),
+      UMBRA_BROKER_SOCKET: path.join(dir, 'broker.sock'),
+    });
+    assert.doesNotMatch(result.stderr, /Unknown doctor option/);
+    const report = JSON.parse(result.stdout);
+    assert.equal(typeof report, 'object');
+  });
+
+  it('reports an unknown doctor option as a one-line error, not a child stack trace', async () => {
+    const dir = makeTempDir();
+    const result = await runCliProcess(['doctor', '--definitely-not-a-doctor-flag'], {
+      UMBRA_SHARED_KEY_FILE: path.join(dir, 'shared-key'),
+      UMBRA_BROKER_SOCKET: path.join(dir, 'broker.sock'),
+    });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /rejected one of its options/);
+    assert.doesNotMatch(result.stderr, /at ModuleJob/);
+  });
+
+  it('takes the broker socket for --fix from the resolver, not from a listener answer', async () => {
+    const dir = makeTempDir();
+    const socketPath = path.join(dir, 'broker.sock');
+    const result = await runCliProcess(['doctor'], {
+      UMBRA_SHARED_KEY_FILE: path.join(dir, 'shared-key'),
+      UMBRA_BROKER_SOCKET: socketPath,
+    });
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.broker.socketPath, socketPath);
   });
 });
 

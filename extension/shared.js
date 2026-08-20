@@ -48,8 +48,12 @@ export async function loadBridgeConfig() {
   const config = await chrome.storage.local.get(DEFAULT_CONFIG);
   return {
     sharedKey: String(config.sharedKey || ''),
-    portStart: clampPort(config.portStart, DEFAULT_PORT_START, DEFAULT_PORT_END),
-    portEnd: clampPort(config.portEnd, DEFAULT_PORT_END, DEFAULT_PORT_END),
+    // The ceiling is the full port range, not DEFAULT_PORT_END. Clamping to the
+    // default end silently reverted any configured port above 47852 while the
+    // companion server happily bound it, so the extension scanned a range the
+    // server was not listening on and the documented remedy could not fix it.
+    portStart: clampPort(config.portStart, DEFAULT_PORT_START),
+    portEnd: clampPort(config.portEnd, DEFAULT_PORT_END),
     bridgeEnabled: config.bridgeEnabled !== false,
     installId: String(config.installId || ''),
   };
@@ -72,8 +76,8 @@ export async function saveBridgeConfig(partialConfig) {
     ...existing,
     ...partialConfig,
   };
-  next.portStart = clampPort(next.portStart, existing.portStart, DEFAULT_PORT_END);
-  next.portEnd = clampPort(next.portEnd, existing.portEnd, DEFAULT_PORT_END);
+  next.portStart = clampPort(next.portStart, existing.portStart);
+  next.portEnd = clampPort(next.portEnd, existing.portEnd);
   next.bridgeEnabled = next.bridgeEnabled !== false;
   if (next.portEnd < next.portStart) {
     next.portEnd = next.portStart;

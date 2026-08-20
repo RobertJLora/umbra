@@ -201,3 +201,91 @@ test('report filename hints outrank an unrelated file that shares the domain nam
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test('an accented filename matches whichever unicode normalization the caller typed', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cic-download-ledger-'));
+  try {
+    // APFS keeps the bytes it was given, so a name Chrome built from page text
+    // arrives decomposed while a token a caller typed is usually composed.
+    const composedToken = 'cafe\u0301'.normalize('NFC');
+    const decomposedToken = 'cafe\u0301'.normalize('NFD');
+    assert.notEqual(composedToken, decomposedToken, 'the two normal forms must differ as strings');
+    await fsp.writeFile(path.join(tempDir, `${decomposedToken}-export.csv`), 'a,b\n1,2\n', 'utf8');
+
+    for (const token of [composedToken, decomposedToken]) {
+      const ledger = new FileDownloadLedger({ downloadDir: tempDir, pollMs: 5, stableSamples: 1 });
+      const matches = await ledger.findNew({ sinceMs: 0, nameIncludes: [token] });
+      assert.equal(matches.length, 1, `token ${JSON.stringify(token)} matched nothing`);
+    }
+
+    // The same split used to drop the whole CDP attribution tier to tier 0.
+    const ledger = new FileDownloadLedger({ downloadDir: tempDir, pollMs: 5, stableSamples: 1 });
+    ledger.claimExpectedDownload({ suggestedFilename: `${composedToken}-export.csv`, tabId: 1 });
+    const attributed = await ledger.findNew({ sinceMs: 0, expectedNames: ledger.expectedFilenames() });
+    assert.equal(attributed[0]?.attributed, true);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a filename cannot escape the watched directory, on the wait or the clear path', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cic-download-ledger-'));
+  try {
+    const outside = path.join(tempDir, 'outside');
+    const watched = path.join(tempDir, 'dl');
+    await fsp.mkdir(outside);
+    await fsp.mkdir(watched);
+    const victim = path.join(outside, 'secret.txt');
+    await fsp.writeFile(victim, 'SECRET\n', 'utf8');
+
+    const ledger = new FileDownloadLedger({ downloadDir: watched, pollMs: 5, stableSamples: 1 });
+    await assert.rejects(
+      ledger.waitForExact({ filename: '../outside/secret.txt', timeoutMs: 100 }),
+      /Timed out/,
+      'a traversal filename reported a file outside the download directory as a completed download',
+    );
+    await ledger.clearExact('../outside/secret.txt').catch(() => {});
+    assert.equal(fs.existsSync(victim), true, 'clearExact deleted a file outside the download directory');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a stale file already sitting at the expected name is not reported as this download', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cic-download-ledger-'));
+  try {
+    const stale = path.join(tempDir, 'stale-export.csv');
+    await writeAged(stale, 'col1,col2\nold,data\n', 60 * 60 * 1000);
+
+    const ledger = new FileDownloadLedger({ downloadDir: tempDir, pollMs: 5, stableSamples: 1 });
+    await assert.rejects(
+      ledger.waitForExact({ filename: 'stale-export.csv', timeoutMs: 150, sinceMs: Date.now() }),
+      /predates this call/,
+    );
+
+    // A file written after the call still answers, so the tool keeps working.
+    const fresh = new FileDownloadLedger({ downloadDir: tempDir, pollMs: 5, stableSamples: 1 });
+    const sinceMs = Date.now();
+    const pending = fresh.waitForExact({ filename: 'stale-export.csv', timeoutMs: 2_000, sinceMs });
+    await fsp.writeFile(stale, 'col1,col2\nnew,data\n', 'utf8');
+    const result = await pending;
+    assert.equal(result.filePath, stale);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('browser_wait_for_download says the extension is not connected instead of timing out', async () => {
+  const { resolveDownloadWait } = await import('../../mcp-server/download-ledger.mjs');
+  const startedAt = Date.now();
+  await assert.rejects(
+    resolveDownloadWait({ timeoutMs: 30_000 }, () => false, 'sess_x'),
+    /extension is not connected/,
+  );
+  assert.ok(Date.now() - startedAt < 1_000, 'the not-connected case burned the wait');
+
+  await assert.rejects(
+    resolveDownloadWait({ timeoutMs: -5 }, () => true, 'sess_x'),
+    /positive timeoutMs/,
+  );
+});

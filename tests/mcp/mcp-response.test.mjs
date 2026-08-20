@@ -258,3 +258,57 @@ describe('staged schema validation', () => {
     assert.equal(validate(args).length, 5);
   });
 });
+
+describe('caller errors reach the caller', () => {
+  it('names a non-finite number instead of reporting the same type on both sides', async () => {
+    const { compileSchemaValidator } = await import('../../mcp-server/index.js');
+    const validate = compileSchemaValidator({
+      type: 'object',
+      properties: { tabId: { type: 'integer', minimum: 1 } },
+    });
+    // "expected number, received number" told a caller nothing at all.
+    assert.match(validate({ tabId: Infinity })[0], /received Infinity/);
+    assert.match(validate({ tabId: Number.NaN })[0], /received NaN/);
+  });
+
+  it('separates a missing required parameter from every other staged mismatch', async () => {
+    const { compileSchemaValidator, missingRequiredIssues } = await import('../../mcp-server/index.js');
+    const validate = compileSchemaValidator({
+      type: 'object',
+      required: ['url'],
+      properties: { url: { type: 'string' }, activate: { type: 'boolean' } },
+    });
+
+    // A required-field violation is a caller error, so it is enforced; a type
+    // mismatch stays staged and logged because the extension coerces those.
+    const missing = missingRequiredIssues(validate({ activate: true }));
+    assert.equal(missing.length, 1);
+    assert.match(missing[0], /arguments\.url is required and missing/);
+    assert.deepEqual(missingRequiredIssues(validate({ url: 'https://example.com', activate: 'yes' })), []);
+  });
+
+  it('reports a replaced screenshot file rather than clobbering it silently', async () => {
+    const { buildMcpResponse } = await import('../../mcp-server/index.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'umbra-shot-'));
+    try {
+      const target = path.join(dir, 'shot.png');
+      fs.writeFileSync(target, 'PRIOR CONTENT');
+      const response = buildMcpResponse(
+        'browser_screenshot',
+        { data: Buffer.from('x').toString('base64'), tabId: 1 },
+        { outputPath: target },
+      );
+      assert.equal(response.structuredContent.replacedExistingFile, true);
+      assert.equal(response.structuredContent.replacedBytes, 'PRIOR CONTENT'.length);
+
+      const fresh = buildMcpResponse(
+        'browser_screenshot',
+        { data: Buffer.from('x').toString('base64'), tabId: 1 },
+        { outputPath: path.join(dir, 'new.png') },
+      );
+      assert.equal(fresh.structuredContent.replacedExistingFile, false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

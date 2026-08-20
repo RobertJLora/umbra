@@ -96,6 +96,10 @@ async fn enforces_tab_ownership_before_routing() {
 async fn tracks_pending_requests_in_session_status() {
     let registry = SessionRegistry::default();
 
+    // The session has to exist first. Only ensure_session and the register path
+    // create records; a follow-up mutation on a session that is gone is a
+    // no-op rather than a resurrection.
+    registry.ensure_session("sess_a").await;
     registry.add_pending_request("sess_a").await;
     registry.add_pending_request("sess_a").await;
     let status = registry
@@ -197,4 +201,47 @@ async fn reaps_only_idle_empty_mcp_shim_sessions() {
         .status("umbra-rust-broker")
         .await
         .is_some());
+}
+
+#[tokio::test]
+async fn a_late_observation_never_resurrects_a_removed_session() {
+    let registry = SessionRegistry::default();
+    registry.ensure_session("sess_gone").await;
+    registry.detach_session("sess_gone").await;
+
+    // This is what an extension answer arriving after its shim died looks like.
+    // It used to recreate the record with no channel, hand it a live tab, and
+    // leave a zombie the idle reaper would not touch.
+    registry.touch_session("sess_gone").await;
+    registry.add_pending_request("sess_gone").await;
+    assert!(registry.claim_tab("sess_gone", 900).await.is_err());
+    registry.set_group("sess_gone", 5).await;
+
+    assert!(
+        registry.status("sess_gone").await.is_none(),
+        "a post-hoc mutation recreated a session that was already removed"
+    );
+    assert!(registry.statuses().await.is_empty());
+}
+
+#[tokio::test]
+async fn releasing_a_tab_is_ownership_checked_like_claiming_one() {
+    let registry = SessionRegistry::default();
+    registry.ensure_session("sess_a").await;
+    registry.ensure_session("sess_b").await;
+    registry
+        .claim_tab("sess_a", 500)
+        .await
+        .expect("session A should claim its own tab");
+
+    // Claiming refuses a foreign tab, so releasing must too, or one session's
+    // result can drop another session's ownership record.
+    assert!(registry.release_tab_owned("sess_b", 500).await.is_none());
+    let status = registry.status("sess_a").await.expect("session A should exist");
+    assert!(status.tab_ids.contains(&500), "a foreign release dropped the owner's tab");
+
+    assert_eq!(
+        registry.release_tab_owned("sess_a", 500).await.as_deref(),
+        Some("sess_a")
+    );
 }

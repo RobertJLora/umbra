@@ -94,17 +94,39 @@ describe('extension bridge lifecycle', () => {
     assert.match(background, /state: 'normal'/);
   });
 
-  it('reuses the focused Chrome window as an inactive tab rather than opening a new window', () => {
+  it('refuses to put session tabs in a focused window, including the stored one', async () => {
     const background = fs.readFileSync(backgroundPath, 'utf8');
     const start = background.indexOf('async function findBackgroundWindowId');
     const end = background.indexOf('async function createDedicatedWindowWithTab');
     const block = background.slice(start, end);
-
     assert.ok(start >= 0);
     assert.ok(end > start);
-    assert.match(block, /const unfocused = windows.find/);
-    assert.match(block, /const chosen = unfocused \|\| windows\[0\]/);
-    assert.doesNotMatch(block, /avoidFocused/);
+
+    // README, docs/architecture.md and store/description.txt all promise this,
+    // so it is exercised rather than asserted as a source pattern.
+    const run = (windows, storedId) => new Function(
+      'getStoredDedicatedWindowId',
+      'getNormalWindow',
+      'clearDedicatedWindowId',
+      'listNormalWindows',
+      'rememberDedicatedWindowId',
+      `${block};return findBackgroundWindowId;`,
+    )(
+      async () => storedId,
+      async (id) => windows.find((window) => window.id === id) || null,
+      async () => {},
+      async () => windows,
+      async () => {},
+    )();
+
+    assert.equal(await run([{ id: 7, focused: true }], 7), null, 'a focused stored window was reused');
+    assert.equal(await run([{ id: 7, focused: true }], null), null, 'the only window was focused and got reused');
+    assert.equal(await run([{ id: 7, focused: false }], 7), 7, 'an unfocused stored window must still be reused');
+    assert.equal(
+      await run([{ id: 7, focused: true }, { id: 8, focused: false }], null),
+      8,
+      'an unfocused window should be preferred over the focused one',
+    );
   });
 
   it('never groups or moves tabs through a non-normal window', () => {

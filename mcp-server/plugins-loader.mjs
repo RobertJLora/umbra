@@ -85,6 +85,11 @@ export async function loadPlugins({ dir, log = console.error } = {}) {
     handlers: {},
     suites: {},
     modules: [],
+    // Plugins that are present but cannot run, with the tool names they would
+    // have advertised. A call to one of those tools reports this reason rather
+    // than the generic "appears only when that plugin is installed", which is
+    // the opposite of the truth and points at the wrong fix.
+    unavailable: [],
   };
 
   for (const file of listPluginFiles(dir)) {
@@ -100,6 +105,16 @@ export async function loadPlugins({ dir, log = console.error } = {}) {
     const { available, reason } = readPluginAvailability(module);
     if (!available) {
       log(`[umbra] local plugin ${label} is installed but unavailable${reason ? `: ${reason}` : ''}.`);
+      const toolNames = [
+        ...asArray(module.toolDefinitions).map((definition) => definition?.name).filter(Boolean),
+        ...Object.keys(module.handlers || {}),
+      ];
+      aggregate.unavailable.push({
+        name: label,
+        file,
+        reason: reason || 'the plugin reported itself unavailable',
+        toolNames: [...new Set(toolNames)],
+      });
       continue;
     }
 

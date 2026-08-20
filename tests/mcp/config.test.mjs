@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  describeSocketPathProblem,
   resolveBrokerSocketPath,
   resolveDownloadDir,
   resolveLaunchdLabel,
@@ -173,4 +174,30 @@ describe('mcp-server/package.json', () => {
       assert.doesNotMatch(entry, /^(capture-|export-|benchmark-|demo-)|smoke/);
     }
   });
+});
+
+describe('portable path resolution', () => {
+  it('a tilde in a path variable expands instead of becoming a directory named "~"', () => {
+    const home = os.homedir();
+    withEnv({ UMBRA_SHARED_KEY_FILE: '~/.umbra/shared-key' }, () => {
+      assert.equal(resolveSharedKeyPath(), path.join(home, '.umbra', 'shared-key'));
+    });
+    withEnv({ UMBRA_DOWNLOAD_DIR: '~/Downloads' }, () => {
+      assert.equal(resolveDownloadDir(), path.join(home, 'Downloads'));
+    });
+    withEnv({ UMBRA_BROKER_SOCKET: '  ~/.umbra/run/broker.sock  ' }, () => {
+      assert.equal(resolveBrokerSocketPath(), path.join(home, '.umbra', 'run', 'broker.sock'));
+    });
+    // A relative value resolves to absolute, so no resolver depends on the working
+    // directory the MCP client happened to launch with.
+    withEnv({ UMBRA_BROKER_SOCKET: 'run/broker.sock' }, () => {
+      assert.equal(path.isAbsolute(resolveBrokerSocketPath()), true);
+    });
+    });
+
+  it('a socket path the kernel cannot bind is reported by length, not as a bare bind failure', () => {
+    assert.equal(describeSocketPathProblem('/tmp/short.sock'), '');
+    const tooLong = `/tmp/${'p'.repeat(120)}.sock`;
+    assert.match(describeSocketPathProblem(tooLong), /over the 103-byte limit/);
+    });
 });

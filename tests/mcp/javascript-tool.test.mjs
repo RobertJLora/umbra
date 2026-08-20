@@ -23,7 +23,10 @@ describe('browser_javascript tool', () => {
     assert.ok(tool.description.length >= 20);
     assert.deepEqual(tool.inputSchema.required, ['code']);
     assert.equal(tool.inputSchema.properties.code.type, 'string');
-    assert.equal(tool.inputSchema.properties.tabId.type, 'number');
+    // A Chrome tab id is a positive integer, declared as one so 0 and -1 are
+    // caught by the validator instead of forwarded to the extension.
+    assert.equal(tool.inputSchema.properties.tabId.type, 'integer');
+    assert.equal(tool.inputSchema.properties.tabId.minimum, 1);
     assert.equal(tool.inputSchema.properties.timeoutMs.type, 'number');
     assert.equal(tool.inputSchema.properties.activate.type, 'boolean');
     assert.match(tool.inputSchema.properties.activate.description, /Defaults to false/);
@@ -111,5 +114,36 @@ describe('browser_javascript tool', () => {
       () => serializeJavascriptResult('Set-Cookie: sid=secret'),
       /blocked because it looks like a credential or query-string secret/,
     );
+  });
+});
+
+describe('javascript result credential screen', () => {
+  it('blocks the shapes a real cookie jar and an opaque token arrive in', async () => {
+    const { serializeJavascriptResult } = await import('../../extension/javascript-safety.js');
+
+    // What document.cookie actually returns, and the token prefixes the store
+    // privacy policy says are blocked. Only the header name, the source text and
+    // a JWT were caught before, none of which is the return value.
+    const blocked = [
+      'sessionid=8f2c1ab9d0e4; csrftoken=Zk39PqLm',
+      'Bearer ghp_16C7e42F292c6912E7710c838347Ae178B4a',
+      'ghp_16C7e42F292c6912E7710c838347Ae178B4a',
+      'AKIAIOSFODNN7EXAMPLE',
+      'sk-abcdefghijklmnopqrstuvwxyz012345',
+    ];
+    for (const value of blocked) {
+      assert.throws(() => serializeJavascriptResult(value), /blocked/, `returned: ${value}`);
+    }
+
+    // Ordinary page data still comes back, or the tool is useless.
+    const allowed = [
+      'Ordinary page text.',
+      'a=1; b=2',
+      { title: 'Home', url: 'https://example.com/page?a=b' },
+      ['one', 'two', 'three'],
+    ];
+    for (const value of allowed) {
+      assert.doesNotThrow(() => serializeJavascriptResult(value), `blocked: ${JSON.stringify(value)}`);
+    }
   });
 });

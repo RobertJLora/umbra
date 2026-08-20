@@ -19,7 +19,7 @@ macOS and Linux are the supported platforms. Everything below works the same on 
 2. Turn on Developer mode.
 3. Click **Load unpacked** and select the `extension/` folder from this repository.
 
-**From the Chrome Web Store**: install it and nothing else. The store build leaves out the page recipes, so the site-specific actions report a missing recipe; every other tool is identical.
+**From the Chrome Web Store**: not yet. The listing has not been created, so a checkout is the only way to install the extension today. When it goes live, installing from the store is all there is to it: that build leaves out the page recipes, so the site-specific actions report a missing recipe, and every other tool is identical.
 
 Either way, the extension opens its options page once on a fresh install, which is where the rest of this setup happens.
 
@@ -33,13 +33,9 @@ npm install
 npm test
 ```
 
-Or straight from npm, with no checkout at all:
+`@umbra-mcp/server` is not published yet, so `npx -y @umbra-mcp/server` fails with a 404 and every command below runs from the checkout as `node mcp-server/<script>`. Once it is published, the same commands run as `npx -y @umbra-mcp/server <command>` with no checkout at all.
 
-```bash
-npx -y @umbra-mcp/server --help
-```
-
-The published package carries no optional local page-recipe plugins, so it advertises the built-in tool list and nothing else. A checkout that installs a plugin under `mcp-server/plugins/` lists that plugin's tools as well. Every built-in tool is the same in both.
+The published package will carry no optional local page-recipe plugins, so it advertises the built-in tool list and nothing else. A checkout that installs a plugin under `mcp-server/plugins/` lists that plugin's tools as well. Every built-in tool is the same in both.
 
 ## 3. Generate the shared key
 
@@ -56,7 +52,7 @@ Click **Save And Reconnect** to store it in the extension.
 **From the terminal**:
 
 ```bash
-npx -y @umbra-mcp/server pair
+node mcp-server/cli.js pair
 ```
 
 That writes the key to `~/.umbra/shared-key` with mode `-rw-------`, prints the key to paste into the options page, and prints the client config block. Pass `--rotate` to replace an existing key, or `umbra pair <key>` to adopt a key you already have.
@@ -111,16 +107,16 @@ The options page status dot turns green within about fifteen seconds of the clie
 If it does not, run the diagnostic:
 
 ```bash
-npx -y @umbra-mcp/server doctor
+node mcp-server/doctor.mjs
 ```
 
-From a checkout, `npm run doctor` in `mcp-server/` does the same thing.
+`npm run doctor` from the repository root does the same thing, and so will `npx -y @umbra-mcp/server doctor` once the package is published.
 
 Then ask your agent for a first call. `browser_create_tab` followed by `browser_navigate` and `browser_get_page_content` proves the whole path: the client reached the server, the server reached the extension, and the extension owns a tab.
 
 ## Environment variables
 
-Every one of these has a portable default derived from your home directory, so a stock install needs none of them.
+Every one of these has a portable default derived from your home directory, so a stock install needs none of them. The table covers the variables a normal install touches; the server reads a handful more for timeouts and diagnostics, all of them optional and all named in `mcp-server/config.js` and `mcp-server/index.js`.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
@@ -157,7 +153,7 @@ cp "rust-broker/target/release/umbra-rust-broker" "$HOME/.umbra/bin/Umbra Helper
 On macOS, keep it running under launchd:
 
 ```bash
-npx -y @umbra-mcp/server broker install
+node mcp-server/cli.js broker install
 ```
 
 Add `--dry-run` to print the rendered job and the exact `launchctl` commands without touching launchd. The job writes to `~/.umbra/logs/`, and the socket lands at `~/.umbra/run/broker.sock` with mode `srw-------`.
@@ -176,4 +172,4 @@ Roll back to the pure-Node bridge at any time with `UMBRA_BROKER_MODE=legacy`. D
 
 **A tool reports the tab is not owned.** Sessions can only touch tabs they created or adopted. Use `browser_find_tabs` and `browser_adopt_tab` to take ownership of a tab you opened by hand.
 
-**Nothing works after a Chrome restart.** Reload the extension at `chrome://extensions`, or click Reload Extension on the options page. Session ownership is persisted, but an unpacked extension whose files changed on disk needs the reload.
+**Nothing works after a Chrome restart.** Tab ownership lives in `chrome.storage.session`, which Chrome clears when the browser closes, so previously owned tabs are unowned by design after a restart. Find them again with `browser_find_tabs` and hand each one back with `browser_adopt_tab`, or let the session open fresh tabs. Separately, an unpacked extension whose files changed on disk needs a reload at `chrome://extensions` or from the Reload Extension button on the options page.

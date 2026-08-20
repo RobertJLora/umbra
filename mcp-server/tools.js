@@ -35,9 +35,9 @@ export const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Destination URL.' },
-        tabId: { type: 'number', description: 'Optional owned tab to reuse.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Optional owned tab to reuse.' },
         newTab: { type: 'boolean', description: 'When true, create a fresh session-owned tab.' },
-        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so CiC can work in the background.' },
+        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' },
         groupTitle: { type: 'string', description: 'Optional Chrome tab group title to set or update for this session.' },
         groupColor: {
           ...GROUP_COLOR_SCHEMA,
@@ -56,7 +56,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before navigating back. Defaults to false.' }
       }
     }
@@ -67,7 +67,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before navigating forward. Defaults to false.' }
       }
     }
@@ -99,7 +99,7 @@ export const TOOL_DEFINITIONS = [
       properties: {
         titleIncludes: { type: 'string', description: 'Optional case-insensitive title substring.' },
         urlIncludes: { type: 'string', description: 'Optional case-insensitive URL substring.' },
-        limit: { type: 'number', description: 'Maximum number of matching tabs to return. Defaults to 50, max 200.' }
+        limit: { type: 'integer', minimum: 1, description: 'Maximum number of matching tabs to return. Defaults to 50, max 200.' }
       }
     }
   },
@@ -109,7 +109,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Existing Chrome tab ID to adopt.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Existing Chrome tab ID to adopt.' },
         groupTitle: { type: 'string', description: 'Optional Chrome tab group title to set or update for this session.' },
         groupColor: {
           ...GROUP_COLOR_SCHEMA,
@@ -128,7 +128,7 @@ export const TOOL_DEFINITIONS = [
       properties: {
         title: { type: 'string', description: 'Optional exact Chrome group title.' },
         titleIncludes: { type: 'string', description: 'Optional case-insensitive group title substring.' },
-        limit: { type: 'number', description: 'Maximum number of groups to return. Defaults to 50, max 200.' }
+        limit: { type: 'integer', minimum: 1, description: 'Maximum number of groups to return. Defaults to 50, max 200.' }
       }
     }
   },
@@ -138,7 +138,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        groupId: { type: 'number', description: 'Existing Chrome group ID to adopt.' },
+        groupId: { type: 'integer', description: 'Existing Chrome group ID to adopt.' },
         groupTitle: { type: 'string', description: 'Optional Chrome tab group title to set after adoption.' },
         groupColor: {
           ...GROUP_COLOR_SCHEMA,
@@ -164,7 +164,7 @@ export const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Optional URL to open. Defaults to about:blank.' },
-        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so CiC can work in the background.' },
+        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' },
         groupTitle: { type: 'string', description: 'Optional Chrome tab group title to set or update for this session.' },
         groupColor: {
           ...GROUP_COLOR_SCHEMA,
@@ -194,7 +194,7 @@ export const TOOL_DEFINITIONS = [
         },
         collapsed: { type: 'boolean', description: 'Whether the group should be collapsed.' },
         newGroup: { type: 'boolean', description: 'When true, force a fresh group instead of reusing the session group.' },
-        groupId: { type: 'number', description: 'Optional existing group ID owned by this session.' }
+        groupId: { type: 'integer', description: 'Optional existing group ID owned by this session.' }
       }
     }
   },
@@ -204,7 +204,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to activate.' }
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to activate.' }
       },
       required: ['tabId']
     }
@@ -215,9 +215,9 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        width: { type: 'number', description: 'Target window width in CSS pixels.' },
-        height: { type: 'number', description: 'Target window height in CSS pixels.' },
-        tabId: { type: 'number', description: 'Owned tab whose window should be resized. Defaults to the active owned tab.' }
+        width: { type: 'integer', minimum: 1, description: 'Target window width in CSS pixels.' },
+        height: { type: 'integer', minimum: 1, description: 'Target window height in CSS pixels.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab whose window should be resized. Defaults to the active owned tab.' }
       },
       required: ['width', 'height']
     }
@@ -228,7 +228,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to close.' }
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to close.' }
       },
       required: ['tabId']
     }
@@ -283,7 +283,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to capture. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to capture. Defaults to the active owned tab.' },
         outputPath: { type: 'string', description: 'Optional local filesystem path where the image should be written. Must be absolute, or start with ~ for the home directory of the account running the companion server. A relative path is refused, and so is a path whose parent folder does not already exist. jpeg is inferred from .jpg or .jpeg.' },
         region: {
           type: 'object',
@@ -308,7 +308,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to read. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to read. Defaults to the active owned tab.' },
         format: { type: 'string', enum: ['text', 'html'], description: 'Content format. Defaults to text.' },
         mode: {
           type: 'string',
@@ -316,7 +316,7 @@ export const TOOL_DEFINITIONS = [
           description: 'Content root to read when selector is not supplied. Defaults to page.'
         },
         selector: { type: 'string', description: 'Optional CSS selector to scope the content read.' },
-        maxChars: { type: 'number', description: 'Maximum characters to return from text or HTML content. Defaults to 500000, which is also the hard ceiling: a larger value is clamped down to it. Content longer than the limit is truncated, and the result reports truncated: true with the full originalLength.' },
+        maxChars: { type: 'integer', minimum: 1, description: 'Maximum characters to return from text or HTML content. Defaults to 500000, which is also the hard ceiling: a larger value is clamped down to it. Content longer than the limit is truncated, and the result reports truncated: true with the full originalLength.' },
         includeImages: { type: 'boolean', description: 'When true, include the compact visible rendered-image inventory. Defaults to false for text-only reads.' }
       }
     }
@@ -327,7 +327,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to read. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to read. Defaults to the active owned tab.' },
         level: {
           type: 'string',
           enum: ['error', 'warning', 'info', 'debug'],
@@ -355,7 +355,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to read. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to read. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'Optional CSS selector scope or custom interactive selector.' },
         maxItems: { type: 'number', description: 'Maximum controls to return. Defaults to 80, max 300.' }
       }
@@ -367,13 +367,13 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to read. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to read. Defaults to the active owned tab.' },
         filter: {
           type: 'string',
           enum: ['all', 'interactive', 'landmarks'],
           description: 'Which nodes to include. Defaults to interactive.'
         },
-        maxNodes: { type: 'number', description: 'Maximum nodes to return. Defaults to 200, max 500.' },
+        maxNodes: { type: 'integer', minimum: 1, description: 'Maximum nodes to return. Defaults to 200, max 500.' },
         selector: { type: 'string', description: 'Optional CSS selector to scope the accessibility tree.' }
       }
     }
@@ -384,10 +384,10 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to search. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to search. Defaults to the active owned tab.' },
         query: { type: 'string', description: 'Case-insensitive name, role, or description to match.' },
         selector: { type: 'string', description: 'Optional CSS selector to scope the search.' },
-        limit: { type: 'number', description: 'Maximum matches to return. Defaults to 10.' }
+        limit: { type: 'integer', minimum: 1, description: 'Maximum matches to return. Defaults to 10.' }
       },
       required: ['query']
     }
@@ -398,7 +398,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         selector: { type: 'string', description: 'CSS selector for the field when a ref is not provided.' },
         value: { type: 'string', description: 'Value for text, textarea, contenteditable, or select fields.' },
@@ -413,7 +413,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID to inspect. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to inspect. Defaults to the active owned tab.' },
         includeHtml: { type: 'boolean', description: 'When true, include rendered DOM HTML in the response.' }
       }
     }
@@ -424,7 +424,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         action: {
           type: 'string',
           enum: ['render_wait', 'element_positions', 'inspect_controls', 'click_control', 'limit_table_rows', 'scroll_selector', 'restore_table_rows', 'wait_for_text'],
@@ -443,7 +443,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         code: { type: 'string', description: 'JavaScript to run in the page as an async function body.' },
         timeoutMs: { type: 'number', description: 'Maximum wait time in milliseconds. Defaults to 10000.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before running the code. Defaults to false.' }
@@ -457,7 +457,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector to click.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         x: { type: 'number', description: 'CSS-pixel X coordinate in the viewport. Provide both x and y to click that point.' },
@@ -473,7 +473,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector to hover.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before hovering. Defaults to false.' }
@@ -486,7 +486,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         text: { type: 'string', description: 'Visible text to click.' },
         exact: { type: 'boolean', description: 'Whether to require an exact normalized text match. Defaults to true.' },
         selector: { type: 'string', description: 'Optional CSS selector scope such as button or label.' },
@@ -502,7 +502,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector for an input, textarea, select, or contenteditable editor.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         value: { type: 'string', description: 'Value to enter.' },
@@ -517,7 +517,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector for an input[type=file] element.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         filePath: { type: 'string', description: 'Absolute local path to the file to upload.' },
@@ -532,7 +532,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector for an input, textarea, or contenteditable editor.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         text: { type: 'string', description: 'Text to type into the field.' },
@@ -549,7 +549,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector for a select element.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         values: {
@@ -568,7 +568,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         key: { type: 'string', description: 'Key value such as Enter or Escape.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before dispatching the key. Defaults to false.' }
       },
@@ -581,7 +581,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         name: { type: 'string', description: 'Catalog shortcut name such as Enter or Meta+l.' },
         keys: {
           description: 'Shortcut chord such as Enter or Meta+l, or an array of key names. Combine with modifiers when needed.',
@@ -611,7 +611,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'Optional CSS selector to scroll into view.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         x: { type: 'number', description: 'Horizontal scroll delta.' },
@@ -626,7 +626,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID. Defaults to the active owned tab.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector to wait for.' },
         visible: { type: 'boolean', description: 'When true, wait for a visible selector match. Defaults to false.' },
         timeoutMs: { type: 'number', description: 'Maximum wait time in milliseconds. Defaults to 10000.' }
@@ -640,7 +640,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID.' },
         waitSelector: { type: 'string', description: 'Selector to wait for before clicking.' },
         clickSelector: { type: 'string', description: 'Selector to click.' },
         ref: { type: 'string', description: 'Optional interactive ref to click instead of clickSelector.' },
@@ -658,7 +658,7 @@ export const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Destination URL.' },
-        tabId: { type: 'number', description: 'Optional owned tab to reuse.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Optional owned tab to reuse.' },
         waitSelector: { type: 'string', description: 'Selector to wait for after navigation.' },
         readSelector: { type: 'string', description: 'Optional selector scope for the final read.' },
         format: { type: 'string', enum: ['text', 'html'], description: 'Final read format. Defaults to text.' },
@@ -673,7 +673,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'number', description: 'Owned tab ID.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID.' },
         clickSelector: { type: 'string', description: 'Selector to click.' },
         ref: { type: 'string', description: 'Optional interactive ref to click instead of clickSelector.' },
         waitSelector: { type: 'string', description: 'Selector to wait for after clicking.' },
@@ -713,7 +713,7 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        groupId: { type: 'number', description: 'Optional owned/current group ID. Defaults to current session group.' },
+        groupId: { type: 'integer', description: 'Optional owned/current group ID. Defaults to current session group.' },
         title: { type: 'string', description: 'Optional base title before the Debug suffix.' },
         groupColor: {
           ...GROUP_COLOR_SCHEMA,
@@ -767,8 +767,11 @@ export function assertLocalUploadFile(filePath) {
   } catch {
     throw new Error(`File does not exist: ${value}`);
   }
+  if (stats.isDirectory()) {
+    throw new Error(`Path is a directory, not a file: ${value}`);
+  }
   if (!stats.isFile()) {
-    throw new Error(`File does not exist: ${value}`);
+    throw new Error(`Path is not a regular file: ${value}`);
   }
   return value;
 }

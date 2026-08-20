@@ -146,10 +146,19 @@ impl SessionRegistry {
         status_from_record(session_id, record)
     }
 
+    /// Refresh a session's activity clock.
+    ///
+    /// `get_mut`, never `entry().or_default()`. Only `ensure_session` and the
+    /// register path create records; every other mutation here is a follow-up on
+    /// a session that is supposed to already exist. Creating one on the way past
+    /// resurrected sessions that had just been removed, with `connected: false`
+    /// and no channel, which the idle reaper then refused to touch because it
+    /// only reaps connected shim sessions.
     pub async fn touch_session(&self, session_id: &str) {
         let mut inner = self.inner.write().await;
-        let record = inner.sessions.entry(session_id.to_string()).or_default();
-        record.last_activity_at_ms = now_ms();
+        if let Some(record) = inner.sessions.get_mut(session_id) {
+            record.last_activity_at_ms = now_ms();
+        }
     }
 
     pub async fn attach_channel(
@@ -199,7 +208,11 @@ impl SessionRegistry {
         authenticated_at_ms: u64,
     ) -> Result<SessionStatus, SessionError> {
         let mut inner = self.inner.write().await;
-        let record = inner.sessions.entry(session_id.to_string()).or_default();
+        let Some(record) = inner.sessions.get_mut(session_id) else {
+            return Err(SessionError::SessionMissingChannel {
+                session_id: session_id.to_string(),
+            });
+        };
         let Some(channel) = record.channel.as_mut() else {
             return Err(SessionError::SessionMissingChannel {
                 session_id: session_id.to_string(),
@@ -246,9 +259,10 @@ impl SessionRegistry {
 
     pub async fn set_group(&self, session_id: &str, group_id: GroupId) {
         let mut inner = self.inner.write().await;
-        let record = inner.sessions.entry(session_id.to_string()).or_default();
-        record.last_activity_at_ms = now_ms();
-        record.group_id = Some(group_id);
+        if let Some(record) = inner.sessions.get_mut(session_id) {
+            record.last_activity_at_ms = now_ms();
+            record.group_id = Some(group_id);
+        }
     }
 
     pub async fn claim_tab(&self, session_id: &str, tab_id: TabId) -> Result<(), SessionError> {
@@ -262,7 +276,15 @@ impl SessionRegistry {
             }
         }
 
-        let record = inner.sessions.entry(session_id.to_string()).or_default();
+        // A tool result that names a tab must not recreate a session that has
+        // already gone. An extension answer arriving after its shim died used to
+        // resurrect the removed record and hand it ownership of a live tab, which
+        // then blocked the session that really owned it from claiming it.
+        let Some(record) = inner.sessions.get_mut(session_id) else {
+            return Err(SessionError::SessionNotConnected {
+                session_id: session_id.to_string(),
+            });
+        };
         record.last_activity_at_ms = now_ms();
         record.tab_ids.insert(tab_id);
         if record.active_tab_id.is_none() {
@@ -279,10 +301,31 @@ impl SessionRegistry {
     ) -> Result<(), SessionError> {
         let mut inner = self.inner.write().await;
         assert_owned(&inner, session_id, tab_id)?;
-        let record = inner.sessions.entry(session_id.to_string()).or_default();
+        let Some(record) = inner.sessions.get_mut(session_id) else {
+            return Err(SessionError::SessionNotConnected {
+                session_id: session_id.to_string(),
+            });
+        };
         record.last_activity_at_ms = now_ms();
         record.active_tab_id = Some(tab_id);
         Ok(())
+    }
+
+    /// Drop a tab's ownership record, refusing a tab the caller does not own.
+    ///
+    /// Claiming is ownership checked and releasing was not, so a result naming a
+    /// foreign tab id dropped another session's ownership. The extension enforces
+    /// ownership itself before it would answer with a foreign tab, but the broker
+    /// should not depend on that to keep its own map honest.
+    pub async fn release_tab_owned(&self, session_id: &str, tab_id: TabId) -> Option<String> {
+        {
+            let inner = self.inner.read().await;
+            match inner.tab_to_session.get(&tab_id) {
+                Some(owner) if owner == session_id => {}
+                _ => return None,
+            }
+        }
+        self.release_tab(tab_id).await
     }
 
     pub async fn release_tab(&self, tab_id: TabId) -> Option<String> {
@@ -300,15 +343,20 @@ impl SessionRegistry {
 
     pub async fn add_pending_request(&self, session_id: &str) {
         let mut inner = self.inner.write().await;
-        let record = inner.sessions.entry(session_id.to_string()).or_default();
-        record.pending_requests += 1;
-        record.command_count += 1;
-        record.last_activity_at_ms = now_ms();
+        if let Some(record) = inner.sessions.get_mut(session_id) {
+            record.pending_requests += 1;
+            record.command_count += 1;
+            record.last_activity_at_ms = now_ms();
+        }
     }
 
     pub async fn settle_pending_request(&self, session_id: &str) -> Result<(), SessionError> {
         let mut inner = self.inner.write().await;
-        let record = inner.sessions.entry(session_id.to_string()).or_default();
+        let Some(record) = inner.sessions.get_mut(session_id) else {
+            return Err(SessionError::NoPendingRequest {
+                session_id: session_id.to_string(),
+            });
+        };
         if record.pending_requests == 0 {
             return Err(SessionError::NoPendingRequest {
                 session_id: session_id.to_string(),

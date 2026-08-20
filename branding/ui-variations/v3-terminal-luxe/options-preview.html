@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="dark" />
+    <title>Umbra Settings - Terminal Luxe</title>
+    <style>
+      /* ============================================================
+         UMBRA / v3 TERMINAL LUXE / OPTIONS
+         Signature move: a thin violet filament of light down the left
+         edge of the live panel, and it follows focus - click into any
+         card and that card lights up instead. Sans labels, monospace
+         values, hairline rules, one gradient CTA on the whole page.
+         ============================================================ */
+
+      :root {
+        --bg: #0a0812;
+        --bg-lift: #0f0b1c;
+        --panel: #110d20;
+        --panel-top: rgba(255, 255, 255, 0.045);
+        --hair: rgba(167, 139, 250, 0.11);
+        --hair-soft: rgba(236, 232, 248, 0.06);
+        --well: #08060f;
+
+        --ink: #ece8f8;
+        --ink-mono: #dbd2fb;
+        --muted: rgba(236, 232, 248, 0.58);
+        --micro: rgba(236, 232, 248, 0.55);
+
+        --violet: #7c5cff;
+        --violet-lite: #a78bfa;
+        --violet-deep: #4c1d95;
+
+        --ok: #57e0a0;
+        --bad: #fb7185;
+
+        --r: 8px;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { background: var(--bg); }
+
+      body {
+        margin: 0;
+        padding: 52px 24px 40px;
+        font: 14px/1.55 var(--sans);
+        color: var(--ink);
+        background:
+          radial-gradient(760px 340px at 12% -6%, rgba(124, 92, 255, 0.20), transparent 68%),
+          radial-gradient(620px 400px at 96% 4%, rgba(76, 29, 149, 0.28), transparent 70%),
+          var(--bg);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .shell {
+        width: 720px;
+        max-width: 100%;
+        margin: 0 auto;
+      }
+
+      /* ---------------- hero ---------------- */
+
+      .hero {
+        display: flex;
+        align-items: flex-start;
+        gap: 18px;
+        margin-bottom: 26px;
+      }
+
+      .mark {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        display: block;
+        flex: 0 0 auto;
+        box-shadow:
+          0 0 0 1px rgba(167, 139, 250, 0.22),
+          0 14px 40px rgba(124, 92, 255, 0.34);
+      }
+
+      .wordmark {
+        font-size: 30px;
+        font-weight: 620;
+        letter-spacing: -0.015em;
+        line-height: 1.05;
+        margin: 0;
+      }
+
+      .kicker {
+        display: block;
+        margin-top: 7px;
+        font-family: var(--mono);
+        font-size: 9.5px;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: rgba(196, 177, 255, 0.72);
+      }
+
+      .lede {
+        margin: 12px 0 0;
+        max-width: 560px;
+        font-size: 13.5px;
+        color: var(--muted);
+      }
+
+      /* ---------------- chips ---------------- */
+
+      .chip {
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        padding: 4px 8px;
+        border-radius: 5px;
+        color: #cbb9ff;
+        background: rgba(124, 92, 255, 0.13);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
+        white-space: nowrap;
+        line-height: 1.1;
+      }
+
+      .chip.ok {
+        color: #9df3c9;
+        background: rgba(87, 224, 160, 0.10);
+        box-shadow: inset 0 0 0 1px rgba(87, 224, 160, 0.22);
+      }
+
+      /* ---------------- panels ---------------- */
+
+      .panel {
+        position: relative;
+        overflow: hidden;
+        border-radius: var(--r);
+        background: linear-gradient(180deg, var(--bg-lift), var(--panel));
+        box-shadow:
+          inset 0 1px 0 var(--panel-top),
+          inset 0 0 0 1px var(--hair),
+          0 18px 44px rgba(4, 2, 10, 0.55);
+        padding: 18px 20px;
+        margin-bottom: 14px;
+      }
+
+      .panel > * { position: relative; z-index: 1; }
+
+      /* the filament */
+      .panel::before {
+        content: "";
+        position: absolute;
+        z-index: 0;
+        left: 0;
+        top: 14px;
+        bottom: 14px;
+        width: 2px;
+        border-radius: 2px;
+        background: linear-gradient(
+          180deg,
+          rgba(167, 139, 250, 0) 0%,
+          var(--violet-lite) 18%,
+          var(--violet) 62%,
+          rgba(124, 92, 255, 0) 100%
+        );
+        opacity: 0;
+        transition: opacity 0.24s ease;
+      }
+
+      /* the bloom it throws inward */
+      .panel::after {
+        content: "";
+        position: absolute;
+        z-index: 0;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 190px;
+        pointer-events: none;
+        background: linear-gradient(90deg, rgba(124, 92, 255, 0.15), rgba(124, 92, 255, 0));
+        opacity: 0;
+        transition: opacity 0.24s ease;
+      }
+
+      .panel.is-live::before,
+      .panel:focus-within::before,
+      .panel.is-live::after,
+      .panel:focus-within::after { opacity: 1; }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .label {
+        font-family: var(--mono);
+        font-size: 9.5px;
+        font-weight: 500;
+        letter-spacing: 0.20em;
+        text-transform: uppercase;
+        color: var(--micro);
+        line-height: 1.1;
+      }
+
+      .panel-head .label { flex: 1; }
+
+      /* ---------------- status ---------------- */
+
+      .status-line {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 15px;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(236, 232, 248, 0.32);
+        flex: 0 0 auto;
+      }
+
+      .dot.on {
+        background: var(--ok);
+        box-shadow: 0 0 0 4px rgba(87, 224, 160, 0.11), 0 0 14px rgba(87, 224, 160, 0.7);
+      }
+
+      .dot.bad { background: var(--bad); }
+
+      .status-word {
+        font-family: var(--mono);
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .status-line .spacer { flex: 1; }
+
+      .bad { color: var(--bad); }
+
+      .readout {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--hair-soft);
+      }
+
+      .readout .k {
+        display: block;
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--micro);
+        line-height: 1.1;
+      }
+
+      .readout .v {
+        display: block;
+        margin-top: 7px;
+        font-family: var(--mono);
+        font-size: 19px;
+        color: var(--ink-mono);
+        line-height: 1.05;
+        letter-spacing: 0.005em;
+      }
+
+      .hint {
+        margin: 14px 0 0;
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+
+      .hint:first-child { margin-top: 0; }
+
+      /* ---------------- key field ---------------- */
+
+      .key-shell {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 8px 7px 14px;
+        border-radius: var(--r);
+        background: var(--well);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.14);
+        transition: box-shadow 0.18s ease;
+      }
+
+      .key-shell:focus-within {
+        box-shadow:
+          inset 0 0 0 1px rgba(167, 139, 250, 0.55),
+          0 0 0 3px rgba(124, 92, 255, 0.15);
+      }
+
+      .field-lg {
+        flex: 1;
+        min-width: 0;
+        border: 0;
+        outline: none;
+        background: transparent;
+        font-family: var(--mono);
+        font-size: 13px;
+        letter-spacing: 0.02em;
+        color: var(--ink-mono);
+      }
+
+      .field-lg::placeholder { color: rgba(236, 232, 248, 0.30); }
+
+      /* ---------------- code strip ---------------- */
+
+      .code {
+        margin-top: 12px;
+        padding: 11px 14px;
+        border-radius: var(--r);
+        background: var(--well);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.09);
+        font-family: var(--mono);
+        font-size: 11.5px;
+        line-height: 1.5;
+        color: rgba(236, 232, 248, 0.5);
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+
+      .code b { font-weight: 500; color: #c4b1ff; }
+
+      .code .cap {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 9px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: rgba(236, 232, 248, 0.38);
+      }
+
+      /* ---------------- split grid ---------------- */
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 26px;
+      }
+
+      .split > div + div {
+        padding-left: 26px;
+        border-left: 1px solid var(--hair-soft);
+      }
+
+      .sub {
+        display: block;
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--micro);
+        margin-bottom: 10px;
+      }
+
+      .range-display {
+        font-family: var(--mono);
+        font-size: 26px;
+        letter-spacing: 0.01em;
+        color: var(--ink-mono);
+        line-height: 1.05;
+      }
+
+      .range-display span { color: rgba(236, 232, 248, 0.30); }
+
+      .port-fields {
+        display: flex;
+        align-items: flex-end;
+        gap: 14px;
+        margin-top: 16px;
+      }
+
+      .port-field {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 7px;
+      }
+
+      .mini-k {
+        font-family: var(--mono);
+        font-size: 9px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        color: rgba(236, 232, 248, 0.42);
+      }
+
+      .field {
+        border: 0;
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        letter-spacing: 0.04em;
+        color: var(--ink-mono);
+        text-align: right;
+        background: var(--well);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.14);
+        outline: none;
+        transition: box-shadow 0.18s ease;
+      }
+
+      .field.num { width: 82px; }
+
+      .field:focus {
+        box-shadow:
+          inset 0 0 0 1px rgba(167, 139, 250, 0.55),
+          0 0 0 3px rgba(124, 92, 255, 0.15);
+      }
+
+      .field[type="number"]::-webkit-outer-spin-button,
+      .field[type="number"]::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+
+      .field[type="number"] { -moz-appearance: textfield; }
+
+      /* ---------------- switch ---------------- */
+
+      .switch-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        cursor: pointer;
+      }
+
+      .switch-row input {
+        position: absolute;
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .switch {
+        position: relative;
+        width: 38px;
+        height: 21px;
+        border-radius: 999px;
+        flex: 0 0 auto;
+        background-color: var(--well);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.20);
+        transition: box-shadow 0.2s ease;
+      }
+
+      .switch::after {
+        content: "";
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        width: 13px;
+        height: 13px;
+        border-radius: 999px;
+        background: rgba(236, 232, 248, 0.45);
+        transition: transform 0.2s ease, background 0.2s ease;
+      }
+
+      .switch-row input:checked + .switch {
+        background-image: linear-gradient(135deg, #8b5cf6, #6d3df5 60%, var(--violet-deep));
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.42), 0 0 16px rgba(124, 92, 255, 0.38);
+      }
+
+      .switch-row input:checked + .switch::after {
+        transform: translateX(17px);
+        background: #ffffff;
+      }
+
+      .switch-row input:focus-visible + .switch {
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.6), 0 0 0 3px rgba(124, 92, 255, 0.22);
+      }
+
+      .switch-text,
+      .stat-text { font-size: 13.5px; color: var(--ink); }
+
+      .switch-state {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #9df3c9;
+      }
+
+      /* ---------------- buttons ---------------- */
+
+      button {
+        font: inherit;
+        border: 0;
+        cursor: pointer;
+        border-radius: 7px;
+        font-family: var(--mono);
+        font-weight: 600;
+        text-transform: uppercase;
+        transition: background 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
+      }
+
+      .ghost {
+        padding: 10px 15px;
+        font-size: 10.5px;
+        letter-spacing: 0.11em;
+        color: #cdc0f2;
+        background: rgba(124, 92, 255, 0.07);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.16);
+      }
+
+      .ghost:hover {
+        background: rgba(124, 92, 255, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.30);
+      }
+
+      .ghost:active { transform: translateY(1px); }
+
+      .ghost.pill {
+        padding: 6px 11px;
+        font-size: 9.5px;
+        letter-spacing: 0.10em;
+        border-radius: 6px;
+      }
+
+      .cta {
+        padding: 11px 22px;
+        font-size: 11px;
+        letter-spacing: 0.13em;
+        color: #fff;
+        background: linear-gradient(135deg, #9a72ff 0%, #7c5cff 42%, #5b21b6 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.22),
+          0 10px 28px rgba(124, 92, 255, 0.38);
+      }
+
+      .cta:hover {
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.3),
+          0 12px 34px rgba(124, 92, 255, 0.52);
+      }
+
+      .cta:active { transform: translateY(1px); }
+
+      button[disabled] {
+        cursor: default;
+        color: rgba(157, 243, 201, 0.75);
+        background: rgba(87, 224, 160, 0.07);
+        box-shadow: inset 0 0 0 1px rgba(87, 224, 160, 0.18);
+      }
+
+      button[disabled]:hover {
+        background: rgba(87, 224, 160, 0.07);
+        box-shadow: inset 0 0 0 1px rgba(87, 224, 160, 0.18);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .actions.divided {
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid var(--hair-soft);
+      }
+
+      /* ---------------- sessions ---------------- */
+
+      .session {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 9px 0;
+        border-top: 1px solid var(--hair-soft);
+      }
+
+      .session:first-of-type { border-top: 0; padding-top: 0; }
+
+      .sid {
+        font-family: var(--mono);
+        font-size: 13px;
+        font-weight: 600;
+        color: #c4b1ff;
+        flex: 0 0 auto;
+        width: 70px;
+      }
+
+      .group {
+        flex: 1;
+        min-width: 0;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        color: var(--ink);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .cell {
+        flex: 0 0 auto;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        color: var(--ink-mono);
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .cell.port { width: 90px; color: var(--muted); }
+      .cell.tabs { width: 82px; }
+
+      .cell em {
+        font-style: normal;
+        font-size: 9px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--micro);
+        margin-left: 5px;
+      }
+
+      /* ---------------- debug ---------------- */
+
+      pre {
+        margin: 0;
+        padding: 14px 16px;
+        border-radius: var(--r);
+        background: var(--well);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.09);
+        font-family: var(--mono);
+        font-size: 11.5px;
+        line-height: 1.6;
+        color: rgba(219, 210, 251, 0.72);
+        overflow-x: auto;
+        white-space: pre;
+      }
+
+      /* ---------------- footer ---------------- */
+
+      .footer {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 22px;
+        padding-top: 16px;
+        border-top: 1px solid var(--hair-soft);
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(236, 232, 248, 0.38);
+      }
+
+      .footer .spacer { flex: 1; }
+
+      .footer a {
+        color: rgba(196, 177, 255, 0.72);
+        text-decoration: none;
+      }
+
+      .footer a:hover { color: #d9c9ff; }
+
+      ol {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      ol li { margin-bottom: 7px; }
+      strong { color: var(--ink); font-weight: 600; }
+
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <!-- ================= hero ================= -->
+      <header class="hero">
+        <img class="mark" src="icon128.png" alt="Umbra" />
+        <div>
+          <h1 class="wordmark">Umbra</h1>
+          <span class="kicker">Browser control for AI agents</span>
+          <p class="lede">
+            Give a local agent scripted control of tabs it owns in your signed-in Chrome. No focus
+            theft. Requires a local companion server.
+          </p>
+        </div>
+      </header>
+
+      <!-- ======= status: the live panel, filament lit ======= -->
+      <section class="panel is-live">
+        <div class="status-line">
+          <span id="status-dot" class="dot on"></span>
+          <span class="status-word" id="status-text">Connected to 2 local sessions.</span>
+          <span class="spacer"></span>
+          <span class="chip">127.0.0.1</span>
+        </div>
+
+        <div class="readout">
+          <span>
+            <span class="k">Bridge port</span>
+            <span class="v">47821</span>
+          </span>
+          <span>
+            <span class="k">Sessions</span>
+            <span class="v">2</span>
+          </span>
+          <span>
+            <span class="k">Tabs owned</span>
+            <span class="v">6</span>
+          </span>
+          <span>
+            <span class="k">Site access</span>
+            <span class="v">Granted</span>
+          </span>
+        </div>
+
+        <p class="hint">
+          Umbra pairs this browser with a companion server running on your own machine over a
+          loopback connection. The two pair with a shared key you create here. Nothing works until
+          the companion server is running with the same key.
+        </p>
+      </section>
+
+      <!-- ===== first run: hidden the moment a key is stored ===== -->
+      <section class="panel" id="firstRunCard" hidden>
+        <div class="panel-head"><span class="label">First run</span></div>
+        <ol>
+          <li>Click <strong>Generate Key</strong> below, then <strong>Save And Reconnect</strong>.</li>
+          <li>Click <strong>Copy Environment Line</strong> and paste that line into the environment
+            block of your MCP client's Umbra entry, then start the companion server.</li>
+          <li>Click <strong>Grant Site Access</strong> so Umbra can drive the tabs a session opens.</li>
+        </ol>
+        <p class="hint">The status dot at the top turns green once the companion server connects.</p>
+      </section>
+
+      <!-- ================= pairing ================= -->
+      <section class="panel">
+        <div class="panel-head">
+          <span class="label">Pairing</span>
+          <span class="chip ok">Paired</span>
+        </div>
+
+        <span class="sub"><label for="sharedKey">Shared key</label></span>
+        <div class="key-shell">
+          <input
+            id="sharedKey"
+            class="field-lg"
+            type="password"
+            autocomplete="off"
+            value="9f24a71f3c0b52e8d417ba6c05e93f7a1d8c46b20fe75931ac6d802f4b1e97cd"
+            placeholder="Click Generate Key to create one"
+          />
+          <button id="pasteButton" class="ghost pill" type="button">Paste</button>
+          <button id="revealButton" class="ghost pill" type="button">Reveal</button>
+        </div>
+
+        <div class="code">
+          <span class="cap">Environment line</span>
+          UMBRA_SHARED_KEY=<b>9f24a71f&hellip;4b1e97cd</b>
+          UMBRA_PORT_START=<b>47821</b>
+          UMBRA_PORT_END=<b>47852</b>
+        </div>
+
+        <p class="hint">
+          The environment line carries the key and the port range in one string, so the key is typed
+          nowhere. A generated key replaces the old one: any companion server still holding the
+          previous key stops pairing.
+        </p>
+
+        <div class="actions divided">
+          <button id="saveButton" class="cta" type="button">Save And Reconnect</button>
+          <button id="generateButton" class="ghost" type="button">Generate Key</button>
+          <button id="copyButton" class="ghost" type="button">Copy Environment Line</button>
+        </div>
+      </section>
+
+      <!-- ================= connection ================= -->
+      <section class="panel">
+        <div class="panel-head">
+          <span class="label">Connection</span>
+        </div>
+
+        <div class="split">
+          <div>
+            <span class="sub">Loopback bridge</span>
+            <label class="switch-row">
+              <input id="bridgeEnabled" type="checkbox" checked />
+              <span class="switch"></span>
+              <span class="switch-text">Enable loopback scanning</span>
+              <span class="switch-state">On</span>
+            </label>
+            <p class="hint">
+              Umbra scans this port range on 127.0.0.1 for a companion server holding the same
+              shared key. Nothing leaves the machine.
+            </p>
+          </div>
+
+          <div>
+            <span class="sub">Port range</span>
+            <div class="range-display">47821<span>-</span>47852</div>
+            <div class="port-fields">
+              <span class="port-field">
+                <label class="mini-k" for="portStart">Port start</label>
+                <input id="portStart" class="field num" type="number" min="1024" max="47852" value="47821" />
+              </span>
+              <span class="port-field">
+                <label class="mini-k" for="portEnd">Port end</label>
+                <input id="portEnd" class="field num" type="number" min="1024" max="47852" value="47852" />
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions divided">
+          <button id="reconnectButton" class="ghost" type="button">Reconnect Bridge</button>
+          <button id="reloadButton" class="ghost" type="button">Reload Extension</button>
+          <button id="refreshButton" class="ghost" type="button">Refresh Status</button>
+        </div>
+      </section>
+
+      <!-- ================= site access ================= -->
+      <section class="panel">
+        <div class="panel-head">
+          <span class="label">Site access</span>
+        </div>
+
+        <div class="status-line" style="margin-bottom: 0;">
+          <span id="perm-dot" class="dot on"></span>
+          <span class="stat-text" id="perm-text">Site access granted. Sessions can drive the tabs they own.</span>
+          <span class="spacer"></span>
+          <button id="grantButton" class="ghost" type="button" disabled>Site Access Granted</button>
+        </div>
+
+        <p class="hint">
+          Umbra reads and drives only the tabs a session owns, and it opens those tabs itself in a
+          labelled group. Chrome has no way to grant that per tab, so it asks for site access once,
+          here, instead of at install time.
+        </p>
+      </section>
+
+      <!-- ================= session status ================= -->
+      <section class="panel">
+        <div class="panel-head">
+          <span class="label">Session status</span>
+          <span class="chip">6 tabs owned</span>
+        </div>
+
+        <div id="sessionsList">
+          <div class="session">
+            <span class="sid">a71f9c</span>
+            <span class="group">umbra / report-export</span>
+            <span class="cell port">port 47821</span>
+            <span class="cell tabs">4<em>tabs</em></span>
+          </div>
+          <div class="session">
+            <span class="sid">3d0b52</span>
+            <span class="group">umbra / serp-crawl</span>
+            <span class="cell port">port 47823</span>
+            <span class="cell tabs">2<em>tabs</em></span>
+          </div>
+          <div class="session" hidden>
+            <span class="group">No active session-owned tabs yet.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= bridge debug ================= -->
+      <section class="panel">
+        <div class="panel-head">
+          <span class="label">Bridge debug</span>
+        </div>
+        <pre id="debugBox">{
+  "scanning": true,
+  "handshake": "hmac-sha256",
+  "portRange": [47821, 47852],
+  "connectedCount": 2,
+  "lastScanAt": "2026-08-20T16:04:11.882Z",
+  "sockets": [
+    { "port": 47821, "state": "open", "session": "a71f9c", "pending": 0 },
+    { "port": 47823, "state": "open", "session": "3d0b52", "pending": 0 }
+  ],
+  "lastError": null
+}</pre>
+      </section>
+
+      <!-- ================= footer ================= -->
+      <footer class="footer">
+        <span>Umbra</span>
+        <span>v0.5.0</span>
+        <span class="spacer"></span>
+        <a id="homepageLink" href="https://github.com/umbra-bridge/umbra" target="_blank" rel="noreferrer">Setup guide and source</a>
+      </footer>
+    </div>
+
+    <script>
+      // Preview-only stub, no chrome.* APIs: Reveal flips the field between
+      // password and text the way the real page does after Generate Key.
+      document.getElementById('revealButton').addEventListener('click', (event) => {
+        const field = document.getElementById('sharedKey');
+        const revealed = field.type === 'password';
+        field.type = revealed ? 'text' : 'password';
+        event.currentTarget.textContent = revealed ? 'Hide' : 'Reveal';
+      });
+    </script>
+  </body>
+</html>

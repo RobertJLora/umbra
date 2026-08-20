@@ -21,11 +21,11 @@ They talk to each other over a WebSocket on `127.0.0.1`, authenticated with an H
 
 ## What the extension can access
 
-**Tabs a session owns.** When your agent asks Umbra to open a tab, Umbra records that tab as belonging to that session and puts it in a named tab group. Every later action resolves its target through that ownership record before Chrome is called, and an action against a tab no session owns is refused before Chrome is touched (`extension/session-state.js:143`). A tab you opened yourself is invisible to every session.
+**Tabs a session owns.** When your agent asks Umbra to open a tab, Umbra records that tab as belonging to that session and puts it in a named tab group. Every later action resolves its target through that ownership record before Chrome is called, and an action against a tab no session owns is refused before Chrome is touched (`extension/session-state.js:143`). A tab you opened yourself cannot be read, clicked, navigated, or closed by any session. It can still appear by title and URL in a `browser_find_tabs` result, which is how you point `browser_adopt_tab` at it.
 
 **Page content inside those tabs.** Reading text, taking a screenshot, walking the accessibility tree, filling a form, or running JavaScript all operate on owned tabs only. That content is returned to the companion server on your machine and to nowhere else.
 
-**Tab metadata.** The `tabs` permission lets Chrome report the title and URL of any tab in the profile. Umbra filters every listing to the calling session's own tabs, so a session sees only what it opened.
+**Tab metadata.** The `tabs` permission lets Chrome report the title and URL of any tab in the profile. `browser_list_tabs` filters to the calling session's own tabs, so routine listing shows only what that session opened. Two tools deliberately reach wider so you can hand a tab over: `browser_find_tabs` and `browser_find_groups` return the title and URL of tabs and groups the session does not own, which is the only way `browser_adopt_tab` can be pointed at one. Nothing is read from those tabs beyond title and URL, and no action can touch them until you adopt one.
 
 ## What the extension stores
 
@@ -54,7 +54,7 @@ Three independent facts back that up, and any reviewer can check all three in a 
 2. Grepping the extension for `fetch(`, `XMLHttpRequest`, and `sendBeacon` returns zero results. There is no HTTP client anywhere in it.
 3. The companion server binds to `127.0.0.1` only (`mcp-server/bridge-core.js:193`) and closes any connection whose remote address is not `127.0.0.1` or `::1` (`mcp-server/bridge-core.js:210`). It is not reachable from your network, let alone from the internet.
 
-The companion server likewise makes no outbound request. It listens on loopback, speaks MCP over standard input and output to the client that launched it, and writes nothing to disk except the key file you asked for.
+The companion server likewise makes no outbound request. It listens on loopback and speaks MCP over standard input and output to the client that launched it. It writes to disk in exactly two places: the key file you asked for, and a screenshot file when a caller passes `outputPath` to `browser_screenshot`.
 
 ## The one thing that is not ours to control
 
@@ -75,7 +75,7 @@ We state this plainly because it is the honest boundary. Umbra's guarantee is th
 
 **The `debugger` permission** is attached only to a tab the calling session owns, through a single reference-counted helper (`extension/background.js:1557`), and it is detached when the count reaches zero. There is no tool that sends an arbitrary debugger command. Chrome displays its own "controlled by automated test software" banner whenever the attachment is live, so the state is never hidden from you.
 
-**JavaScript results are screened before they leave the page.** A result that looks like a cookie, a bearer token, a JWT, or a long query-string secret is blocked rather than returned (`extension/javascript-safety.js:36`).
+**JavaScript results are screened before they leave the page.** A result that looks like a cookie jar, a set-cookie header, a JWT, a bearer token carrying a recognisable prefix, or a long query-string secret is blocked rather than returned (`looksLikeSensitiveResult` in `extension/javascript-safety.js`). The screen matches shapes, so it is a backstop against an accidental leak rather than a guarantee against a caller who set out to encode one.
 
 **Site access is not granted at install.** `<all_urls>` is declared under `optional_host_permissions`, so Chrome asks for nothing at install time. You grant it with a button on the options page (`extension/options.js:248`) and Chrome lets you revoke it at any time from `chrome://extensions`.
 

@@ -4,13 +4,15 @@ import { createNonce, validateBindProof, validateHelloQuery } from './auth.js';
 import { SessionRegistry } from './session-registry.js';
 import { TabOwnershipStore } from './tab-ownership.js';
 import { MAX_BROWSER_BATCH_CALLS, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
-import { resolveBatchParams } from './batch-refs.js';
-import { FileDownloadLedger } from './download-ledger.mjs';
-import { resolveDownloadDir } from './config.js';
+import { copyResolvedParams, resolveBatchParams } from './batch-refs.js';
+import { resolveDownloadWait } from './download-ledger.mjs';
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
+  MAX_COMMAND_TIMEOUT_MS,
+  maxBatchTimeoutMs,
   resolveBrokerRequestTimeoutMs,
   resolveChildCallTimeoutMs,
+  resolveTransportTimeoutMs,
 } from './timeouts.js';
 
 const DEFAULT_BIND_TIMEOUT_MS = 5_000;
@@ -37,8 +39,17 @@ function resolveCompositeTimeoutMs(requestedMs, maxMs) {
   return Math.min(Math.floor(requested), maxMs);
 }
 
+// A share of the whole recipe budget, taken without the per-child floor.
+// Routing this through resolveChildCallTimeoutMs meant its 1,000 ms floor
+// overrode the share once the budget dropped under about 2,400 ms, so the two
+// waiting steps summed to more than the whole budget and the step carrying the
+// payload came back as batch_timeout with no page content.
 function compositeSlice(totalMs, share) {
-  return resolveChildCallTimeoutMs(Math.floor(totalMs * share), null) ?? undefined;
+  const total = Number(totalMs);
+  if (!Number.isFinite(total) || total <= 0) {
+    return undefined;
+  }
+  return Math.max(1, Math.floor(total * share));
 }
 
 // Fill or clamp one batch child's own timeout from what is left of the batch
@@ -68,7 +79,9 @@ function applyChildBudget(definition, childParams, remainingMs) {
   // parent budget from handing a child a few milliseconds, not to overrule a
   // deliberate short wait.
   if (!hasRequested || budgeted < requested) {
-    childParams.timeoutMs = budgeted;
+    // Never inject more than one command may take, whatever the batch deadline
+    // adds up to. A 25-call batch used to hand a single child 1,500,000 ms.
+    childParams.timeoutMs = Math.min(budgeted, MAX_COMMAND_TIMEOUT_MS);
   }
   return childParams;
 }
@@ -404,7 +417,12 @@ export class LocalBridgeServer {
     return await this.sendExtensionCommand(tool, params);
   }
 
-  async sendExtensionCommand(tool, params = {}) {
+  // `budgetMs` is the caller's remaining budget for this one command. It only
+  // ever lowers the transport timer. Without it the timer was armed from
+  // resolveBrokerRequestTimeoutMs alone, which floors at requestTimeoutMs and
+  // never saw the batch's remaining budget, so a hung child held a batch that
+  // declared 1,000 ms for the full 60,000 ms floor.
+  async sendExtensionCommand(tool, params = {}, { budgetMs = null } = {}) {
     if (tool === 'browser_file_upload') {
       params = { ...params, filePath: assertLocalUploadFile(params.filePath) };
     }
@@ -422,7 +440,10 @@ export class LocalBridgeServer {
     // timeout against a page that had not finished rendering. Honour the
     // per-call value with transport slack on top, which is what the Rust broker
     // lane and the broker itself already do.
-    const timeoutMs = resolveBrokerRequestTimeoutMs(this.requestTimeoutMs, params);
+    const resolvedTimeoutMs = resolveBrokerRequestTimeoutMs(this.requestTimeoutMs, params);
+    const timeoutMs = budgetMs === null
+      ? resolvedTimeoutMs
+      : resolveTransportTimeoutMs(budgetMs, resolvedTimeoutMs);
 
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -458,7 +479,10 @@ export class LocalBridgeServer {
     const stopOnError = params.stopOnError !== false;
     const rawTimeoutMs = Number(params.timeoutMs);
     const timeoutMs = Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
-      ? Math.min(Math.floor(rawTimeoutMs), this.requestTimeoutMs * MAX_BROWSER_BATCH_CALLS)
+      // Bounded by the number of children actually queued as well as by the
+      // 25-call ceiling, so a one-call batch cannot hold an MCP client for the
+      // 25 minutes the constant alone allowed.
+      ? Math.min(Math.floor(rawTimeoutMs), maxBatchTimeoutMs(this.requestTimeoutMs, calls.length))
       : DEFAULT_BATCH_TIMEOUT_MS;
     const startedAt = Date.now();
     const deadlineAt = startedAt + timeoutMs;
@@ -528,12 +552,15 @@ export class LocalBridgeServer {
           call.params && typeof call.params === 'object' && !Array.isArray(call.params)
             ? call.params
             : {};
+        // A bare {"$ref": "..."} resolves to the referenced value by identity, so
+        // writing a budget into it would land inside an earlier step's recorded
+        // result. Copy before mutating.
         const childParams = applyChildBudget(
           definition,
-          resolveBatchParams(rawChildParams, results),
+          copyResolvedParams(resolveBatchParams(rawChildParams, results)),
           remainingMs,
         );
-        const result = await this.sendExtensionCommand(toolName, childParams);
+        const result = await this.sendExtensionCommand(toolName, childParams, { budgetMs: remainingMs });
         results.push({
           ...entry,
           ok: true,
@@ -577,8 +604,8 @@ export class LocalBridgeServer {
   // The whole-recipe deadline for a composite, resolved and capped exactly as
   // sendBatch resolves and caps it, so a slice can never exceed the deadline the
   // batch enforces.
-  compositeBudgetMs(requestedMs) {
-    return resolveCompositeTimeoutMs(requestedMs, this.requestTimeoutMs * MAX_BROWSER_BATCH_CALLS);
+  compositeBudgetMs(requestedMs, callCount = 3) {
+    return resolveCompositeTimeoutMs(requestedMs, maxBatchTimeoutMs(this.requestTimeoutMs, callCount));
   }
 
   async sendWaitClickRead(params = {}) {
@@ -693,24 +720,7 @@ export class LocalBridgeServer {
   }
 
   async waitForDownload(params = {}) {
-    const requestedDir = typeof params.dir === 'string' && params.dir.trim() ? params.dir.trim() : '';
-    const ledger = new FileDownloadLedger({ downloadDir: requestedDir || resolveDownloadDir() });
-    const timeoutMs = Number.isFinite(Number(params.timeoutMs)) && Number(params.timeoutMs) > 0
-      ? Math.min(Number(params.timeoutMs), 300_000)
-      : 30_000;
-    if (typeof params.filename === 'string' && params.filename.trim()) {
-      return await ledger.waitForExact({ filename: params.filename.trim(), timeoutMs });
-    }
-    const nameIncludes = [];
-    if (typeof params.pattern === 'string' && params.pattern.trim()) {
-      nameIncludes.push(params.pattern.trim());
-    }
-    return await ledger.waitForNew({
-      sinceMs: Number.isFinite(Number(params.createdAfterMs)) ? Number(params.createdAfterMs) : Date.now() - 1_000,
-      timeoutMs,
-      extension: params.extension || '',
-      nameIncludes,
-    });
+    return await resolveDownloadWait(params, () => this.registry.isConnected(), this.sessionId);
   }
 
 }

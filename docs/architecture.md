@@ -65,7 +65,7 @@ The offscreen document is deliberately thin. It holds sockets, authenticates, an
 - Every tab a session creates or adopts is mapped to that session id.
 - Every action resolves the tab through the ownership map before Chrome is touched.
 
-Which means `browser_list_tabs` returns only the caller's tabs, one session cannot close, read, or switch to another session's tab, and a tab nobody owns is invisible to every session. Adoption is the only way in: `browser_find_tabs` and `browser_adopt_tab` let a session take over a tab that was opened by hand.
+Which means `browser_list_tabs` returns only the caller's tabs, and one session cannot close, read, or switch to another session's tab. Adoption is the only way in: `browser_find_tabs` lists unowned tabs by title and URL, and `browser_adopt_tab` takes one over. `browser_cleanup_groups` is the one mutating tool outside the map, matching tab groups by title across the profile so a group left behind by a session that is gone can still be cleared; give it a title prefix your own groups do not share, or run it with `dryRun: true` first.
 
 Cleanup is ownership-based too. `browser_close_session_tabs` closes the session's whole group, and closes a window only when every tab in that window belongs to the session, so an unowned blank tab keeps the window alive. Clean server shutdown runs the same cleanup by default, and `UMBRA_KEEP_TABS_OPEN=1` leaves the tabs open for inspection.
 

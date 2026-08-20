@@ -166,10 +166,11 @@ async function collectScannableFiles(root, rules, scopes) {
         throw new Error(`--paths names a path that does not exist: ${scope}`);
       }
       if (isIgnored(rules, normalized, stat.isDirectory())) {
-        // Naming an ignored path explicitly still scans nothing, so say so
-        // rather than returning a clean pass the caller would misread.
-        console.error(`--paths ${scope} is excluded by .gitignore, so nothing under it was scanned.`);
-        continue;
+        // Naming an ignored path explicitly scans nothing, and a green exit code
+        // on a scan that covered no files reads as a pass. Refuse instead.
+        throw new Error(
+          `--paths names ${scope}, which .gitignore excludes, so nothing under it would be scanned.`,
+        );
       }
       if (stat.isDirectory()) {
         await walk(absolute, normalized);
@@ -185,6 +186,7 @@ async function scanForIdentityLeaks(scopes) {
   const gitignoreText = await fsp.readFile(path.join(repoRoot, '.gitignore'), 'utf8').catch(() => '');
   const rules = compileIgnoreRules(gitignoreText);
   const files = await collectScannableFiles(repoRoot, rules, scopes);
+  const warnings = [];
   const findings = [];
   let scannedFileCount = 0;
   for (const relative of files) {
@@ -212,7 +214,10 @@ async function scanForIdentityLeaks(scopes) {
       }
     }
   }
-  return { scannedFileCount, findings };
+  if (scannedFileCount === 0) {
+    warnings.push('the identity scan covered zero files');
+  }
+  return { scannedFileCount, findings, warnings };
 }
 
 async function readJson(filePath) {
@@ -257,8 +262,16 @@ async function compareExtensionDirs(left, right) {
 const options = parseArgs(process.argv.slice(2));
 
 const identity = options.skipIdentity
-  ? { skipped: true, scannedFileCount: 0, findings: [] }
+  ? { skipped: true, scannedFileCount: 0, findings: [], warnings: ['the identity scan was skipped with --skip-identity'] }
   : await scanForIdentityLeaks(options.paths);
+
+// A scan that covered zero files is not a pass. --skip-identity and a --paths
+// scope that resolves to nothing both used to report passed: true with
+// scannedFileCount: 0, so a CI step reading the JSON got a green on a scan that
+// never looked at anything.
+const identityScanned = identity.scannedFileCount > 0;
+const identityPassed = identityScanned && identity.findings.length === 0;
+const identityExitCode = identityPassed ? 0 : 1;
 
 if (identity.findings.length > 0) {
   console.error(`Identity gate failed. ${identity.findings.length} line(s) carry an author name, an absolute home path, or a third-party product name:`);
@@ -275,6 +288,10 @@ if (identity.findings.length > 0) {
   console.error('literal never appears.');
 }
 
+for (const warning of identity.warnings ?? []) {
+  console.error(`Identity gate warning: ${warning}.`);
+}
+
 if (options.identityOnly) {
   console.log(JSON.stringify({
     generatedAt: new Date().toISOString(),
@@ -282,12 +299,14 @@ if (options.identityOnly) {
     identity: {
       scannedFileCount: identity.scannedFileCount,
       scopes: options.paths.length > 0 ? options.paths : ['<repository root>'],
-      passed: identity.findings.length === 0,
+      scanned: identityScanned,
+      passed: identityPassed,
       findingCount: identity.findings.length,
       findings: identity.findings,
+      warnings: identity.warnings ?? [],
     },
   }, null, 2));
-  process.exit(identity.findings.length === 0 ? 0 : 1);
+  process.exit(identityExitCode);
 }
 
 const test = spawnSync('npm', ['test'], {
@@ -313,9 +332,11 @@ const checklist = {
     scannedFileCount: identity.scannedFileCount,
     scopes: options.paths.length > 0 ? options.paths : ['<repository root>'],
     skipped: identity.skipped === true,
-    passed: identity.findings.length === 0,
+    scanned: identityScanned,
+    passed: identityPassed,
     findingCount: identity.findings.length,
     findings: identity.findings,
+    warnings: identity.warnings ?? [],
   },
   canonicalVersion: canonicalManifest.version,
   activeVersion: activeManifest?.version || null,
@@ -334,4 +355,4 @@ const checklist = {
 };
 
 console.log(JSON.stringify(checklist, null, 2));
-process.exit(identity.findings.length === 0 ? 0 : 1);
+process.exit(identityExitCode);

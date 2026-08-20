@@ -8,12 +8,14 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
+  ErrorCode,
   ListToolsRequestSchema,
+  McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createSessionId } from './auth.js';
 import { LocalBridgeServer, parseEnvNumber } from './bridge-core.js';
 import { RustBrokerClient } from './rust-broker-client.js';
-import { resolveSharedKeyPath } from './config.js';
+import { expandUserPath, resolveSharedKeyPath } from './config.js';
 import { loadPlugins } from './plugins-loader.mjs';
 // Namespace import on purpose: `buildToolDefinitions` is added by the tool-schema
 // work and a named import of a not-yet-present export fails at module link time.
@@ -106,6 +108,11 @@ export function buildMcpResponse(toolName, result, args = {}) {
     if (outputPath) {
       const resolvedOutputPath = resolveOutputPath(outputPath);
       const imageBuffer = Buffer.from(result.data, 'base64');
+      // Overwriting stays the behaviour, because re-capturing to a fixed path is
+      // the normal way this tool is used. What was missing is any signal that a
+      // file was replaced, so a caller that clobbered something had no way to
+      // know from the result.
+      const replaced = fs.statSync(resolvedOutputPath, { throwIfNoEntry: false });
       fs.writeFileSync(resolvedOutputPath, imageBuffer);
       const structuredContent = {
         tabId: result.tabId,
@@ -113,6 +120,8 @@ export function buildMcpResponse(toolName, result, args = {}) {
         mimeType,
         outputPath: resolvedOutputPath,
         bytes: imageBuffer.length,
+        replacedExistingFile: Boolean(replaced),
+        replacedBytes: replaced ? replaced.size : null,
         cropped: Boolean(result.cropped),
         region: result.region || null,
         preflight: result.preflight || null,
@@ -179,7 +188,18 @@ function describeValue(value) {
   if (Array.isArray(value)) {
     return 'array';
   }
+  // A non-finite number is still `typeof number`, so reporting the bare typeof
+  // produced "expected number, received number", which tells a caller nothing.
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    return Number.isNaN(value) ? 'NaN' : (value > 0 ? 'Infinity' : '-Infinity');
+  }
   return typeof value;
+}
+
+export const REQUIRED_ISSUE_SUFFIX = ' is required and missing';
+
+export function missingRequiredIssues(issues) {
+  return issues.filter((issue) => issue.endsWith(REQUIRED_ISSUE_SUFFIX));
 }
 
 function matchesSchemaType(value, type) {
@@ -302,26 +322,65 @@ export function resolveToolDefinitions({ plugins = null } = {}) {
   return toolCatalog.TOOL_DEFINITIONS.slice();
 }
 
-function loadSharedKey() {
-  const directKey = process.env.UMBRA_SHARED_KEY?.trim();
+// Every unusable key state gets the same actionable block, because the fix is
+// the same in all of them and the differences only matter as one extra line
+// naming what went wrong.
+export class StartupError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'StartupError';
+  }
+}
+
+function pairingGuidance(problem) {
+  return new StartupError(
+    [
+      problem,
+      'The extension and this server pair on one key, so set either:',
+      '  UMBRA_SHARED_KEY=<key>            the key itself',
+      `  UMBRA_SHARED_KEY_FILE=<path>      a file holding it, canonically ${path.join(os.homedir(), '.umbra', 'shared-key')}`,
+      'Get a key from the Generate button on the Umbra extension options page, which prints the',
+      'full environment line to paste into your MCP client config, or run: umbra pair',
+    ].join('\n'),
+  );
+}
+
+export function loadSharedKey(env = process.env) {
+  const directKey = env.UMBRA_SHARED_KEY?.trim();
   if (directKey) {
     return directKey;
   }
 
-  const keyFile = process.env.UMBRA_SHARED_KEY_FILE;
-  if (keyFile) {
-    return fs.readFileSync(keyFile, 'utf8').trim();
+  // An unset variable falls back to the canonical key file, which is where
+  // `umbra pair` writes. Without this, `node index.js` reported "no shared key"
+  // while the key sat at the very path the message calls canonical. A leading
+  // tilde is expanded here for the same reason config.js expands it: an MCP
+  // client config is JSON, so `~/.umbra/shared-key` arrives literally.
+  const configured = env.UMBRA_SHARED_KEY_FILE?.trim();
+  const keyFile = configured ? path.resolve(expandUserPath(configured)) : resolveSharedKeyPath();
+
+  let contents;
+  try {
+    contents = fs.readFileSync(keyFile, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT' && !configured) {
+      throw pairingGuidance('No shared key configured.');
+    }
+    const expandedNote = configured && configured !== keyFile
+      ? ` (from UMBRA_SHARED_KEY_FILE=${configured})`
+      : '';
+    throw pairingGuidance(
+      `UMBRA_SHARED_KEY_FILE points at ${keyFile}${expandedNote}, which could not be read (${error?.code || error?.message}).`,
+    );
   }
 
-  throw new Error(
-    [
-      'No shared key configured. The extension and this server pair on one key, so set either:',
-      '  UMBRA_SHARED_KEY=<key>            the key itself',
-      `  UMBRA_SHARED_KEY_FILE=<path>      a file holding it, canonically ${resolveSharedKeyPath()}`,
-      'Get a key from the Generate button on the Umbra extension options page, which prints the',
-      'full environment line to paste into your MCP client config, or run: umbra pair <key>',
-    ].join('\n'),
-  );
+  const key = contents.trim();
+  if (!key) {
+    // A blank key file is a truncated write or a half-finished install, not a
+    // request for a zero-length HMAC key that every local process can guess.
+    throw pairingGuidance(`The shared key file ${keyFile} is empty.`);
+  }
+  return key;
 }
 
 export async function main() {
@@ -355,6 +414,12 @@ export async function main() {
 
   const plugins = await loadPlugins();
   const pluginHandlers = plugins.handlers;
+  const unavailableToolReasons = new Map();
+  for (const entry of plugins.unavailable || []) {
+    for (const toolName of entry.toolNames || []) {
+      unavailableToolReasons.set(toolName, entry.reason);
+    }
+  }
   const toolDefinitions = resolveToolDefinitions({ plugins });
   const toolsByName = new Map(toolDefinitions.map((definition) => [definition.name, definition]));
   const schemaValidators = createSchemaValidators(toolDefinitions);
@@ -410,18 +475,54 @@ export async function main() {
     const definition = toolsByName.get(toolName);
 
     if (!definition) {
-      throw new Error(
+      // A plugin that is present but reported itself unavailable is a different
+      // situation with a different fix, and its reason is the one the caller can
+      // act on. Saying "not installed" there sends them to install something
+      // that is already there.
+      const unavailable = unavailableToolReasons.get(toolName);
+      if (unavailable) {
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          `${toolName} is installed but unavailable: ${unavailable}`,
+        );
+      }
+      throw new McpError(
+        ErrorCode.MethodNotFound,
         `Unknown tool: ${toolName}. Tools contributed by an optional local plugin appear only when that plugin is installed in mcp-server/plugins/.`,
       );
     }
 
     const validate = schemaValidators.get(toolName);
     if (validate) {
-      reportSchemaMismatch(toolName, validate(args));
+      const issues = validate(args);
+      // A missing required parameter is a caller error, so it comes back as one
+      // instead of being forwarded to the extension without the parameter and
+      // reported as a connection failure. Type and unknown-property mismatches
+      // stay staged and logged, because the extension coerces those already.
+      const missing = missingRequiredIssues(issues);
+      if (missing.length > 0) {
+        throw new McpError(ErrorCode.InvalidParams, `${toolName}: ${missing.join('; ')}`);
+      }
+      reportSchemaMismatch(toolName, issues);
     }
 
-    const result = await bridge.sendCommand(toolName, args);
-    return buildMcpResponse(toolName, result, args);
+    try {
+      const result = await bridge.sendCommand(toolName, args);
+      return buildMcpResponse(toolName, result, args);
+    } catch (error) {
+      if (error instanceof McpError) {
+        throw error;
+      }
+      // The extension's own error code reaches a batch child but used to be
+      // dropped on a single call, so a caller could branch on it only inside a
+      // batch. Both lanes now expose the same field.
+      const code = typeof error?.code === 'string' ? error.code : '';
+      throw new McpError(
+        ErrorCode.InternalError,
+        error?.message || String(error),
+        code ? { extensionCode: code } : undefined,
+      );
+    }
   });
 
   const transport = new StdioServerTransport();
@@ -491,7 +592,13 @@ export async function main() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   main().catch((error) => {
-    console.error(`[umbra] ${error.stack || error.message}`);
+    // A configuration problem is a message to read and fix, so it prints as one.
+    // A stack still comes out for anything unexpected, which is a bug report.
+    if (error instanceof StartupError) {
+      console.error(`[umbra] ${error.message}`);
+    } else {
+      console.error(`[umbra] ${error.stack || error.message}`);
+    }
     process.exit(1);
   });
 }

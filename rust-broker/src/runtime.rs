@@ -202,8 +202,12 @@ impl RuntimeBroker {
         let state = Arc::new(bound);
 
         prepare_unix_socket(&state.config.socket_path).await?;
-        let shim_listener = UnixListener::bind(&state.config.socket_path)
-            .map_err(|error| RuntimeError::BindFailed(error.to_string()))?;
+        let shim_listener = UnixListener::bind(&state.config.socket_path).map_err(|error| {
+            RuntimeError::BindFailed(format!(
+                "could not bind the shim socket {}: {error}",
+                state.config.socket_path
+            ))
+        })?;
         restrict_socket_permissions(&state.config.socket_path)?;
 
         let app = Router::new()
@@ -541,15 +545,25 @@ impl RuntimeBroker {
                     self.broker.registry().set_group(session_id, group_id).await;
                 }
             }
+            // Ownership checked, so a result naming a tab this session does not
+            // own cannot drop another session's ownership record.
             "browser_close_tab" => {
                 if let Some(tab_id) = result.get("tabId").and_then(Value::as_u64) {
-                    let _ = self.broker.registry().release_tab(tab_id).await;
+                    let _ = self
+                        .broker
+                        .registry()
+                        .release_tab_owned(session_id, tab_id)
+                        .await;
                 }
             }
             "browser_close_session_tabs" => {
                 if let Some(closed_tabs) = result.get("closedTabIds").and_then(Value::as_array) {
                     for tab_id in closed_tabs.iter().filter_map(Value::as_u64) {
-                        let _ = self.broker.registry().release_tab(tab_id).await;
+                        let _ = self
+                            .broker
+                            .registry()
+                            .release_tab_owned(session_id, tab_id)
+                            .await;
                     }
                 }
             }
@@ -946,15 +960,44 @@ async fn handle_extension_socket(
     writer.abort();
 }
 
+/// True for an accept() failure that says nothing about the listener itself.
+///
+/// EMFILE and ENFILE mean the process or the machine is out of descriptors,
+/// ECONNABORTED means one peer went away between the SYN and the accept, and
+/// EINTR means a signal landed. Propagating any of them used to unwind through
+/// serve() into main and end the process, so one local process opening a few
+/// hundred sockets killed the broker and every session with it. Under launchd's
+/// 256-descriptor default that happened at about 246 concurrent connections.
+fn is_transient_accept_error(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    if matches!(
+        error.kind(),
+        ErrorKind::ConnectionAborted | ErrorKind::Interrupted | ErrorKind::WouldBlock
+    ) {
+        return true;
+    }
+    // EMFILE (24) and ENFILE (23) have no stable ErrorKind on this toolchain.
+    matches!(error.raw_os_error(), Some(23) | Some(24))
+}
+
 async fn serve_shim_socket(
     state: Arc<RuntimeBroker>,
     listener: UnixListener,
 ) -> Result<(), RuntimeError> {
     loop {
-        let (stream, _) = listener
-            .accept()
-            .await
-            .map_err(|error| RuntimeError::ShimIo(error.to_string()))?;
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            Err(error) if is_transient_accept_error(&error) => {
+                eprintln!(
+                    "umbra-rust-broker: accept failed transiently, continuing: {error}"
+                );
+                // A short pause, so a descriptor exhaustion does not turn into a
+                // hot loop while the connections that hold them drain.
+                time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            Err(error) => return Err(RuntimeError::ShimIo(error.to_string())),
+        };
         let state = Arc::clone(&state);
         tokio::spawn(async move {
             let _ = handle_shim_connection(state, stream).await;
@@ -962,14 +1005,99 @@ async fn serve_shim_socket(
     }
 }
 
+/// The largest single shim request this broker will buffer.
+///
+/// `BufReader::lines()` has no length limit and the select loop had no read
+/// deadline, so one peer writing megabytes with no newline grew the broker's
+/// memory one for one with whatever it sent, and the memory was never returned.
+/// The biggest legitimate request is a file-upload path plus params or a batch
+/// call array, which is kilobytes.
+const MAX_SHIM_LINE_BYTES: usize = 1024 * 1024;
+
+/// How long a connection may sit on an incomplete line before it is dropped.
+const SHIM_PARTIAL_LINE_TIMEOUT_MS: u64 = 30_000;
+
+/// In-flight requests allowed per shim connection.
+///
+/// Every input line used to get its own `tokio::spawn` with no cap, so 100,000
+/// pipelined requests created 100,000 tasks at once and drove resident memory
+/// from 3 MB to 578 MB, none of it released when the connection closed. A permit
+/// per request applies backpressure to the reader instead of allocating.
+const MAX_IN_FLIGHT_SHIM_REQUESTS: usize = 32;
+
+/// Read one newline-delimited line as bytes, bounded by MAX_SHIM_LINE_BYTES.
+///
+/// Byte-oriented on purpose. `lines()` returns Err(InvalidData) for non-UTF-8,
+/// which propagated out of handle_shim_connection and skipped the session
+/// cleanup entirely, so one bad byte killed the connection with no error
+/// response and leaked its registered session forever. Lossy decoding turns the
+/// same input into an ordinary JSON parse error the connection survives.
+async fn read_shim_line<R>(reader: &mut R, buffer: &mut Vec<u8>) -> Result<Option<String>, RuntimeError>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    buffer.clear();
+    // fill_buf/consume rather than read_until, so the cap is enforced while the
+    // line is still arriving instead of after an unbounded buffer already grew,
+    // and so no byte the reader already buffered is dropped between calls.
+    loop {
+        let available = reader
+            .fill_buf()
+            .await
+            .map_err(|error| RuntimeError::ShimIo(error.to_string()))?;
+        if available.is_empty() {
+            // Peer closed. A partial trailing line is not a request.
+            return Ok(None);
+        }
+        match available.iter().position(|byte| *byte == b'\n') {
+            Some(index) => {
+                // The cap applies to the completed line too, not only to the
+                // chunks that arrive without a newline in them.
+                if buffer.len() + index > MAX_SHIM_LINE_BYTES {
+                    reader.consume(index + 1);
+                    return Err(RuntimeError::ShimProtocol(format!(
+                        "shim line exceeded {MAX_SHIM_LINE_BYTES} bytes"
+                    )));
+                }
+                buffer.extend_from_slice(&available[..index]);
+                reader.consume(index + 1);
+                break;
+            }
+            None => {
+                let take = available.len();
+                if buffer.len() + take > MAX_SHIM_LINE_BYTES {
+                    reader.consume(take);
+                    return Err(RuntimeError::ShimProtocol(format!(
+                        "shim line exceeded {MAX_SHIM_LINE_BYTES} bytes"
+                    )));
+                }
+                buffer.extend_from_slice(available);
+                reader.consume(take);
+            }
+        }
+    }
+    while buffer.ends_with(b"\r") {
+        buffer.pop();
+    }
+    // Lossy on purpose: one invalid byte becomes a JSON parse error the
+    // connection survives, rather than a fatal IO error that skipped cleanup.
+    Ok(Some(String::from_utf8_lossy(buffer).into_owned()))
+}
+
 async fn handle_shim_connection(
     state: Arc<RuntimeBroker>,
     stream: UnixStream,
 ) -> Result<(), RuntimeError> {
     let (reader, writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let mut reader = BufReader::new(reader);
+    let mut line_buffer: Vec<u8> = Vec::new();
     let (response_sender, mut response_receiver) = mpsc::channel::<ShimResponse>(256);
     let registered_session = Arc::new(Mutex::new(None::<String>));
+    // Every session this connection ever attached, so a race that let two
+    // registrations through still detaches both on close instead of stranding
+    // one attached to a socket that is gone.
+    let attached_sessions = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let in_flight = Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT_SHIM_REQUESTS));
     let mut idle_check =
         time::interval(Duration::from_millis(state.config.idle_reaper_interval_ms));
     let mut detached_before_close = false;
@@ -989,11 +1117,33 @@ async fn handle_shim_connection(
         }
     });
 
+    // Every exit path below runs the cleanup at the end of this function, so the
+    // read error that used to return through `?` now breaks the loop instead.
+    let mut read_failure: Option<RuntimeError> = None;
+
     loop {
+        // A permit is taken before the next line is read, so a peer that
+        // pipelines faster than the broker answers stops being read from rather
+        // than piling up tasks.
+        let permit = match Arc::clone(&in_flight).acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => break,
+        };
+
         tokio::select! {
-            maybe_line = lines.next_line() => {
-                let Some(line) = maybe_line.map_err(|error| RuntimeError::ShimIo(error.to_string()))? else {
-                    break;
+            maybe_line = time::timeout(
+                Duration::from_millis(SHIM_PARTIAL_LINE_TIMEOUT_MS),
+                read_shim_line(&mut reader, &mut line_buffer),
+            ) => {
+                let line = match maybe_line {
+                    // A connection parked on an incomplete line is not a client.
+                    Err(_) => break,
+                    Ok(Err(error)) => {
+                        read_failure = Some(error);
+                        break;
+                    }
+                    Ok(Ok(None)) => break,
+                    Ok(Ok(Some(line))) => line,
                 };
                 if let Some(session_id) = registered_session.lock().await.as_ref().cloned() {
                     state.broker.registry().touch_session(&session_id).await;
@@ -1002,9 +1152,12 @@ async fn handle_shim_connection(
                 let response_sender = response_sender.clone();
                 let state = Arc::clone(&state);
                 let registered_session = Arc::clone(&registered_session);
+                let attached_sessions = Arc::clone(&attached_sessions);
                 tokio::spawn(async move {
                     let response = match request {
-                        Ok(request) => handle_shim_request(state, registered_session, request).await,
+                        Ok(request) => {
+                            handle_shim_request(state, registered_session, attached_sessions, request).await
+                        }
                         Err(error) => ShimResponse::error(
                             "unknown".to_string(),
                             "invalid_shim_json",
@@ -1012,6 +1165,7 @@ async fn handle_shim_connection(
                         ),
                     };
                     let _ = response_sender.send(response).await;
+                    drop(permit);
                 });
             }
             _ = idle_check.tick() => {
@@ -1043,8 +1197,14 @@ async fn handle_shim_connection(
         }
     }
 
+    // Cleanup runs on every exit path, including a read error. Returning through
+    // `?` used to skip it, so a single invalid UTF-8 byte left the session
+    // attached to a socket that no longer existed and the idle reaper would not
+    // touch it for twenty minutes.
     if !detached_before_close {
-        if let Some(session_id) = registered_session.lock().await.take() {
+        registered_session.lock().await.take();
+        let sessions: Vec<String> = attached_sessions.lock().await.drain().collect();
+        for session_id in sessions {
             let _ = state.broker.registry().detach_session(&session_id).await;
             state
                 .notify_session_disconnected(&session_id, "shim_disconnected")
@@ -1052,12 +1212,16 @@ async fn handle_shim_connection(
         }
     }
     writer_task.abort();
-    Ok(())
+    match read_failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 async fn handle_shim_request(
     state: Arc<RuntimeBroker>,
     registered_session: Arc<Mutex<Option<String>>>,
+    attached_sessions: Arc<Mutex<HashSet<String>>>,
     request: ShimRequest,
 ) -> ShimResponse {
     match request {
@@ -1065,16 +1229,28 @@ async fn handle_shim_request(
             if session_id.trim().is_empty() {
                 return ShimResponse::error(id, "invalid_session", "session_id is required");
             }
-            {
-                let registered = registered_session.lock().await;
-                if let Some(existing) = registered.as_ref() {
-                    if existing != &session_id {
-                        return ShimResponse::error(
-                            id,
-                            "session_mismatch",
-                            "this shim socket is already registered to a different session",
-                        );
-                    }
+            // The broker's own session id names the extension's channel. A shim
+            // taking it mislabels that channel as `mcp-shim`, pins health at
+            // degraded, and lets the shim's close delete the broker's own row.
+            if session_id == state.config.broker_session_id {
+                return ShimResponse::error(
+                    id,
+                    "reserved_session_id",
+                    "that session id is reserved for the broker's own extension channel",
+                );
+            }
+            // The whole check-and-set is held under one lock. Each input line
+            // runs in its own task, so pipelined register_session lines all read
+            // None, all passed the guard, and all attached: one socket ended up
+            // owning N sessions and leaked N-1 of them on close.
+            let mut registered = registered_session.lock().await;
+            if let Some(existing) = registered.as_ref() {
+                if existing != &session_id {
+                    return ShimResponse::error(
+                        id,
+                        "session_mismatch",
+                        "this shim socket is already registered to a different session",
+                    );
                 }
             }
             let _ = state.broker.registry().ensure_session(&session_id).await;
@@ -1092,7 +1268,9 @@ async fn handle_shim_request(
             {
                 return ShimResponse::error(id, "session_auth_failed", &error.to_string());
             }
-            *registered_session.lock().await = Some(session_id.clone());
+            *registered = Some(session_id.clone());
+            drop(registered);
+            attached_sessions.lock().await.insert(session_id.clone());
             let status = state.broker.registry().status(&session_id).await;
             ShimResponse::ok(id, json!({ "sessionId": session_id, "status": status }))
         }
@@ -1131,6 +1309,14 @@ async fn handle_shim_request(
             }
             let reason = reason.unwrap_or_else(|| "shim_requested_disconnect".to_string());
             let _ = state.broker.registry().detach_session(&session_id).await;
+            // Release this socket's claim on the id. Leaving it set meant the
+            // socket's later close detached whichever session held that id by
+            // then, so a second shim that registered the same id in between had
+            // its live session evicted and its tabs orphaned. RustBrokerClient
+            // sends this on every clean shutdown, and UMBRA_SESSION_ID lets
+            // several shims share one id deliberately.
+            *registered_session.lock().await = None;
+            attached_sessions.lock().await.remove(&session_id);
             state
                 .notify_session_disconnected(&session_id, &reason)
                 .await;
@@ -1261,21 +1447,42 @@ fn keepalive_reply(message_type: &str) -> Option<Value> {
 /// carries no HMAC proof: whoever can connect can drive the signed-in browser.
 /// 0600 makes the file system the gate.
 fn restrict_socket_permissions(path: &str) -> Result<(), RuntimeError> {
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| RuntimeError::ShimIo(error.to_string()))
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
+        RuntimeError::ShimIo(format!(
+            "could not restrict the shim socket {path} to its owner: {error}"
+        ))
+    })
 }
 
 async fn prepare_unix_socket(path: &str) -> Result<(), RuntimeError> {
     let socket_path = Path::new(path);
     if let Some(parent) = socket_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| RuntimeError::ShimIo(error.to_string()))?;
+        tokio::fs::create_dir_all(parent).await.map_err(|error| {
+            RuntimeError::ShimIo(format!(
+                "could not create the shim socket directory {}: {error}",
+                parent.display()
+            ))
+        })?;
     }
-    if socket_path.exists() {
-        tokio::fs::remove_file(socket_path)
-            .await
-            .map_err(|error| RuntimeError::ShimIo(error.to_string()))?;
+    // symlink_metadata rather than exists(): exists() resolves the link, so a
+    // dangling symlink at the socket path reported false, survived the unlink,
+    // and then UnixListener::bind followed it and created the socket at the
+    // link's target, outside the umbra run directory entirely.
+    if tokio::fs::symlink_metadata(socket_path).await.is_ok() {
+        // Something is already there. If it answers, it is a live broker, and
+        // unlinking its socket would silently steal the path: both processes
+        // stay alive, the extension binds the orphan on an ascending port scan,
+        // and every command afterwards reports the extension as not connected.
+        if UnixStream::connect(socket_path).await.is_ok() {
+            return Err(RuntimeError::BindFailed(format!(
+                "a broker is already serving {path}; stop it before starting another, or set UMBRA_BROKER_SOCKET to a different path"
+            )));
+        }
+        tokio::fs::remove_file(socket_path).await.map_err(|error| {
+            RuntimeError::ShimIo(format!(
+                "could not remove the stale shim socket {path}: {error}"
+            ))
+        })?;
     }
     Ok(())
 }
@@ -1323,6 +1530,69 @@ mod tests {
             .authenticate_session(session_id, None, now_ms() as u64)
             .await
             .expect("shim channel should authenticate");
+    }
+
+    #[tokio::test]
+    async fn one_invalid_utf8_byte_becomes_a_parseable_line_rather_than_a_fatal_read_error() {
+        // lines() returns Err(InvalidData) for non-UTF-8, which propagated out of
+        // handle_shim_connection and skipped the session cleanup, so a single bad
+        // byte killed the connection with no error response and leaked its
+        // registered session with no ceiling.
+        let input: Vec<u8> = vec![0xff, b'\n', b'{', b'}', b'\n'];
+        let mut reader = BufReader::new(&input[..]);
+        let mut buffer = Vec::new();
+
+        let first = read_shim_line(&mut reader, &mut buffer)
+            .await
+            .expect("a bad byte must not be a fatal IO error")
+            .expect("a line should be produced");
+        assert!(serde_json::from_str::<Value>(&first).is_err());
+
+        let second = read_shim_line(&mut reader, &mut buffer)
+            .await
+            .expect("the connection stays usable")
+            .expect("the next line should still arrive");
+        assert_eq!(second, "{}", "a bad byte consumed the line after it");
+    }
+
+    #[tokio::test]
+    async fn a_line_over_the_cap_is_refused_instead_of_buffered_without_limit() {
+        let mut input = vec![b'a'; MAX_SHIM_LINE_BYTES + 16];
+        input.push(b'\n');
+        let mut reader = BufReader::new(&input[..]);
+        let mut buffer = Vec::new();
+
+        let outcome = read_shim_line(&mut reader, &mut buffer).await;
+        assert!(outcome.is_err(), "an oversized line was buffered rather than refused");
+        assert!(buffer.len() <= MAX_SHIM_LINE_BYTES);
+    }
+
+    #[tokio::test]
+    async fn a_line_split_across_reads_is_reassembled_whole() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"{\"type\":\"health\",\"id\":\"h\"}");
+        input.push(b'\n');
+        let mut reader = BufReader::with_capacity(8, &input[..]);
+        let mut buffer = Vec::new();
+
+        let line = read_shim_line(&mut reader, &mut buffer)
+            .await
+            .expect("a split line should read cleanly")
+            .expect("a line should be produced");
+        assert_eq!(line, "{\"type\":\"health\",\"id\":\"h\"}");
+    }
+
+    #[test]
+    fn descriptor_exhaustion_is_transient_and_never_ends_the_accept_loop() {
+        use std::io::{Error, ErrorKind};
+        // EMFILE at launchd's 256-descriptor default killed the whole broker at
+        // about 246 concurrent shim connections.
+        assert!(is_transient_accept_error(&Error::from_raw_os_error(24)));
+        assert!(is_transient_accept_error(&Error::from_raw_os_error(23)));
+        assert!(is_transient_accept_error(&Error::new(ErrorKind::ConnectionAborted, "aborted")));
+        assert!(is_transient_accept_error(&Error::new(ErrorKind::Interrupted, "eintr")));
+        // A listener that is genuinely gone still ends the loop.
+        assert!(!is_transient_accept_error(&Error::new(ErrorKind::NotFound, "gone")));
     }
 
     #[test]

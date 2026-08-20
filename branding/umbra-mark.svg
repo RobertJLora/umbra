@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <!-- crescent-U ribbon: bold right stroke, thin sweeping left crescent, open top, curved bottom -->
+  <g fill="none" stroke="url(#g)" stroke-linecap="round">
+    <!-- main U bowl, bold -->
+    <path d="M68 20 L68 55 C68 74 56 82 46 82 C40 82 35 79 32 74"
+          stroke-width="15"/>
+    <!-- left crescent sweep, tapering thin -->
+    <path d="M30 22 C30 46 33 62 44 72"
+          stroke-width="9" opacity="0.92"/>
+  </g>
+</svg>

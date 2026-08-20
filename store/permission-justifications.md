@@ -2,7 +2,7 @@
 
 Paste-ready text for the Privacy practices tab of the Chrome Web Store developer dashboard, one entry per field. Each entry has three parts: the field it goes in, the text to paste, and the code a reviewer can open to check the claim. The verification notes are for whoever fills the form; they do not go in the box.
 
-Everything here is checked against `extension/manifest.json` at version 0.4.7 and the code as packaged by `scripts/package-extension.sh`. If the manifest's permission list changes, this file changes with it, or the submission contradicts itself in the one place a reviewer looks first.
+Everything here is checked against `extension/manifest.json` as it stands in this checkout and the code as packaged by `scripts/package-extension.sh`. If the manifest's permission list changes, this file changes with it, or the submission contradicts itself in the one place a reviewer looks first.
 
 ---
 
@@ -12,7 +12,7 @@ Everything here is checked against `extension/manifest.json` at version 0.4.7 an
 
 **Verification**
 
-The ownership boundary that statement rests on is one function. `extension/session-state.js:143` throws before any Chrome call when a session names a tab it does not own, and `extension/session-state.js:120` refuses to claim a tab another session already holds.
+The ownership boundary that statement rests on is one function. `extension/session-state.js` throws before any Chrome call when a session names a tab it does not own, and `extension/session-state.js` refuses to claim a tab another session already holds.
 
 ---
 
@@ -24,7 +24,7 @@ The ownership boundary that statement rests on is one function. `extension/sessi
 
 **Verification**
 
-The complete set of stored keys is the `DEFAULT_CONFIG` object at `extension/shared.js:3`. Session state is a single record named `bridgeSessionState` at `extension/session-state.js:1`, written through `persist()` in the same file.
+The complete set of stored keys is the `DEFAULT_CONFIG` object at `extension/shared.js`. Session state is a single record named `bridgeSessionState` at `extension/session-state.js`, written through `persist()` in the same file.
 
 ---
 
@@ -32,11 +32,11 @@ The complete set of stored keys is the `DEFAULT_CONFIG` object at `extension/sha
 
 **Paste this**
 
-> Umbra creates, updates, queries, and closes the tabs a session opened, and reads their title and URL to report session state back to the user's local companion. Every tool resolves its target through the per-session ownership map before Chrome is called, and the tab listing tool filters its output to the calling session's own tabs. A tab no session owns is invisible to the entire tool surface, so the permission's reach across the profile is never exposed to a caller.
+> Umbra creates, updates, queries, and closes the tabs a session opened, and reads their title and URL to report session state back to the user's local companion. Every tool that acts on a tab resolves its target through the per-session ownership map before Chrome is called, and the tab listing tool filters its output to the calling session's own tabs. Two read-only tools list unowned tabs and groups by title and URL, which is how a user hands an existing tab to a session; nothing else is read from those tabs, and no action reaches one until the user adopts it.
 
 **Verification**
 
-`extension/session-state.js:143` is the single enforcement point, called from every tab-facing path in `extension/background.js`.
+`extension/session-state.js` is the single enforcement point, called from every tab-facing path in `extension/background.js`.
 
 ---
 
@@ -48,7 +48,7 @@ The complete set of stored keys is the `DEFAULT_CONFIG` object at `extension/sha
 
 **Verification**
 
-The two programmatic capture calls are `extension/background.js:4602` and `extension/background.js:4622`. Chrome requires a literal broad host permission for both, which is why `activeTab` alone does not cover them.
+The two programmatic capture calls are the `chrome.tabs.captureVisibleTab` calls in `captureViewportScreenshot` and `captureFullPageScreenshot` in `extension/background.js`. Chrome requires a literal broad host permission for both, which is why `activeTab` alone does not cover them.
 
 ---
 
@@ -56,11 +56,11 @@ The two programmatic capture calls are `extension/background.js:4602` and `exten
 
 **Paste this**
 
-> Each agent session gets its own named Chrome tab group. That group is the visible boundary of the product: the user can tell at a glance which tabs an automated session owns and which are their own. Grouping only ever moves tabs the session already owns, and cleanup removes only groups the extension created. Without this permission the ownership model has no visual representation and automated tabs become indistinguishable from the user's own.
+> Each agent session gets its own named Chrome tab group. That group is the visible boundary of the product: the user can tell at a glance which tabs an automated session owns and which are their own. Grouping only ever moves tabs the session already owns. The cleanup tool matches groups by title so a group left behind by a session that has ended can still be cleared; it skips any group a connected session owns, it accepts a dry run, and the title matcher is supplied by the caller. Without this permission the ownership model has no visual representation and automated tabs become indistinguishable from the user's own.
 
 **Verification**
 
-Group creation and update run through `extension/background.js:87` and `extension/background.js:1331`; the group id is stored per session at `extension/session-state.js:6`.
+Group creation and update run through `buildGroupUpdate` and `ensureSessionGroup` in `extension/background.js`; the group id is stored per session by `setGroup` in `extension/session-state.js`.
 
 ---
 
@@ -72,7 +72,7 @@ Group creation and update run through `extension/background.js:87` and `extensio
 
 **Verification**
 
-The injection call sites are `extension/background.js:1347`, `:1824`, `:2076`, and `:2800`. The manifest has no `content_scripts` key. The files argument at `:2800` names package-local paths only.
+The injection call sites are `extension/background.js`, , , and . The manifest has no `content_scripts` key. The files argument at  names package-local paths only.
 
 ---
 
@@ -84,7 +84,7 @@ The injection call sites are `extension/background.js:1347`, `:1824`, `:2076`, a
 
 **Verification**
 
-`extension/background.js:317` creates the document; `extension/background.js:264` closes it. The socket itself is `extension/offscreen.js:324`, and it is the only network call in the extension.
+`extension/background.js` creates the document; `extension/background.js` closes it. The socket itself is `extension/offscreen.js`, and it is the only network call in the extension.
 
 ---
 
@@ -96,7 +96,7 @@ The injection call sites are `extension/background.js:1347`, `:1824`, `:2076`, a
 
 **Verification**
 
-`extension/background.js:7` names the alarm, `:8` sets the one-minute period, `:365` creates it, and `:5273` is the handler.
+`extension/background.js` names the alarm,  sets the one-minute period,  creates it, and  is the handler.
 
 ---
 
@@ -112,7 +112,7 @@ This is the entry that decides the review. Keep it specific and keep it short en
 
 **Verification**
 
-`extension/background.js:4099` is the screenshot command, `:1655` the file input, and `:2020` the evaluate. Every one of them goes through `withOwnedTabDebugger` at `:1557`, which owns attach, detach, and the reference count. `grep -rn "AsyncFunction\|new Function(\|eval(" extension/*.js` returns nothing, and `scripts/verify-package.mjs` fails the build if that ever changes.
+The `Page.captureScreenshot`, `DOM.setFileInputFiles`, and `Runtime.evaluate` calls all live in `extension/background.js`, and every one of them goes through `withOwnedTabDebugger`, which owns attach, detach, and the reference count. `grep -rn "AsyncFunction\|new Function(\|eval(" extension/*.js` returns nothing, and `scripts/verify-package.mjs` fails the build if that ever changes.
 
 **Why this framing rather than a shorter one**
 
@@ -128,7 +128,7 @@ A reviewer's worry about `debugger` is arbitrary code and hidden capture. The an
 
 **Verification**
 
-`extension/manifest.json:17` declares it as optional. The grant button calls `chrome.permissions.request` at `extension/options.js:248`, and the granted state is read at `extension/options.js:118` and `extension/popup.js:130`. Loopback host permissions are deliberately absent, because the WebSocket is allowed by the content security policy at `extension/manifest.json:43`, not by a host permission.
+`extension/manifest.json:17` declares it as optional. The grant button calls `chrome.permissions.request` at `extension/options.js`, and the granted state is read at `extension/options.js` and `extension/popup.js`. Loopback host permissions are deliberately absent, because the WebSocket is allowed by the content security policy at `extension/manifest.json:43`, not by a host permission.
 
 ---
 

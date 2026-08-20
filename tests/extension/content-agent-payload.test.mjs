@@ -331,3 +331,73 @@ describe('content agent payload contract', () => {
     }
   });
 });
+
+describe('content agent ref safety', () => {
+  it('honours the shared store when it says a ref no longer resolves', async () => {
+    // A ref whose element left the DOM used to fall through to a positional
+    // index lookup, which resolved the same index in the re-rendered list. The
+    // click landed on a different control and still reported clicked: true.
+    const detached = { tagName: 'BUTTON', isConnected: false };
+    const store = { byRef: new Map([['cic:0:0', detached]]), domVersion: 0 };
+    const axTree = {
+      getSharedRefStore: () => store,
+      createRefStore: () => store,
+      expireRefStore: () => store,
+      resolveElementRef: () => ({
+        __error: 'Element ref no longer resolves. Run browser_read_page or browser_read_interactive again.',
+        code: 'stale_interactive_ref',
+      }),
+      walkAxTree: () => ({ nodes: [], filter: 'interactive', maxNodes: 1, truncated: false, domVersion: 0 }),
+      findAxNodes: () => ({ matches: [] }),
+    };
+
+    const clicks = [];
+    const survivor = {
+      tagName: 'BUTTON',
+      isConnected: true,
+      textContent: 'Publish to production',
+      innerText: 'Publish to production',
+      getAttribute: () => null,
+      hasAttribute: () => false,
+      getBoundingClientRect: () => makeRect(120, 30),
+      getClientRects: () => [makeRect(120, 30)],
+      closest: () => null,
+      scrollIntoView: () => {},
+      focus: () => {},
+      click: () => clicks.push('publish'),
+      dispatchEvent: () => true,
+    };
+
+    const agent = loadAgent({ interactive: [survivor], axTree });
+    try {
+      const response = await agent.dispatch('click_interactive_ref', { ref: 'cic:0:0' });
+      const failed = response.ok === false || Boolean(response.result?.__error);
+      assert.ok(failed, 'a ref the store rejected still resolved to some element');
+      assert.notEqual(response.result?.clicked, true);
+      assert.deepEqual(clicks, [], 'a stale ref clicked a different control');
+    } finally {
+      agent.dispose();
+    }
+  });
+
+  it('starts past a surviving ref store version so old refs cannot resolve after re-injection', () => {
+    const store = { byRef: new Map(), domVersion: 6 };
+    const axTree = {
+      getSharedRefStore: () => store,
+      createRefStore: () => store,
+      expireRefStore: () => store,
+      resolveElementRef: () => ({ __error: 'x' }),
+      walkAxTree: () => ({ nodes: [], filter: 'interactive', maxNodes: 1, truncated: false, domVersion: 7 }),
+      findAxNodes: () => ({ matches: [] }),
+    };
+
+    const agent = loadAgent({ axTree });
+    try {
+      // domVersion used to restart at 0 on every injection, so a ref an earlier
+      // agent issued at version 0 resolved against a brand-new version 0.
+      assert.ok(agent.state.domVersion > 6, `re-injected agent restarted at ${agent.state.domVersion}`);
+    } finally {
+      agent.dispose();
+    }
+  });
+});

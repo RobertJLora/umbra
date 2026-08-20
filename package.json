@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "npm --prefix mcp-server test",
-    "doctor": "npm --prefix mcp-server run doctor",
+    "doctor": "npm --prefix mcp-server run doctor --",
     "recover": "npm --prefix mcp-server run recover",
-    "release:check": "npm --prefix mcp-server run release:check",
+    "release:check": "npm --prefix mcp-server run release:check --",
     "bench": "npm --prefix mcp-server run bench"
   }
 }

@@ -18,7 +18,7 @@ Creates, updates, queries, and closes session-owned tabs, and reads the title an
 
 Risk: the API can see metadata for every tab in the profile.
 
-Mitigation: every tool resolves its target through the session ownership map before Chrome is called, and `browser_list_tabs` filters to the caller's own tabs. A tab no session owns is invisible to every session.
+Mitigation: every tool that acts on a tab resolves its target through the session ownership map before Chrome is called, and `browser_list_tabs` filters to the caller's own tabs. Two read tools are scoped wider on purpose: `browser_find_tabs` and `browser_find_groups` return the title and URL of unowned tabs and groups, because handing a tab to a session needs a way to name it. They read nothing else, and no acting tool will touch a tab until `browser_adopt_tab` claims it.
 
 ### `activeTab`
 

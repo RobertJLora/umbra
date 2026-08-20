@@ -8,6 +8,8 @@ Umbra is two pieces that pair on a shared key you generate: an MV3 Chrome extens
 
 Remote-debugging a browser gives an agent everything at once: every tab, every cookie jar, every profile. Umbra takes the opposite position. The agent gets a tab group it created, the tabs inside it, and nothing else. Ask it to read a tab it does not own and the extension refuses before Chrome is ever touched.
 
+Two tools sit outside that boundary on purpose, and both are listed as such in `docs/permissions.md`: `browser_find_tabs` and `browser_find_groups` report the title and URL of tabs a session does not own, which is how you hand one over, and `browser_cleanup_groups` matches tab groups by title across the whole profile so it can clear groups left behind by a session that is gone. Give `browser_cleanup_groups` a title prefix your own groups do not share, or run it with `dryRun: true` first.
+
 That boundary is what makes it usable against a browser you are already logged into. The agent can read a dashboard you are signed into, fill a form, export a CSV, and close its own tabs when it finishes, while your other windows stay untouched and unreadable.
 
 The project is deliberately boring:
@@ -20,7 +22,7 @@ The project is deliberately boring:
 
 ## Install
 
-Full walkthrough with every environment variable is in `docs/install.md`. The short version:
+Full walkthrough, with every variable a normal install needs, is in `docs/install.md`. The short version:
 
 ```bash
 git clone <this-repo> umbra
@@ -29,9 +31,11 @@ npm install
 npm test
 ```
 
+Dependencies live in `mcp-server/`, not at the repository root, so `npm install` at the root installs nothing and `npm test` there fails until the command above has run once. After it has, `npm test`, `npm run doctor`, and `npm run release:check` all work from the root.
+
 Load `extension/` unpacked at `chrome://extensions` with Developer mode on, open the extension options page, click Generate Key, then click Copy Environment Line and paste that line into your MCP client config. Restart the client and the tools appear. Click Grant Site Access on the same page before the first page read, because Umbra requests no site access at install time.
 
-Without a checkout, `npx -y @umbra-mcp/server pair` generates the key, writes it to `~/.umbra/shared-key`, and prints the client config block. That published package carries no optional local plugins.
+The package is not on npm yet and the extension is not in the Chrome Web Store yet, so a checkout is the only install path today. From one, `node mcp-server/cli.js pair` generates the key, writes it to `~/.umbra/shared-key`, and prints the client config block. Once `@umbra-mcp/server` is published the same command runs as `npx -y @umbra-mcp/server pair`, and that published package will carry no optional local plugins.
 
 ## Tool surface
 
@@ -61,9 +65,9 @@ The list above is the whole surface of every published build. A checkout can car
 Notes worth knowing before you call these:
 
 - `browser_get_page_content` defaults to text-only and supports selector scoping plus a `maxChars` cap. Pass `includeImages: true` only when you need the visible-image inventory.
-- `browser_batch` runs a bounded create, navigate, wait, read, click, fill, press, scroll, close workflow in one MCP call. Child params can reference earlier results with `{"$ref":"prev.tabId"}`, `{"$ref":"0.tabId"}`, or `{"$ref":"create.tabId"}`.
+- `browser_batch` runs a bounded create, navigate, wait, read, click, fill, press, scroll, close workflow in one MCP call. Child params can reference earlier results with `{"$ref":"prev.tabId"}` for the last successful step, `{"$ref":"0.tabId"}` for a step by index, or `{"$ref":"create.tabId"}` when that earlier call set `label: "create"`.
 - `browser_read_interactive` returns a compact list of visible controls with short-lived refs tied to the current DOM version. `browser_click`, `browser_fill`, `browser_scroll`, and `browser_screenshot` accept those refs; a stale ref returns an error telling the caller to read again.
-- `browser_get_bridge_pressure` is read-only. It reports sessions, owned tabs and windows, connected listeners, content-agent counts, storage-write counters, discard candidates, and cleanup suggestions.
+- `browser_get_bridge_pressure` reports one session's pressure: its owned tab count and a sample of those tabs, connected listener counts, and content-agent queue depth. It also reaps ownership records for tabs that no longer exist, so it is not purely read-only.
 - `browser_freeze_session_tabs` discards owned inactive tabs with `chrome.tabs.discard` to release renderer memory. It defaults to `dryRun: true` and never targets a tab another session owns.
 - `browser_run_page_action` runs predefined, named page actions and returns JSON-safe output. It is not an arbitrary script tool; `browser_javascript` is, and it routes through the debugger on the owned tab.
 
@@ -86,7 +90,7 @@ Two transports exist. The Rust broker is the launcher default: one extension Web
 - Navigation is scheme-limited at the extension boundary: `http:`, `https:`, `file:`, and `about:blank` are allowed, and risky schemes such as `javascript:` and `data:` are rejected before Chrome sees them.
 - At task completion the agent should call `browser_close_session_tabs`, which closes the whole owned group. It closes a whole window only when every tab in that window belongs to the session, so unowned blank tabs survive.
 - Clean server shutdown runs the same cleanup by default. Set `UMBRA_KEEP_TABS_OPEN=1` or `UMBRA_CLOSE_ON_SHUTDOWN=0` when a run should leave tabs open for inspection.
-- The default port range is `47821-47852`, which is wide enough that ordinary multi-agent work never runs out of room.
+- The default port range is `47821-47852`, which is wide enough that ordinary multi-agent work never runs out of room. The extension clamps a configured port to `1024-65535`; set the same range on both sides.
 
 ## What Umbra will not do
 

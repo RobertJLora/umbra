@@ -84,7 +84,7 @@ Other lanes, all reading the key from `UMBRA_SHARED_KEY_FILE` when you do not wa
 | `npm run smoke:rust` | the same path through the Rust broker |
 | `npm run smoke:auth` | a signed-in page returns its title without dumping body content. Set `UMBRA_AUTH_CHECK_URL` to a page this browser profile is already signed into; there is no default, because which page proves session reuse depends on the account |
 | `npm run smoke:required` | two concurrent sessions, cross-session denial, one download |
-| `npm run smoke:groups` | five sessions, eight tabs each, one visible group per session |
+| `npm run smoke:groups` | three sessions, five tabs each, one visible group per session; raise with `UMBRA_STRESS_SESSIONS` and `UMBRA_STRESS_TABS` |
 
 The stress lane defaults to port `47829` so it can run beside a registered MCP server already holding `47821`. Override with `UMBRA_STRESS_PORT_START`.
 

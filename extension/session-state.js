@@ -23,24 +23,65 @@ export class SessionStateStore {
 
   async load() {
     const { [STORAGE_KEY]: raw } = await this.storageArea.get({ [STORAGE_KEY]: [] });
-    this.sessions = new Map(
-      Array.isArray(raw)
-        ? raw
-            .filter((entry) => entry?.sessionId)
-            .map((entry) => [
-              entry.sessionId,
-              {
-                sessionId: entry.sessionId,
-                port: entry.port ?? null,
-                groupId: entry.groupId ?? null,
-                activeTabId: entry.activeTabId ?? null,
-                tabIds: Array.isArray(entry.tabIds) ? [...new Set(entry.tabIds)] : [],
-                connected: entry.connected === true,
-                lastSeenAt: entry.lastSeenAt ?? Date.now(),
-              },
-            ])
-        : [],
-    );
+
+    // A stored value of the wrong shape is corruption, not an empty map. Reading
+    // it as empty and then persisting walked straight past the `loaded` guard
+    // and destroyed exactly the tab ownership that guard exists to protect, so
+    // the store stays unloaded until a clean read succeeds and persist() keeps
+    // refusing to write.
+    if (raw !== undefined && raw !== null && !Array.isArray(raw)) {
+      console.error(
+        `[bridge] stored session state is ${Array.isArray(raw) ? 'an array' : typeof raw}, not an array; refusing to load or overwrite it`,
+      );
+      return this;
+    }
+
+    // One tab belongs to one session. A stored map that hands the same tab to
+    // two sessions breaks the isolation boundary claimTab enforces at runtime,
+    // and browser_close_session_tabs would then close another session's tab.
+    // First claim wins; later duplicates are dropped and reported.
+    const claimed = new Map();
+    const entries = [];
+    for (const entry of Array.isArray(raw) ? raw : []) {
+      if (!entry?.sessionId) {
+        continue;
+      }
+      const sessionId = String(entry.sessionId);
+      const tabIds = [];
+      for (const candidate of Array.isArray(entry.tabIds) ? entry.tabIds : []) {
+        // Chrome tab ids are integers. A stored string compares unequal to the
+        // number a runtime call carries, which let a second session claim a tab
+        // the first already held.
+        const tabId = Number(candidate);
+        if (!Number.isInteger(tabId)) {
+          continue;
+        }
+        const owner = claimed.get(tabId);
+        if (owner !== undefined && owner !== sessionId) {
+          console.error(`[bridge] stored tab ${tabId} was claimed by both ${owner} and ${sessionId}; keeping ${owner}`);
+          continue;
+        }
+        claimed.set(tabId, sessionId);
+        if (!tabIds.includes(tabId)) {
+          tabIds.push(tabId);
+        }
+      }
+      const activeTabId = Number.isInteger(Number(entry.activeTabId)) ? Number(entry.activeTabId) : null;
+      entries.push([
+        sessionId,
+        {
+          sessionId,
+          port: entry.port ?? null,
+          groupId: entry.groupId ?? null,
+          activeTabId: activeTabId !== null && tabIds.includes(activeTabId) ? activeTabId : (tabIds[0] ?? null),
+          tabIds,
+          connected: entry.connected === true,
+          lastSeenAt: entry.lastSeenAt ?? Date.now(),
+        },
+      ]);
+    }
+
+    this.sessions = new Map(entries);
     this.loaded = true;
     return this;
   }
@@ -136,8 +177,11 @@ export class SessionStateStore {
     this.ensureSession(sessionId).activeTabId = tabId;
   }
 
+  // A read never creates a record. Routing this through ensureSession meant a
+  // typo in a session id added a permanent entry that the next persist() wrote
+  // to storage.
   listTabIds(sessionId) {
-    return [...this.ensureSession(sessionId).tabIds];
+    return [...(this.sessions.get(sessionId)?.tabIds ?? [])];
   }
 
   assertOwned(sessionId, tabId) {

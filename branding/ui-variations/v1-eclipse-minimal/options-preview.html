@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Umbra Settings</title>
+    <style>
+      /* ------------------------------------------------------------------
+         Umbra settings, direction 1: Eclipse Minimal.
+         One glowing element per view: the crescent mark in its status ring
+         at the top of the page. Everything below is typography on near-black
+         with hairline dividers at 8% white. Every control and string from the
+         real options.html / options.js is present.
+         ------------------------------------------------------------------ */
+
+      :root {
+        --void: #07060e;
+        --disc: #0d0b1e;
+        --surface: rgba(255, 255, 255, 0.024);
+        --text: #ece9f6;
+        --muted: #9c96b9;
+        --faint: #6d6789;
+        --hair: rgba(255, 255, 255, 0.08);
+        --hair-soft: rgba(255, 255, 255, 0.05);
+        --violet: #7c5cff;
+        --violet-lift: #a78bfa;
+        --violet-pale: #c4b5fd;
+        --amber: #f2b45a;
+        --idle: #6d6789;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { background: var(--void); }
+
+      body {
+        margin: 0;
+        padding: 72px 32px 56px;
+        position: relative;
+        background: var(--void);
+        color: var(--text);
+        font: 14px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(52% 34% at 50% 2%, rgba(124, 92, 255, 0.26), rgba(124, 92, 255, 0) 66%),
+          radial-gradient(70% 40% at 50% 104%, rgba(76, 29, 149, 0.24), rgba(76, 29, 149, 0) 74%);
+      }
+
+      .shell {
+        position: relative;
+        z-index: 1;
+        max-width: 720px;
+        margin: 0 auto;
+      }
+
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---------- hero ---------- */
+
+      .hero { text-align: center; padding-bottom: 46px; }
+
+      .orb {
+        position: relative;
+        width: 104px;
+        height: 104px;
+        margin: 0 auto 28px;
+      }
+
+      /* The disc is painted the exact background colour of icon128.png, clipped
+         to a circle, and the artwork is composited with `lighten`. The square
+         substrate resolves to the disc colour and disappears, so only the lit
+         crescent survives. */
+      .orb-disc {
+        position: absolute;
+        inset: 0;
+        isolation: isolate;
+        overflow: hidden;
+        border-radius: 50%;
+        background: var(--disc);
+        display: grid;
+        place-items: center;
+        box-shadow:
+          0 0 54px 8px rgba(124, 92, 255, 0.26),
+          0 0 110px 24px rgba(124, 92, 255, 0.10),
+          0 18px 44px rgba(0, 0, 0, 0.55);
+      }
+
+      .orb-disc img {
+        width: 86px;
+        height: 86px;
+        display: block;
+        mix-blend-mode: lighten;
+      }
+
+      /* The lit rim, sitting on the disc edge. Violet arc = connected; the same
+         element carries grey and amber for the other two states. */
+      .orb-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: conic-gradient(
+          from 225deg,
+          rgba(167, 139, 250, 0) 0deg,
+          rgba(167, 139, 250, 0.08) 46deg,
+          rgba(224, 214, 255, 0.95) 168deg,
+          rgba(124, 92, 255, 0.45) 254deg,
+          rgba(124, 92, 255, 0) 330deg
+        );
+        -webkit-mask: radial-gradient(closest-side circle, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px));
+        mask: radial-gradient(closest-side circle, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px));
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 38px;
+        line-height: 1.1;
+        font-weight: 300;
+        letter-spacing: -0.028em;
+        color: #fff;
+      }
+
+      .tagline {
+        margin: 12px 0 0;
+        font-size: 10.5px;
+        font-weight: 500;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: var(--violet-pale);
+      }
+
+      .lede {
+        max-width: 500px;
+        margin: 22px auto 0;
+        font-size: 13.5px;
+        line-height: 1.7;
+        color: var(--muted);
+      }
+
+      .status-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 11px;
+        margin-top: 28px;
+        padding: 9px 18px 9px 15px;
+        border-radius: 999px;
+        border: 1px solid var(--hair);
+        background: rgba(255, 255, 255, 0.022);
+        font-size: 12.5px;
+        color: var(--text);
+      }
+
+      .status-row .port {
+        color: var(--faint);
+        font-size: 11.5px;
+        letter-spacing: 0.03em;
+      }
+
+      #status-text.bad { color: var(--amber); }
+
+      /* ---------- status ring dot ---------- */
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+        background: var(--idle);
+        box-shadow:
+          0 0 0 3px rgba(255, 255, 255, 0.05),
+          0 0 0 7px rgba(255, 255, 255, 0.022);
+      }
+
+      .dot.on {
+        background: var(--violet-pale);
+        box-shadow:
+          0 0 0 3px rgba(124, 92, 255, 0.16),
+          0 0 0 7px rgba(124, 92, 255, 0.07),
+          0 0 14px 1px rgba(124, 92, 255, 0.7);
+      }
+
+      .dot.bad {
+        background: var(--amber);
+        box-shadow:
+          0 0 0 3px rgba(242, 180, 90, 0.16),
+          0 0 0 7px rgba(242, 180, 90, 0.07),
+          0 0 14px 1px rgba(242, 180, 90, 0.55);
+      }
+
+      .dot.sm {
+        width: 6px;
+        height: 6px;
+        box-shadow:
+          0 0 0 2px rgba(242, 180, 90, 0.15),
+          0 0 9px 1px rgba(242, 180, 90, 0.5);
+      }
+
+      /* ---------- cards ---------- */
+
+      .card {
+        background: var(--surface);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 20px;
+        padding: 28px 30px 30px;
+        margin-bottom: 18px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 164px 1fr;
+        gap: 28px;
+        align-items: start;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 500;
+        letter-spacing: 0.005em;
+        color: var(--text);
+      }
+
+      .side-note {
+        margin: 8px 0 0;
+        font-size: 12px;
+        line-height: 1.65;
+        color: #7d779c;
+      }
+
+      .eyebrow {
+        margin: 0;
+        font-size: 9.5px;
+        font-weight: 600;
+        letter-spacing: 0.17em;
+        text-transform: uppercase;
+        color: var(--faint);
+      }
+
+      hr.hair {
+        height: 1px;
+        border: 0;
+        background: var(--hair);
+        margin: 20px 0;
+      }
+
+      /* ---------- fields ---------- */
+
+      .field-label {
+        display: block;
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--faint);
+        margin-bottom: 9px;
+      }
+
+      .field-line {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        border-bottom: 1px solid var(--hair);
+        transition: border-color 0.16s ease;
+      }
+
+      .field-line:hover { border-bottom-color: rgba(255, 255, 255, 0.16); }
+      .field-line:focus-within { border-bottom-color: var(--violet-lift); }
+
+      input[type="text"],
+      input[type="password"],
+      input[type="number"] {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        padding: 8px 0 10px;
+      }
+
+      input:focus { outline: none; }
+      input::placeholder { color: var(--faint); }
+
+      #sharedKey {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-size: 12.5px;
+        letter-spacing: 0.05em;
+        color: var(--violet-pale);
+        -webkit-mask-image: linear-gradient(90deg, #000 88%, rgba(0, 0, 0, 0) 100%);
+        mask-image: linear-gradient(90deg, #000 88%, rgba(0, 0, 0, 0) 100%);
+      }
+
+      .ghost-link {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: var(--faint);
+        font: inherit;
+        font-size: 10.5px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        cursor: pointer;
+        padding: 4px 2px;
+        white-space: nowrap;
+        transition: color 0.16s ease;
+      }
+
+      .ghost-link:hover { color: var(--violet-pale); }
+      .ghost-link:focus-visible { outline: none; color: var(--violet-pale); }
+
+      .ports {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 16px;
+        align-items: end;
+        max-width: 330px;
+      }
+
+      .ports .dash {
+        padding-bottom: 11px;
+        color: var(--faint);
+      }
+
+      .ports .field-line input { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
+
+      .range-caption {
+        margin: 12px 0 0;
+        font-size: 11.5px;
+        color: var(--faint);
+        letter-spacing: 0.03em;
+      }
+
+      .range-caption b { color: var(--violet-pale); font-weight: 500; }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding-bottom: 20px;
+      }
+
+      .toggle-row .label { font-size: 13.5px; color: var(--text); }
+
+      /* ---------- toggle ---------- */
+
+      .switch {
+        position: relative;
+        width: 38px;
+        height: 21px;
+        margin-left: auto;
+        flex: 0 0 auto;
+      }
+
+      .switch input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        opacity: 0;
+        cursor: pointer;
+        z-index: 2;
+      }
+
+      .track {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.07);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      }
+
+      .knob {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        background: #8b85a8;
+        transition: transform 0.18s ease, background 0.18s ease;
+      }
+
+      .switch input:checked ~ .track {
+        background: linear-gradient(180deg, rgba(140, 108, 255, 0.95), rgba(108, 73, 240, 0.8));
+        border-color: rgba(167, 139, 250, 0.55);
+        box-shadow: 0 0 16px rgba(124, 92, 255, 0.42);
+      }
+
+      .switch input:checked ~ .knob {
+        transform: translateX(17px);
+        background: #fff;
+      }
+
+      /* ---------- buttons ---------- */
+
+      button.pill {
+        appearance: none;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.035);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 9px 15px;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.012em;
+        cursor: pointer;
+        transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+      }
+
+      button.pill:hover {
+        background: rgba(255, 255, 255, 0.075);
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+
+      button.pill:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.38);
+      }
+
+      button.primary {
+        background: linear-gradient(180deg, #8a6cff, #6b46f0);
+        border-color: rgba(167, 139, 250, 0.5);
+        color: #fff;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.18),
+          0 8px 24px rgba(108, 73, 240, 0.34);
+      }
+
+      button.primary:hover {
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.24),
+          0 10px 30px rgba(108, 73, 240, 0.5);
+      }
+
+      button.pill[disabled] {
+        cursor: default;
+        opacity: 0.5;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      button.pill[disabled]:hover {
+        background: rgba(255, 255, 255, 0.02);
+        border-color: rgba(255, 255, 255, 0.1);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 20px;
+      }
+
+      .hint {
+        margin: 16px 0 0;
+        font-size: 12px;
+        line-height: 1.7;
+        color: #7d779c;
+      }
+
+      .hint.caution {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 11px;
+        align-items: start;
+      }
+
+      .hint.caution .dot { margin-top: 7px; }
+
+      /* ---------- sessions ---------- */
+
+      ul.sessions {
+        list-style: none;
+        margin: 16px 0 0;
+        padding: 0;
+      }
+
+      ul.sessions li {
+        display: grid;
+        grid-template-columns: auto auto 1fr auto auto;
+        align-items: center;
+        gap: 14px;
+        padding: 11px 0;
+        font-size: 13px;
+      }
+
+      ul.sessions li + li { border-top: 1px solid var(--hair-soft); }
+
+      .swatch {
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+        background: var(--violet);
+        box-shadow: 0 0 9px rgba(124, 92, 255, 0.6);
+      }
+
+      .swatch.dim { background: #5b4bc4; box-shadow: 0 0 9px rgba(91, 75, 196, 0.45); }
+
+      .sid {
+        font-size: 12px;
+        color: var(--violet-pale);
+        letter-spacing: 0.02em;
+        font-weight: 500;
+      }
+
+      .sname { color: var(--text); }
+
+      .smeta {
+        font-size: 11.5px;
+        color: var(--faint);
+        letter-spacing: 0.02em;
+      }
+
+      /* ---------- debug ---------- */
+
+      pre#debugBox {
+        margin: 16px 0 0;
+        padding: 18px 20px;
+        border-radius: 14px;
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid var(--hair-soft);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-size: 11.5px;
+        line-height: 1.75;
+        color: var(--muted);
+        white-space: pre-wrap;
+        overflow-x: auto;
+      }
+
+      /* ---------- footer ---------- */
+
+      .footer {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 12px;
+        margin: 42px 0 0;
+        padding-top: 26px;
+        border-top: 1px solid var(--hair);
+        font-size: 11.5px;
+        color: #7d779c;
+        letter-spacing: 0.04em;
+      }
+
+      .footer .sep { color: rgba(255, 255, 255, 0.16); }
+
+      a {
+        color: var(--muted);
+        text-decoration: none;
+        border-bottom: 1px solid transparent;
+        transition: color 0.16s ease, border-color 0.16s ease;
+      }
+
+      a:hover { color: var(--violet-pale); border-bottom-color: rgba(167, 139, 250, 0.4); }
+
+      ol {
+        margin: 14px 0 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      ol li { margin-bottom: 8px; }
+      ol strong { color: var(--text); font-weight: 500; }
+
+      [hidden] { display: none !important; }
+
+      @media (max-width: 700px) {
+        body { padding: 48px 20px 40px; }
+        .split { grid-template-columns: 1fr; gap: 18px; }
+        .card { padding: 24px 22px 26px; }
+        h1 { font-size: 32px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div class="orb">
+          <span class="orb-disc"><img src="icon128.png" alt="Umbra" /></span>
+          <span class="orb-ring" aria-hidden="true"></span>
+        </div>
+        <h1>Umbra</h1>
+        <p class="tagline">Browser Control for AI Agents</p>
+        <p class="lede">
+          Umbra pairs this browser with a companion server running on your own machine over a
+          loopback connection. The two pair with a shared key you create here. Nothing works until
+          the companion server is running with the same key.
+        </p>
+        <div class="status-row">
+          <span id="status-dot" class="dot on" aria-hidden="true"></span>
+          <span id="status-text">Connected to 2 local sessions.</span>
+          <span class="port mono">127.0.0.1 : 47821</span>
+        </div>
+      </header>
+
+      <!-- Shown only before a shared key exists; hidden here because this
+           install is paired. Same rule as the real settings page. -->
+      <section class="card" id="firstRunCard" hidden>
+        <div class="split">
+          <div>
+            <h2>First Run</h2>
+            <p class="side-note">Three steps, once per install.</p>
+          </div>
+          <div>
+            <ol>
+              <li>Click <strong>Generate Key</strong> below, then <strong>Save And Reconnect</strong>.</li>
+              <li>Click <strong>Copy Environment Line</strong> and paste that line into the environment
+                block of your MCP client's Umbra entry, then start the companion server.</li>
+              <li>Click <strong>Grant Site Access</strong> so Umbra can drive the tabs a session opens.</li>
+            </ol>
+            <p class="hint">The status dot at the top turns violet once the companion server connects.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="split">
+          <div>
+            <h2>Pairing</h2>
+            <p class="side-note">The secret this browser and the companion server both hold. Sixty four
+              hex characters, generated here, never typed.</p>
+          </div>
+          <div>
+            <label class="field-label" for="sharedKey">Shared Key</label>
+            <div class="field-line">
+              <input
+                id="sharedKey"
+                type="password"
+                autocomplete="off"
+                value="4f8c21ab97d3e60517bc4a2f8e9d0c3b6a15f742e8b09cd35a7126ef4b8d90c1"
+                placeholder="Click Generate Key to create one"
+              />
+              <button type="button" class="ghost-link" id="revealButton">Reveal</button>
+            </div>
+            <div class="actions">
+              <button type="button" class="pill" id="generateButton">Generate Key</button>
+              <button type="button" class="pill" id="copyButton">Copy Environment Line</button>
+              <button type="button" class="pill primary" id="saveButton">Save And Reconnect</button>
+            </div>
+            <p class="hint caution">
+              <span class="dot bad sm" aria-hidden="true"></span>
+              <span>The environment line carries the key and the port range in one string, so the key is
+                typed nowhere. A generated key replaces the old one: any companion server still holding
+                the previous key stops pairing.</span>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="split">
+          <div>
+            <h2>Connection</h2>
+            <p class="side-note">Umbra probes this loopback range for a companion server holding the
+              same key.</p>
+          </div>
+          <div>
+            <div class="toggle-row">
+              <span class="label">Enable loopback scanning</span>
+              <span class="switch">
+                <input id="bridgeEnabled" type="checkbox" checked />
+                <span class="track" aria-hidden="true"></span>
+                <span class="knob" aria-hidden="true"></span>
+              </span>
+            </div>
+            <div class="ports">
+              <div>
+                <label class="field-label" for="portStart">Port Start</label>
+                <div class="field-line">
+                  <input id="portStart" type="number" min="1024" max="47852" value="47821" />
+                </div>
+              </div>
+              <span class="dash" aria-hidden="true">-</span>
+              <div>
+                <label class="field-label" for="portEnd">Port End</label>
+                <div class="field-line">
+                  <input id="portEnd" type="number" min="1024" max="47852" value="47852" />
+                </div>
+              </div>
+            </div>
+            <p class="range-caption mono">Scanning <b>47821 - 47852</b> on 127.0.0.1</p>
+            <div class="actions">
+              <button type="button" class="pill" id="reconnectButton">Reconnect Bridge</button>
+              <button type="button" class="pill" id="reloadButton">Reload Extension</button>
+              <button type="button" class="pill" id="refreshButton">Refresh Status</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="split">
+          <div>
+            <h2>Site Access</h2>
+            <p class="side-note">Granted once, from this page, rather than at install time.</p>
+          </div>
+          <div>
+            <div class="status-row" style="margin-top: 0;">
+              <span id="perm-dot" class="dot on" aria-hidden="true"></span>
+              <span id="perm-text">Site access granted. Sessions can drive the tabs they own.</span>
+            </div>
+            <p class="hint">
+              Umbra reads and drives only the tabs a session owns, and it opens those tabs itself in a
+              labelled group. Chrome has no way to grant that per tab, so it asks for site access once,
+              here, instead of at install time.
+            </p>
+            <div class="actions">
+              <button type="button" class="pill" id="grantButton" disabled>Site Access Granted</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <p class="eyebrow">Session Status</p>
+        <ul class="sessions" id="sessionsList">
+          <li>
+            <span class="swatch" aria-hidden="true"></span>
+            <strong class="sid mono">a91f4c</strong>
+            <span class="sname">Report Export</span>
+            <span class="smeta mono">3 tab(s)</span>
+            <span class="smeta mono">port 47821</span>
+          </li>
+          <li>
+            <span class="swatch dim" aria-hidden="true"></span>
+            <strong class="sid mono">7d2b05</strong>
+            <span class="sname">SERP Sweep</span>
+            <span class="smeta mono">2 tab(s)</span>
+            <span class="smeta mono">port 47823</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <p class="eyebrow">Bridge Debug</p>
+        <pre id="debugBox">{
+  "enabled": true,
+  "portStart": 47821,
+  "portEnd": 47852,
+  "connectedCount": 2,
+  "sockets": [
+    { "port": 47821, "state": "open", "sessionId": "umbra-a91f4c", "lastPongMs": 412 },
+    { "port": 47823, "state": "open", "sessionId": "umbra-7d2b05", "lastPongMs": 388 }
+  ],
+  "lastScanAt": "2026-08-20T14:12:07.331Z",
+  "lastError": null
+}</pre>
+      </section>
+
+      <p class="footer">
+        <span class="mono">Umbra 0.5.0</span>
+        <span class="sep" aria-hidden="true">&middot;</span>
+        <a id="homepageLink" href="https://github.com/umbra-bridge/umbra" target="_blank" rel="noreferrer">Setup guide and source</a>
+      </p>
+    </div>
+
+    <script>
+      // Preview-only stub: no chrome.* APIs. Flips the key field between
+      // masked and visible so the field's two states can be seen.
+      document.getElementById('revealButton').addEventListener('click', () => {
+        const field = document.getElementById('sharedKey');
+        const shown = field.type === 'text';
+        field.type = shown ? 'password' : 'text';
+        document.getElementById('revealButton').textContent = shown ? 'Reveal' : 'Hide';
+      });
+    </script>
+  </body>
+</html>

@@ -2,19 +2,17 @@
 
 Every field the Chrome Web Store developer dashboard asks for, ready to paste. The full description also lives on its own at `store/description.txt` as plain text, because the store renders the description literally and strips nothing: markdown symbols would appear as characters on the page.
 
-Fill the two placeholder decisions before submitting: the final store title (it must match the manifest `name`), and confirmation that both GitHub URLs resolve.
+One thing is still open before submitting: both GitHub URLs in `store/description.txt` and in the manifest `homepage_url` have to resolve publicly. `store/SUBMISSION_CHECKLIST.md` section 1b carries that gate along with the npm one.
 
 ---
 
 ## Store title
 
-**Recommended: `Umbra - Browser Control for AI Agents`** (37 characters, limit 75)
+**`Umbra - Browser Control for AI Agents`** (37 characters, limit 75)
 
-The store derives the listing title from `extension/manifest.json` `name`, which currently reads `Umbra`. Shipping the descriptor form needs a one-word-to-five-word change in that file, which belongs to the manifest unit rather than this one. Raise it there.
+The store derives the listing title from `extension/manifest.json` `name`, which already reads exactly this. Nothing to fill in here; confirm the manifest still matches before uploading, because the store shows whatever the manifest says.
 
-The reason to make the change: a brand-new item named with a single abstract noun has no search surface at all. Store search weights the name field, and "browser control" plus "AI agents" are the two phrases someone hunting for this actually types. The descriptor is a plain statement of what the item does, not a keyword string, so it stays inside the Chrome Web Store naming policy that bans keyword stuffing.
-
-**Fallback if the manifest name stays as it is: `Umbra`.** The copy below works unchanged either way, because the summary line carries the same searchable terms.
+The reason for the descriptor form: a brand-new item named with a single abstract noun has no search surface at all. Store search weights the name field, and "browser control" plus "AI agents" are the two phrases someone hunting for this actually types. The descriptor is a plain statement of what the item does, not a keyword string, so it stays inside the Chrome Web Store naming policy that bans keyword stuffing.
 
 ---
 
@@ -47,7 +45,11 @@ Second choice if Developer Tools is ever contested: Workflow & Planning. Do not 
 
 ## Full description
 
-The paste-ready text is `store/description.txt`, 4,165 characters against the store's 16,000 limit, plain ASCII with no markdown and no smart punctuation.
+The paste-ready text is `store/description.txt`, comfortably under the store's 16,000 limit, plain ASCII with no markdown and no smart punctuation. Recount before uploading rather than trusting a number written here:
+
+```bash
+wc -m < store/description.txt
+```
 
 Its structure, and why each block is there:
 
@@ -111,6 +113,6 @@ Do not append this line to the description. A visible keyword block reads as spa
 
 **External dependency disclosure.** Google's documented path for an extension that needs a separate local program is a plain statement in the description plus test instructions in the reviewer field. The description block titled "Requires a local companion server" is that statement, and it appears above the fold rather than in a footnote. The reviewer notes carry the matching install command and screencast.
 
-**Links to verify before submitting.** Both URLs in the description point at `github.com/umbra-bridge/umbra`, matching the manifest's `homepage_url`. The repository and the `docs/install.md` path on its default branch must both load publicly before the listing goes in, because a broken link in a description is a rejection reason on its own.
+**Links to verify before submitting.** Both URLs in the description point at `github.com/getumbra/umbra`, matching the manifest's `homepage_url`. The repository and the `docs/install.md` path on its default branch must both load publicly before the listing goes in, because a broken link in a description is a rejection reason on its own.
 
 **Consistency check at submission time.** The tool count in the description says 47. If a tool is added or removed from the public build, that number and the "What you get" bullet change with it.

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { resolveBrokerSocketPath } from './config.js';
+import { describeSocketPathProblem, resolveBrokerSocketPath, resolveDownloadDir } from './config.js';
 import { TOOL_DEFINITIONS } from './tools.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -56,6 +56,18 @@ const defaultSocketPath = resolveBrokerSocketPath();
 const defaultIdleTtlMs = Number(process.env.UMBRA_IDLE_EMPTY_SESSION_TTL_MS || 20 * 60 * 1000);
 const defaultIdleMinAgeMs = Number(process.env.UMBRA_IDLE_EMPTY_SESSION_MIN_AGE_MS || 5 * 60 * 1000);
 
+// A bad option is a caller mistake, not a crash. `umbra doctor` maps this exit
+// status onto its own one-line error, so the diagnostic reads like every other
+// subcommand instead of printing a Node stack at the user.
+export const USAGE_EXIT_CODE = 2;
+
+class DoctorUsageError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'DoctorUsageError';
+  }
+}
+
 function parseArgs(argv) {
   const options = {
     fix: false,
@@ -81,14 +93,14 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--min-age-ms=')) {
       options.minAgeMs = Number(arg.slice('--min-age-ms='.length));
     } else {
-      throw new Error(`Unknown doctor option: ${arg}`);
+      throw new DoctorUsageError(`Unknown doctor option: ${arg}`);
     }
   }
   if (!Number.isFinite(options.ttlMs) || options.ttlMs < 0) {
-    throw new Error(`Invalid --ttl-ms: ${options.ttlMs}`);
+    throw new DoctorUsageError(`Invalid --ttl-ms: ${options.ttlMs}`);
   }
   if (!Number.isFinite(options.minAgeMs) || options.minAgeMs < 0) {
-    throw new Error(`Invalid --min-age-ms: ${options.minAgeMs}`);
+    throw new DoctorUsageError(`Invalid --min-age-ms: ${options.minAgeMs}`);
   }
   return options;
 }
@@ -410,7 +422,17 @@ async function chromeRegistrationStatus() {
   return status;
 }
 
-const options = parseArgs(process.argv.slice(2));
+let options;
+try {
+  options = parseArgs(process.argv.slice(2));
+} catch (error) {
+  if (error instanceof DoctorUsageError) {
+    process.stderr.write(`${error.message}\n`);
+    process.stderr.write('Options are --fix, --dry-run, --verify-health, --ttl-ms <ms>, and --min-age-ms <ms>.\n');
+    process.exit(USAGE_EXIT_CODE);
+  }
+  throw error;
+}
 const canonicalManifest = await readJson(path.join(repoRoot, 'extension', 'manifest.json'));
 const activeManifestPath = path.join(activeExtensionDir, 'manifest.json');
 const activeManifest = await exists(activeManifestPath) ? await readJson(activeManifestPath) : null;
@@ -441,6 +463,21 @@ if (listeners.length === 0) {
   problems.push(`No bridge listener answered on ports ${portStart}-${portEnd}. Start the companion server, or set UMBRA_PORT_START and UMBRA_PORT_END to the range it uses.`);
 }
 
+const socketPathProblem = describeSocketPathProblem(defaultSocketPath);
+if (socketPathProblem) {
+  problems.push(socketPathProblem);
+}
+
+const reportedSocketPath = listeners.find((item) => item.normalized.socketPath)?.normalized.socketPath || '';
+if (reportedSocketPath && reportedSocketPath !== defaultSocketPath) {
+  problems.push(`A listener reports its shim socket as ${reportedSocketPath} while this environment resolves ${defaultSocketPath}. Set UMBRA_BROKER_SOCKET to the path the broker actually binds, or stop the process answering on the wrong one.`);
+}
+
+const downloadDir = resolveDownloadDir();
+if (!fs.existsSync(downloadDir)) {
+  problems.push(`Download directory not found: ${downloadDir}. Set UMBRA_DOWNLOAD_DIR to the folder Chrome saves downloads into.`);
+}
+
 const report = {
   generatedAt: new Date().toISOString(),
   problems,
@@ -455,7 +492,12 @@ const report = {
   },
   broker: {
     mode: process.env.UMBRA_BROKER_MODE || 'rust-default-via-launcher',
-    socketPath: listeners.find((item) => item.normalized.socketPath)?.normalized.socketPath || defaultSocketPath,
+    // The resolver, never the listener's answer. `/healthz` is unauthenticated,
+    // so its `socketPath` is whatever process happened to answer on a loopback
+    // port, and this value decides where --fix writes session-reap commands.
+    // The reported one is kept alongside it as a diagnostic.
+    socketPath: defaultSocketPath,
+    reportedSocketPath: listeners.find((item) => item.normalized.socketPath)?.normalized.socketPath || null,
   },
   listeners: {
     range: `${portStart}-${portEnd}`,

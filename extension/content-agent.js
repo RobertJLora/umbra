@@ -21,10 +21,23 @@
 
   const getAxTreeApi = () => globalThis.UmbraAxTree || null;
 
+  // domVersion is the only staleness signal a ref carries, and it used to be a
+  // per-agent counter that restarted at zero. After the 45-second idle
+  // disconnect the agent re-injects onto a page whose UmbraAxTree ref store
+  // survived, so a ref an earlier agent issued at version 0 resolved against a
+  // brand-new version 0 and pointed at a different element. Seeding past the
+  // surviving store's version makes every re-injection a new namespace, so an
+  // old ref fails as stale instead of silently resolving.
+  function seedDomVersion() {
+    const store = getAxTreeApi()?.getSharedRefStore?.();
+    const previous = Number(store?.domVersion);
+    return Number.isInteger(previous) && previous >= 0 ? previous + 1 : 0;
+  }
+
   const state = {
     connected: true,
     activeRequests: 0,
-    domVersion: 0,
+    domVersion: seedDomVersion(),
     domVersionTimer: null,
     idleTimer: null,
     lastDomVersionAt: 0,
@@ -229,7 +242,10 @@
         : 'page';
     const includeImages = config.includeImages === true;
     const rawMaxChars = Number(config.maxChars);
-    const maxChars = Number.isFinite(rawMaxChars) && rawMaxChars > 0
+    // Floored at one character. A fractional value used to survive the `> 0`
+    // test and then floor to zero, and truncate() reads zero as unbounded, which
+    // is exactly the unbounded line this limit exists to prevent.
+    const maxChars = Number.isFinite(rawMaxChars) && rawMaxChars >= 1
       ? Math.min(Math.floor(rawMaxChars), MAX_CHARS_LIMIT)
       : DEFAULT_MAX_CHARS;
 
@@ -457,12 +473,15 @@
       if (!resolved.__error) {
         return { element: resolved.element, control: null, snapshot: null };
       }
-      // Return the shared-store error only when the ref is not the cic:N:M
-      // shape the index fallback below can parse. A stale_interactive_ref used
-      // to short-circuit here, which made the index fallback unreachable for
-      // the one error code both ref-loss paths produce. The fallback re-checks
-      // domVersion itself, so a genuinely stale ref still fails there.
-      if (!/^cic:\d+:\d+$/.test(String(ref || '').trim())) {
+      // The shared store is authoritative once it has issued refs. Falling back
+      // to a positional index after it reported the ref's element gone resolved
+      // the same index in a re-rendered list, so a click landed on a different
+      // control and still reported clicked: true. The fallback exists for refs
+      // the store never issued, which is why it stays reachable only when the
+      // store has no entry for this ref at all.
+      const store = ax.getSharedRefStore();
+      const storeIssuedIt = Boolean(store?.byRef?.has?.(String(ref || '').trim()));
+      if (storeIssuedIt || !/^cic:\d+:\d+$/.test(String(ref || '').trim())) {
         return resolved;
       }
     }

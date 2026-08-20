@@ -117,7 +117,10 @@ describe('CiC MCP tool contract', () => {
     assert.deepEqual(pageContent.properties.format.enum, ['text', 'html']);
     assert.deepEqual(pageContent.properties.mode.enum, ['page', 'body', 'main', 'selector']);
     assert.equal(pageContent.properties.selector.type, 'string');
-    assert.equal(pageContent.properties.maxChars.type, 'number');
+    // Bounded integers, so the validator that already runs catches 0, -1 and 3.7
+    // instead of forwarding them to the extension.
+    assert.equal(pageContent.properties.maxChars.type, 'integer');
+    assert.equal(pageContent.properties.maxChars.minimum, 1);
     assert.equal(pageContent.properties.includeImages.type, 'boolean');
 
     const wait = schemaFor('browser_wait');
@@ -136,13 +139,15 @@ describe('CiC MCP tool contract', () => {
 
     const readPage = schemaFor('browser_read_page');
     assert.deepEqual(readPage.properties.filter.enum, ['all', 'interactive', 'landmarks']);
-    assert.equal(readPage.properties.maxNodes.type, 'number');
+    assert.equal(readPage.properties.maxNodes.type, 'integer');
+    assert.equal(readPage.properties.maxNodes.minimum, 1);
     assert.equal(readPage.properties.selector.type, 'string');
 
     const find = schemaFor('browser_find');
     assert.deepEqual(find.required, ['query']);
     assert.equal(find.properties.query.type, 'string');
-    assert.equal(find.properties.limit.type, 'number');
+    assert.equal(find.properties.limit.type, 'integer');
+    assert.equal(find.properties.limit.minimum, 1);
 
     const formInput = schemaFor('browser_form_input');
     assert.equal(formInput.properties.ref.type, 'string');
@@ -199,8 +204,8 @@ describe('CiC MCP tool contract', () => {
 
   it('captures Playwright-parity tool schemas without loosening required fields', () => {
     assert.deepEqual(schemaFor('browser_resize').required, ['width', 'height']);
-    assert.equal(schemaFor('browser_resize').properties.width.type, 'number');
-    assert.equal(schemaFor('browser_resize').properties.height.type, 'number');
+    assert.equal(schemaFor('browser_resize').properties.width.type, 'integer');
+    assert.equal(schemaFor('browser_resize').properties.height.type, 'integer');
     assert.equal(schemaFor('browser_resize').properties.activate, undefined);
 
     assert.equal(schemaFor('browser_navigate_back').required, undefined);

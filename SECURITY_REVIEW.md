@@ -6,12 +6,17 @@ Default deny. Other browser-bridge projects are reference material, not trusted 
 
 The project is only acceptable while all four of these hold:
 
-- the extension acts only on session-owned tabs
-- the bridge accepts only authenticated loopback clients
+- the extension acts only on session-owned tabs, with the two named carve-outs below
+- the `/bridge` WebSocket accepts only authenticated loopback clients
 - no feature exposes cookies, tokens, storage values, or generic background fetch
 - permissions stay small and each one has a written justification in `docs/permissions.md`
 
 Anything that breaks one of them is a release blocker, not a trade-off.
+
+Two things sit outside those lines on purpose, and both are documented rather than quietly true:
+
+- `/healthz` on the loopback listener is unauthenticated. It answers any local process with the broker's session ids, socket path, extension instance id, and pressure counters. It exists so `doctor` can diagnose a broker it holds no key for. `/bridge`, the only route that can drive the browser, requires the HMAC proof and rejects anything else with 401. Anything that reads `/healthz` treats its contents as advisory, never as a source of a path to write to.
+- `browser_find_tabs`, `browser_find_groups`, and `browser_cleanup_groups` reach past the ownership map by design. The first two return title and URL for unowned tabs and groups so a user can hand one over; the third matches groups by caller-supplied title so a group left by an ended session can still be cleared. None of the acting tools reach a tab the calling session does not own.
 
 ## What the code does today
 

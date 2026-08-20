@@ -1,0 +1,1050 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Umbra Settings - Aurora Glass</title>
+    <style>
+      :root {
+        --void: #0b0918;
+        --violet: #7c5cff;
+        --violet-hi: #a78bfa;
+        --lilac: #c4b5fd;
+        --text: #efecfc;
+        --text-dim: #a9a2ca;
+        --text-mute: #7f78a8;
+        --ok: #3fdca0;
+        --glass-ring: rgba(255, 255, 255, 0.12);
+        --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+          Roboto, "Helvetica Neue", sans-serif;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        background: var(--void);
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 44px 24px 40px;
+        font-family: var(--font);
+        font-size: 13.5px;
+        line-height: 1.55;
+        color: var(--text);
+        background: linear-gradient(176deg, #120e29 0%, #0d0a20 46%, #090714 100%);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ---------- aurora field ---------- */
+      .aurora {
+        position: fixed;
+        inset: -15%;
+        z-index: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+
+      .band {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(90px);
+        will-change: transform;
+      }
+
+      .band.b1 {
+        top: -14%;
+        left: 2%;
+        width: 62%;
+        height: 46%;
+        opacity: 0.9;
+        background: radial-gradient(
+          circle at 45% 50%,
+          rgba(124, 92, 255, 0.85),
+          rgba(124, 92, 255, 0) 68%
+        );
+        animation: drift-a 38s ease-in-out infinite alternate;
+        animation-delay: -14s;
+      }
+
+      .band.b2 {
+        top: 18%;
+        right: -14%;
+        width: 58%;
+        height: 52%;
+        opacity: 0.75;
+        background: radial-gradient(
+          circle at 50% 50%,
+          rgba(171, 92, 232, 0.62),
+          rgba(171, 92, 232, 0) 68%
+        );
+        animation: drift-b 45s ease-in-out infinite alternate;
+        animation-delay: -25s;
+      }
+
+      .band.b3 {
+        bottom: -22%;
+        left: -12%;
+        width: 78%;
+        height: 56%;
+        opacity: 0.8;
+        background: radial-gradient(
+          circle at 45% 50%,
+          rgba(84, 36, 166, 0.9),
+          rgba(84, 36, 166, 0) 70%
+        );
+        animation: drift-a 52s ease-in-out infinite alternate;
+        animation-delay: -33s;
+      }
+
+      .band.b4 {
+        bottom: 6%;
+        right: -6%;
+        width: 46%;
+        height: 34%;
+        opacity: 0.55;
+        background: radial-gradient(
+          circle at 50% 50%,
+          rgba(76, 29, 149, 0.9),
+          rgba(76, 29, 149, 0) 72%
+        );
+        animation: drift-b 33s ease-in-out infinite alternate;
+        animation-delay: -11s;
+      }
+
+      /* the ribbon: one long, slow curtain of light behind the glass */
+      .band.b5 {
+        top: 26%;
+        left: -22%;
+        width: 150%;
+        height: 15%;
+        transform: rotate(-8deg);
+        border-radius: 50%;
+        opacity: 0.6;
+        filter: blur(56px);
+        background: linear-gradient(
+          90deg,
+          rgba(167, 139, 250, 0) 0%,
+          rgba(203, 190, 255, 0.34) 32%,
+          rgba(124, 92, 255, 0.3) 64%,
+          rgba(167, 139, 250, 0) 100%
+        );
+        animation: ribbon 42s ease-in-out infinite alternate;
+        animation-delay: -19s;
+      }
+
+      @keyframes drift-a {
+        from {
+          transform: translate3d(-3%, -3%, 0) scale(1);
+        }
+        to {
+          transform: translate3d(6%, 5%, 0) scale(1.16);
+        }
+      }
+
+      @keyframes drift-b {
+        from {
+          transform: translate3d(4%, 4%, 0) scale(1.1);
+        }
+        to {
+          transform: translate3d(-5%, -4%, 0) scale(0.92);
+        }
+      }
+
+      @keyframes ribbon {
+        from {
+          transform: rotate(-10deg) translate3d(-5%, 5%, 0);
+        }
+        to {
+          transform: rotate(-4deg) translate3d(4%, -7%, 0);
+        }
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        width: 720px;
+        max-width: 100%;
+        margin: 0 auto;
+      }
+
+      /* ---------- hero ---------- */
+      .hero {
+        margin-bottom: 26px;
+      }
+
+      .lockup {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 22px;
+      }
+
+      .mark {
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        display: block;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.1),
+          0 5px 18px rgba(124, 92, 255, 0.5);
+      }
+
+      .wordmark {
+        font-size: 15px;
+        font-weight: 640;
+        letter-spacing: -0.012em;
+      }
+
+      .vr {
+        width: 1px;
+        height: 13px;
+        background: rgba(255, 255, 255, 0.16);
+        flex: 0 0 auto;
+        margin: 0 1px;
+      }
+
+      .tagline {
+        font-size: 11.5px;
+        color: var(--text-mute);
+        letter-spacing: 0.025em;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 32px;
+        font-weight: 640;
+        letter-spacing: -0.024em;
+        line-height: 1.12;
+      }
+
+      .lede {
+        margin: 0;
+        max-width: 60ch;
+        font-size: 13.5px;
+        color: var(--text-dim);
+      }
+
+      /* ---------- glass panes ---------- */
+      .card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        border-radius: 18px;
+        padding: 20px 22px;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.062),
+          rgba(255, 255, 255, 0.022)
+        );
+        -webkit-backdrop-filter: blur(24px) saturate(160%);
+        backdrop-filter: blur(24px) saturate(160%);
+        box-shadow:
+          inset 0 0 0 1px var(--glass-ring),
+          0 18px 44px rgba(4, 2, 14, 0.5);
+        overflow: hidden;
+      }
+
+      /* signature: an aurora catch-light along the top edge of every pane */
+      .card::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 14px;
+        right: 14px;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          rgba(196, 181, 253, 0) 0%,
+          rgba(230, 220, 255, 0.78) 24%,
+          rgba(124, 92, 255, 0.34) 62%,
+          rgba(196, 181, 253, 0) 100%
+        );
+      }
+
+      .stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .conn-row {
+        display: flex;
+        gap: 30px;
+        align-items: flex-start;
+      }
+
+      .conn-left {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .conn-row .port-grid {
+        width: 296px;
+        flex: 0 0 auto;
+      }
+
+      .card-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 11px;
+        font-weight: 660;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--text-mute);
+      }
+
+      .rule {
+        margin: 16px -22px;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.075);
+      }
+
+      /* ---------- status ---------- */
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 8px 15px 8px 13px;
+        border-radius: 999px;
+        font-size: 12.5px;
+        font-weight: 560;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.055);
+        -webkit-backdrop-filter: blur(18px);
+        backdrop-filter: blur(18px);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.13);
+        margin-left: auto;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #6b6490;
+        flex: 0 0 auto;
+      }
+
+      .dot.on {
+        background: var(--ok);
+        animation: breathe 3.4s ease-in-out infinite;
+      }
+
+      .dot.bad {
+        background: #f0637a;
+        box-shadow: 0 0 10px rgba(240, 99, 122, 0.55);
+      }
+
+      @keyframes breathe {
+        0%,
+        100% {
+          box-shadow:
+            0 0 0 3px rgba(63, 220, 160, 0.13),
+            0 0 9px rgba(63, 220, 160, 0.5);
+        }
+        50% {
+          box-shadow:
+            0 0 0 5px rgba(63, 220, 160, 0.07),
+            0 0 15px rgba(63, 220, 160, 0.78);
+        }
+      }
+
+      .status-body {
+        margin: 0;
+        font-size: 13.5px;
+        font-weight: 540;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 560;
+        letter-spacing: 0.015em;
+        color: var(--text-dim);
+        background: rgba(255, 255, 255, 0.055);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+        white-space: nowrap;
+      }
+
+      .chip .num {
+        font-family: var(--mono);
+        color: var(--text);
+      }
+
+      .chip.right {
+        margin-left: auto;
+      }
+
+      .chip.paired {
+        color: #ded4ff;
+        background: linear-gradient(
+          135deg,
+          rgba(124, 92, 255, 0.38),
+          rgba(76, 29, 149, 0.32)
+        );
+        box-shadow:
+          inset 0 0 0 1px rgba(167, 139, 250, 0.42),
+          0 0 16px rgba(124, 92, 255, 0.26);
+      }
+
+      .chip .tick {
+        width: 5px;
+        height: 5px;
+        border-radius: 999px;
+        background: var(--lilac);
+        box-shadow: 0 0 7px rgba(196, 181, 253, 0.9);
+      }
+
+      .chip .tick.ok {
+        background: var(--ok);
+        box-shadow: 0 0 7px rgba(63, 220, 160, 0.85);
+      }
+
+      /* ---------- fields ---------- */
+      label.field {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-dim);
+        margin-bottom: 7px;
+      }
+
+      .well {
+        width: 100%;
+        border: 0;
+        border-radius: 12px;
+        padding: 11px 14px;
+        font-family: var(--mono);
+        font-size: 13px;
+        letter-spacing: 0.07em;
+        color: var(--text);
+        background: rgba(7, 4, 18, 0.62);
+        box-shadow:
+          inset 0 1px 3px rgba(0, 0, 0, 0.62),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+        outline: 0;
+        transition:
+          box-shadow 0.18s ease,
+          background 0.18s ease;
+      }
+
+      .well::placeholder {
+        color: #605988;
+        letter-spacing: 0;
+        font-family: var(--font);
+      }
+
+      .well:focus {
+        background: rgba(9, 5, 24, 0.72);
+        box-shadow:
+          inset 0 1px 3px rgba(0, 0, 0, 0.55),
+          inset 0 0 0 1px rgba(167, 139, 250, 0.82),
+          0 0 0 4px rgba(124, 92, 255, 0.2);
+      }
+
+      .key-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .key-row .well {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .port-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .port-well {
+        width: 100%;
+        border: 0;
+        border-radius: 10px;
+        padding: 9px 12px;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        color: var(--text);
+        background: rgba(7, 4, 18, 0.62);
+        box-shadow:
+          inset 0 1px 3px rgba(0, 0, 0, 0.58),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+        outline: 0;
+        -moz-appearance: textfield;
+        transition: box-shadow 0.18s ease;
+      }
+
+      .port-well::-webkit-outer-spin-button,
+      .port-well::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+
+      .port-well:focus {
+        box-shadow:
+          inset 0 1px 3px rgba(0, 0, 0, 0.5),
+          inset 0 0 0 1px rgba(167, 139, 250, 0.82),
+          0 0 0 4px rgba(124, 92, 255, 0.2);
+      }
+
+      /* ---------- buttons ---------- */
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 9px 17px;
+        font-family: inherit;
+        font-size: 12.5px;
+        font-weight: 620;
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+          transform 0.16s ease,
+          box-shadow 0.2s ease,
+          background 0.2s ease,
+          color 0.2s ease;
+      }
+
+      button.ghost {
+        color: #d8d1f6;
+        background: rgba(255, 255, 255, 0.062);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.13);
+      }
+
+      button.ghost:hover {
+        color: #fff;
+        background: rgba(124, 92, 255, 0.22);
+        box-shadow:
+          inset 0 0 0 1px rgba(167, 139, 250, 0.5),
+          0 6px 20px rgba(124, 92, 255, 0.32);
+        transform: translateY(-1px);
+      }
+
+      button.primary {
+        color: #fff;
+        background: linear-gradient(135deg, #8f6dff 0%, #6b3cf0 55%, #5a2fd6 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.28),
+          0 8px 22px rgba(107, 60, 240, 0.45);
+      }
+
+      button.primary:hover {
+        transform: translateY(-1px);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.34),
+          0 12px 32px rgba(124, 92, 255, 0.62);
+      }
+
+      button[disabled] {
+        cursor: default;
+        opacity: 1;
+        color: var(--text-dim);
+        background: rgba(255, 255, 255, 0.045);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+        transform: none;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .actions.tight {
+        margin-top: 12px;
+      }
+
+      .hint {
+        margin: 12px 0 0;
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--text-mute);
+      }
+
+      /* ---------- toggle ---------- */
+      .switch {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-size: 13px;
+        color: var(--text);
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .switch input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .track {
+        position: relative;
+        width: 38px;
+        height: 22px;
+        border-radius: 999px;
+        background: rgba(7, 4, 18, 0.7);
+        box-shadow:
+          inset 0 1px 3px rgba(0, 0, 0, 0.62),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+        flex: 0 0 auto;
+        transition:
+          box-shadow 0.2s ease,
+          background 0.2s ease;
+      }
+
+      .track::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        background: #8b83b4;
+        transition:
+          transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1),
+          background 0.2s ease;
+      }
+
+      .switch input:checked + .track {
+        background: linear-gradient(135deg, #8f6dff, #5f31e0);
+        box-shadow:
+          inset 0 0 0 1px rgba(167, 139, 250, 0.45),
+          0 0 16px rgba(124, 92, 255, 0.45);
+      }
+
+      .switch input:checked + .track::after {
+        transform: translateX(16px);
+        background: #fff;
+      }
+
+      .switch input:focus-visible + .track {
+        box-shadow:
+          inset 0 0 0 1px rgba(167, 139, 250, 0.6),
+          0 0 0 4px rgba(124, 92, 255, 0.26);
+      }
+
+      .perm-row {
+        display: flex;
+        gap: 11px;
+        align-items: flex-start;
+      }
+
+      .perm-row .dot {
+        margin-top: 7px;
+      }
+
+      .switch-note {
+        margin: 8px 0 0 49px;
+        font-size: 12px;
+        color: var(--text-mute);
+      }
+
+      /* ---------- sessions ---------- */
+      .sessions {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+      }
+
+      .sessions li {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 10px 0;
+      }
+
+      .sessions li + li {
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075);
+      }
+
+      .sessions li:first-child {
+        padding-top: 0;
+      }
+
+      .sessions li:last-child {
+        padding-bottom: 0;
+      }
+
+      .gdot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        flex: 0 0 auto;
+        background: var(--violet-hi);
+        box-shadow: 0 0 10px rgba(167, 139, 250, 0.8);
+      }
+
+      .gdot.cyan {
+        background: #7dd3fc;
+        box-shadow: 0 0 10px rgba(125, 211, 252, 0.7);
+      }
+
+      .s-body {
+        min-width: 0;
+      }
+
+      .s-name {
+        font-size: 13px;
+        font-weight: 580;
+        letter-spacing: -0.005em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .s-meta {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-mute);
+        margin-top: 1px;
+      }
+
+      .s-tabs {
+        margin-left: auto;
+        font-size: 11px;
+        font-weight: 560;
+        color: var(--text-dim);
+        white-space: nowrap;
+        padding: 3px 9px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+      }
+
+      .empty {
+        margin: 0;
+        font-size: 12.5px;
+        color: var(--text-mute);
+      }
+
+      /* ---------- debug ---------- */
+      pre {
+        margin: 0;
+        padding: 13px 14px;
+        border-radius: 12px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        line-height: 1.6;
+        color: #b9b1e0;
+        background: rgba(7, 4, 18, 0.6);
+        box-shadow:
+          inset 0 1px 3px rgba(0, 0, 0, 0.55),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      pre .k {
+        color: #8f86bd;
+      }
+
+      pre .s {
+        color: #c9bcff;
+      }
+
+      pre .n {
+        color: #7fdcc0;
+      }
+
+      /* ---------- first run ---------- */
+      .steps {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 13px;
+        color: var(--text-dim);
+      }
+
+      .steps li {
+        margin-bottom: 8px;
+      }
+
+      .steps li:last-child {
+        margin-bottom: 0;
+      }
+
+      .steps strong {
+        color: var(--text);
+        font-weight: 620;
+      }
+
+      /* ---------- footer ---------- */
+      .footer {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 26px;
+        padding-top: 18px;
+        font-size: 11.5px;
+        color: var(--text-mute);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+      }
+
+      .footer .ver {
+        font-family: var(--mono);
+      }
+
+      .footer .sep {
+        opacity: 0.45;
+      }
+
+      a {
+        color: #b3a4f5;
+        text-decoration: none;
+      }
+
+      a:hover {
+        color: #dbd0ff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true">
+      <span class="band b1"></span>
+      <span class="band b2"></span>
+      <span class="band b3"></span>
+      <span class="band b4"></span>
+      <span class="band b5"></span>
+    </div>
+
+    <div class="page">
+      <!-- Hero -->
+      <header class="hero">
+        <div class="lockup">
+          <img class="mark" src="icon128.png" alt="Umbra" />
+          <span class="wordmark">Umbra</span>
+          <span class="vr" aria-hidden="true"></span>
+          <span class="tagline">Browser Control for AI Agents</span>
+          <span class="status-pill">
+            <span id="status-dot" class="dot on"></span>
+            <span id="status-text">Connected to 2 local sessions.</span>
+          </span>
+        </div>
+        <h1>Settings</h1>
+        <p class="lede">
+          Umbra pairs this browser with a companion server running on your own machine over a
+          loopback connection. The two pair with a shared key you create here. Nothing works
+          until the companion server is running with the same key.
+        </p>
+      </header>
+
+      <div class="stack">
+        <!-- First run: hidden once a shared key is stored -->
+        <section class="card" id="firstRunCard" hidden>
+          <div class="card-head"><h2>First Run</h2></div>
+          <ol class="steps">
+            <li>
+              Click <strong>Generate Key</strong> below, then <strong>Save And Reconnect</strong>.
+            </li>
+            <li>
+              Click <strong>Copy Environment Line</strong> and paste that line into the
+              environment block of your MCP client's Umbra entry, then start the companion
+              server.
+            </li>
+            <li>
+              Click <strong>Grant Site Access</strong> so Umbra can drive the tabs a session
+              opens.
+            </li>
+          </ol>
+          <p class="hint">The status dot at the top turns green once the companion server connects.</p>
+        </section>
+
+        <!-- Pairing -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Pairing</h2>
+            <span class="chip paired right"><span class="tick"></span>Paired</span>
+          </div>
+
+          <label class="field" for="sharedKey">Shared Key</label>
+          <div class="key-row">
+            <input
+              id="sharedKey"
+              class="well"
+              type="password"
+              autocomplete="off"
+              placeholder="Click Generate Key to create one"
+              value="9f2c7b41d0a83e6c15b9047fae2d8c3b6710e5a94cf28d0b73e1a6f5c284d90e"
+            />
+            <button id="pasteButton" class="ghost">Paste</button>
+            <button id="generateButton" class="ghost">Generate Key</button>
+          </div>
+
+          <p class="hint">
+            The environment line carries the key and the port range in one string, so the key is
+            typed nowhere. A generated key replaces the old one: any companion server still
+            holding the previous key stops pairing.
+          </p>
+
+          <div class="actions">
+            <button id="saveButton" class="primary">Save And Reconnect</button>
+            <button id="copyButton" class="ghost">Copy Environment Line</button>
+          </div>
+        </section>
+
+        <!-- Connection -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Connection</h2>
+            <span class="chip right"
+              ><span class="num">47821</span>-<span class="num">47852</span></span
+            >
+          </div>
+
+          <div class="conn-row">
+            <div class="conn-left">
+              <label class="switch" for="bridgeEnabled">
+                <input id="bridgeEnabled" type="checkbox" checked />
+                <span class="track"></span>
+                <span>Enable loopback scanning</span>
+              </label>
+              <p class="switch-note">
+                Umbra scans this port range on 127.0.0.1 for a companion server holding the same
+                key.
+              </p>
+            </div>
+
+            <div class="port-grid">
+              <div>
+                <label class="field" for="portStart">Port Start</label>
+                <input
+                  id="portStart"
+                  class="port-well"
+                  type="number"
+                  min="1024"
+                  max="47852"
+                  value="47821"
+                />
+              </div>
+              <div>
+                <label class="field" for="portEnd">Port End</label>
+                <input
+                  id="portEnd"
+                  class="port-well"
+                  type="number"
+                  min="1024"
+                  max="47852"
+                  value="47852"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="rule"></div>
+
+          <div class="actions tight" style="margin-top: 0">
+            <button id="reconnectButton" class="ghost">Reconnect Bridge</button>
+            <button id="reloadButton" class="ghost">Reload Extension</button>
+            <button id="refreshButton" class="ghost">Refresh Status</button>
+          </div>
+        </section>
+
+        <div class="grid2">
+          <!-- Site access -->
+          <section class="card">
+            <div class="card-head">
+              <h2>Site Access</h2>
+              <span class="chip right"><span class="tick ok"></span>Granted</span>
+            </div>
+
+            <div class="perm-row">
+              <span id="perm-dot" class="dot on"></span>
+              <p id="perm-text" class="status-body">
+                Site access granted. Sessions can drive the tabs they own.
+              </p>
+            </div>
+
+            <p class="hint">
+              Umbra reads and drives only the tabs a session owns, and it opens those tabs itself
+              in a labelled group. Chrome has no way to grant that per tab, so it asks for site
+              access once, here, instead of at install time.
+            </p>
+
+            <div class="actions">
+              <button id="grantButton" class="primary" disabled>Site Access Granted</button>
+            </div>
+          </section>
+
+          <!-- Sessions -->
+          <section class="card">
+            <div class="card-head">
+              <h2>Session Status</h2>
+              <span class="chip right"><span class="num">2</span> owned</span>
+            </div>
+            <ul id="sessionsList" class="sessions">
+              <li>
+                <span class="gdot"></span>
+                <div class="s-body">
+                  <div class="s-name">Report Export</div>
+                  <div class="s-meta">a91f0c &middot; port 47821</div>
+                </div>
+                <span class="s-tabs">3 tabs</span>
+              </li>
+              <li>
+                <span class="gdot cyan"></span>
+                <div class="s-body">
+                  <div class="s-name">Origin Research</div>
+                  <div class="s-meta">4d2b71 &middot; port 47822</div>
+                </div>
+                <span class="s-tabs">2 tabs</span>
+              </li>
+            </ul>
+          </section>
+        </div>
+
+        <!-- Bridge debug -->
+        <section class="card">
+          <div class="card-head">
+            <h2>Bridge Debug</h2>
+            <span class="chip right">authenticated</span>
+          </div>
+          <pre id="debugBox">{
+  <span class="k">"updatedAt"</span>: <span class="n">1755701641308</span>,
+  <span class="k">"state"</span>: <span class="s">"authenticated"</span>,
+  <span class="k">"message"</span>: <span class="s">"Authenticated on port 47822."</span>,
+  <span class="k">"sessionId"</span>: <span class="s">"umbra-4d2b71"</span>
+}</pre>
+        </section>
+      </div>
+
+      <footer class="footer">
+        <span>Umbra</span>
+        <span class="ver">0.5.0</span>
+        <span class="sep">/</span>
+        <a id="homepageLink" href="https://github.com/umbra-bridge/umbra" target="_blank" rel="noreferrer"
+          >Setup guide and source</a
+        >
+      </footer>
+    </div>
+  </body>
+</html>

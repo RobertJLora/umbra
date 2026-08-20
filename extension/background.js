@@ -522,7 +522,7 @@ function normalizeBridgeUrl(rawUrl = 'about:blank') {
   }
 
   if (!['http:', 'https:', 'file:'].includes(parsed.protocol)) {
-    throw new Error(`Unsupported URL scheme for CiC navigation: ${parsed.protocol}`);
+    throw new Error(`Unsupported URL scheme for navigation: ${parsed.protocol}`);
   }
 
   return parsed.href;
@@ -833,6 +833,13 @@ async function closeOwnedSessionWindows(sessionId, tabIds) {
     }
 
     for (const tab of ownedTabs) {
+      // The list came from this session's own record, but a stored map that
+      // handed the same tab to two sessions would make that list a lie. Check
+      // ownership against the map before removing anything, so a close can
+      // never reach another session's tab.
+      if (sessionStore.findOwner(tab.id) !== sessionId) {
+        continue;
+      }
       invalidateContentAgent(tab.id, 'tab_closed');
       await chrome.tabs.remove(tab.id);
       sessionStore.releaseTab(tab.id);
@@ -970,24 +977,33 @@ async function getOwnedTab(sessionId, tabId) {
   return tab;
 }
 
+// Returns the window new session tabs go into, or null when a fresh unfocused
+// window has to be created instead.
+//
+// A focused window is never reused, including the stored dedicated one. That is
+// the behaviour README, docs/architecture.md and the store description all
+// describe, and it was the one part not implemented: the stored window was
+// returned whenever it still existed, so tabs landed in whatever window the
+// person was working in.
 async function findBackgroundWindowId() {
   const storedId = await getStoredDedicatedWindowId();
   const stored = await getNormalWindow(storedId);
-  if (stored) {
+  if (stored && stored.focused !== true) {
     return stored.id;
   }
-
-  await clearDedicatedWindowId(storedId);
-
-  const windows = await listNormalWindows();
-  if (!windows.length) {
-    return null;
+  if (!stored) {
+    await clearDedicatedWindowId(storedId);
   }
 
+  const windows = await listNormalWindows();
   const unfocused = windows.find((window) => window.focused !== true);
-  const chosen = unfocused || windows[0];
-  await rememberDedicatedWindowId(chosen.id);
-  return chosen.id;
+  if (!unfocused) {
+    // Every candidate is focused, so there is nothing to reuse without adding
+    // tabs to the window in use. The caller creates a fresh unfocused one.
+    return null;
+  }
+  await rememberDedicatedWindowId(unfocused.id);
+  return unfocused.id;
 }
 
 async function createDedicatedWindowWithTab({ url = 'about:blank', activate = false } = {}) {
@@ -2425,7 +2441,10 @@ function readPageContent(options = {}) {
   // description in mcp-server/tools.js.
   const MAX_CHARS_LIMIT = 500_000;
   const rawMaxChars = Number(config.maxChars);
-  const maxChars = Number.isFinite(rawMaxChars) && rawMaxChars > 0
+  // Floored at one character, matching readPageContent in content-agent.js: a
+  // fractional value used to survive the `> 0` test and floor to zero, which
+  // truncate() reads as unbounded.
+  const maxChars = Number.isFinite(rawMaxChars) && rawMaxChars >= 1
     ? Math.min(Math.floor(rawMaxChars), MAX_CHARS_LIMIT)
     : MAX_CHARS_LIMIT;
   const normalize = (value) => String(value || '').trim().replace(/\s+/g, ' ');
@@ -3061,16 +3080,35 @@ async function runPageAction(action, params = {}, options = {}) {
     // the namespace its action name starts with. A build without that file
     // reports what is missing instead of throwing an unresolved-identifier
     // error.
-    const namespace = typeof action === 'string' ? action.split('_')[0] : '';
-    const installed = namespace ? globalThis.__umbraPageRecipes?.[namespace] : null;
-    if (installed) {
-      const recipe = installed[action];
+    // Same derivation and the same validation background.js applied before
+    // injecting, so the two functions cannot disagree about which file a name
+    // points at, and an own-property lookup so inherited Object members such as
+    // constructor or valueOf cannot answer as a namespace.
+    const rawNamespace = typeof action === 'string' ? action.split('_')[0] : '';
+    const namespace = /^[a-z0-9]+$/.test(rawNamespace) ? rawNamespace : '';
+    const registry = globalThis.__umbraPageRecipes;
+    const installed = namespace && registry && Object.hasOwn(registry, namespace)
+      ? registry[namespace]
+      : null;
+    if (installed && typeof installed === 'object' && !Array.isArray(installed)) {
+      const recipe = Object.hasOwn(installed, action) ? installed[action] : undefined;
       if (typeof recipe !== 'function') {
         throw new Error(`Unsupported page action: ${action}`);
       }
-      return await recipe(params);
+      const value = await recipe(params);
+      // A recipe that silently does nothing, because a selector stopped matching
+      // after a site redesign, must not read as a completed export.
+      if (value === undefined || value === null) {
+        throw new Error(`Page recipe ${action} returned no result.`);
+      }
+      return value;
     }
 
+    // The caller passed in why injection failed when it did, so a broken recipe
+    // file no longer reports as an absent one.
+    if (options.recipeFailure) {
+      throw new Error(`Page recipe for ${action} failed to inject: ${options.recipeFailure}`);
+    }
     throw new Error(`Page recipe not installed in this build: ${action}.`);
   })();
 
@@ -4800,11 +4838,15 @@ async function handleBridgeCommand(message) {
       createIfMissing: false,
       activate: params.activate === true,
     });
-    await ensurePageRecipe(tab.id, params.action);
+    // Keep the injection result. A recipe file that is present but fails to
+    // inject and one that is genuinely absent are different failures with
+    // different fixes, and the reason was being computed and then discarded, so
+    // both reported "not installed in this build".
+    const recipe = await ensurePageRecipe(tab.id, params.action);
     return await executeInTabWithRetry(tab.id, runPageAction, [
       params.action,
       params.params && typeof params.params === 'object' ? params.params : {},
-      { timeoutMs: params.timeoutMs },
+      { timeoutMs: params.timeoutMs, recipeFailure: recipe.installed ? '' : (recipe.reason || '') },
     ]);
   }
 

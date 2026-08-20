@@ -191,7 +191,7 @@ describe('CiC extension safety contract', () => {
 
     assert.match(background, /function normalizeBridgeUrl/);
     assert.match(background, /\['http:', 'https:', 'file:'\]\.includes\(parsed\.protocol\)/);
-    assert.match(background, /Unsupported URL scheme for CiC navigation/);
+    assert.match(background, /Unsupported URL scheme for navigation/);
     assert.match(getToolBlock(background, 'browser_create_tab'), /normalizeBridgeUrl/);
     assert.match(getToolBlock(background, 'browser_navigate'), /normalizeBridgeUrl/);
   });

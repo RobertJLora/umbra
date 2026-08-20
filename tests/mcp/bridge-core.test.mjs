@@ -84,7 +84,12 @@ test('bridge source carries no home directory default and imports no local plugi
   const source = fs.readFileSync(path.join(repoRoot, 'mcp-server', 'bridge-core.js'), 'utf8');
 
   assert.doesNotMatch(source, /\/Users\//);
-  assert.match(source, /resolveDownloadDir/);
+  // The download wait itself lives in download-ledger.mjs so both transports run
+  // one implementation; the home-directory default is resolved there.
+  assert.match(source, /resolveDownloadWait/);
+  const ledger = fs.readFileSync(path.join(repoRoot, 'mcp-server', 'download-ledger.mjs'), 'utf8');
+  assert.doesNotMatch(ledger, /\/Users\//);
+  assert.match(ledger, /resolveDownloadDir/);
   // Plugin handlers arrive through the constructor. A static or dynamic import
   // of a plugin module would put a local-only file in the published package's
   // import graph, where it does not exist.

@@ -21,8 +21,11 @@ import { execFileSync } from 'node:child_process';
 import { SEO_VENDOR, SEO_VENDOR_RE } from '../identity-needles.mjs';
 import { fileURLToPath } from 'node:url';
 
+import crypto from 'node:crypto';
+
 import {
   EXTENSION_FILES,
+  checkStoreListingText,
   FORBIDDEN_PREFIXES,
   ICON_ENTRY_PATTERN,
   MAX_ZIP_BYTES,
@@ -446,5 +449,205 @@ test('the build script ships the allowlist and ignores a stray file', { skip: ha
     assert.equal(verifyPackageFile(strayZip).ok, true);
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+test('bytes appended after IEND fail the icon gate', () => {
+  // sips still reads the file as a valid PNG and Chrome renders it normally, so
+  // a chunk walk that stops at IEND is the only thing standing between an
+  // author name pasted past the end marker and a shipped icon.
+  const clean = makePng();
+  const tainted = Buffer.concat([
+    clean,
+    pngChunk('tEXt', Buffer.from(`Comment\u0000Author=someone; Home=${['/Us', 'ers/x'].join('')}`, 'latin1')),
+  ]);
+
+  assert.deepEqual(readPngChunkTypes(clean), ['IHDR', 'IDAT', 'IEND']);
+  assert.ok(
+    readPngChunkTypes(tainted).includes('trailing-data'),
+    'trailing bytes after IEND were invisible to the chunk walk',
+  );
+
+  const entries = cleanEntries();
+  const icon = entries.find((entry) => entry.name === 'icons/icon16.png');
+  icon.data = tainted;
+  const report = verifyPackage({ entries, zipSize: 1000 });
+  const check = report.checks.find((item) => item.name === 'no icon carries provenance metadata');
+  assert.equal(check.ok, false, 'a package with data past IEND was reported clean');
+});
+
+test('the build script strips bytes appended after IEND', () => {
+  if (!hasZip()) {
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'umbra-png-strip-'));
+  try {
+    const extensionDir = path.join(root, 'extension');
+    fs.cpSync(EXTENSION_DIR, extensionDir, { recursive: true });
+    const brandingDir = path.join(root, 'branding-icons');
+    fs.mkdirSync(brandingDir, { recursive: true });
+
+    // A master carrying only allowed chunks plus data past IEND, which is the
+    // one shape the stripper used to skip because nothing in band was droppable.
+    const tainted = Buffer.concat([
+      makePng(),
+      pngChunk('tEXt', Buffer.from('Comment\u0000Generator=Somebody', 'latin1')),
+    ]);
+    for (const size of [16, 32, 48, 128]) {
+      fs.writeFileSync(path.join(brandingDir, `icon${size}.png`), tainted);
+    }
+
+    execFileSync('bash', [PACKAGE_SCRIPT], {
+      env: {
+        ...process.env,
+        UMBRA_EXTENSION_DIR: extensionDir,
+        UMBRA_BRANDING_ICON_DIR: brandingDir,
+        UMBRA_DIST_DIR: path.join(root, 'dist'),
+      },
+      stdio: 'ignore',
+    });
+
+    const stripped = fs.readFileSync(path.join(extensionDir, 'icons', 'icon16.png'));
+    assert.deepEqual(readPngChunkTypes(stripped), ['IHDR', 'IDAT', 'IEND']);
+    assert.ok(!stripped.includes('Generator=Somebody'), 'the appended block survived the stripper');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a rejected package never lands at the dist path a person would upload', () => {
+  if (!hasZip()) {
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'umbra-reject-'));
+  try {
+    const extensionDir = path.join(root, 'extension');
+    fs.cpSync(EXTENSION_DIR, extensionDir, { recursive: true });
+    fs.appendFileSync(
+      path.join(extensionDir, 'background.js'),
+      `\n// TODO(${SEO_VENDOR}): revisit this path.\n`,
+    );
+    const distDir = path.join(root, 'dist');
+
+    let failed = false;
+    try {
+      execFileSync('bash', [PACKAGE_SCRIPT], {
+        env: {
+          ...process.env,
+          UMBRA_EXTENSION_DIR: extensionDir,
+          UMBRA_DIST_DIR: distDir,
+          UMBRA_SKIP_ICON_REFRESH: '1',
+        },
+        stdio: 'ignore',
+      });
+    } catch {
+      failed = true;
+    }
+
+    assert.equal(failed, true, 'a package naming a third-party product still built successfully');
+    const written = fs.existsSync(distDir) ? fs.readdirSync(distDir) : [];
+    assert.deepEqual(written, [], `a rejected build left ${written.join(', ')} at the upload path`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the build is reproducible across umasks, not only within one', () => {
+  if (!hasZip()) {
+    return;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'umbra-umask-'));
+  const previousUmask = process.umask();
+  try {
+    const extensionDir = path.join(root, 'extension');
+    fs.cpSync(EXTENSION_DIR, extensionDir, { recursive: true });
+    const hashes = [];
+    for (const mask of [0o022, 0o077]) {
+      process.umask(mask);
+      const distDir = path.join(root, `dist-${mask.toString(8)}`);
+      execFileSync('bash', [PACKAGE_SCRIPT], {
+        env: {
+          ...process.env,
+          UMBRA_EXTENSION_DIR: extensionDir,
+          UMBRA_DIST_DIR: distDir,
+          UMBRA_SKIP_ICON_REFRESH: '1',
+        },
+        stdio: 'ignore',
+      });
+      const built = fs.readdirSync(distDir).find((name) => name.endsWith('.zip'));
+      hashes.push(
+        crypto.createHash('sha256').update(fs.readFileSync(path.join(distDir, built))).digest('hex'),
+      );
+    }
+    assert.equal(hashes[0], hashes[1], 'the archive differs between umasks, so no two machines can diff a build');
+  } finally {
+    process.umask(previousUmask);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the remote-code gate covers the forms a reviewer actually flags', () => {
+  const forms = [
+    "const a = require('https://cdn.example.net/x.js');",
+    "const b = await import('https://cdn.example.net/x.js');",
+    "const c = Function('a', 'return a');",
+    "setTimeout('doThing()', 0);",
+    "const e = self['ev' + 'al'];",
+    'const AF = Object.getPrototypeOf(async function () {}).constructor;',
+  ];
+  for (const form of forms) {
+    const entries = cleanEntries();
+    const target = entries.find((entry) => entry.name === 'background.js');
+    target.data = Buffer.concat([target.data, Buffer.from(`\n${form}\n`, 'utf8')]);
+    const report = verifyPackage({ entries, zipSize: 1000 });
+    const check = report.checks.find((item) => item.name === 'no source file compiles a string into code');
+    assert.equal(check.ok, false, `the gate missed: ${form}`);
+  }
+
+  const html = entries0();
+  assert.equal(
+    verifyPackage({ entries: html, zipSize: 1000 })
+      .checks.find((item) => item.name === 'no source file compiles a string into code').ok,
+    false,
+    'a remote script tag in shipped HTML passed the gate',
+  );
+
+  function entries0() {
+    const entries = cleanEntries();
+    const popup = entries.find((entry) => entry.name === 'popup.html');
+    popup.data = Buffer.from('<body><script src="https://cdn.example.net/x.js"></script></body>', 'utf8');
+    return entries;
+  }
+});
+
+test('a trademark in the manifest name or homepage fails the same way it does in the description', () => {
+  for (const field of ['name', 'homepage_url']) {
+    const entries = cleanEntries();
+    const manifestEntry = entries.find((entry) => entry.name === 'manifest.json');
+    const parsed = JSON.parse(manifestEntry.data.toString('utf8'));
+    parsed[field] = field === 'name' ? 'Umbra for Semrush workflows' : 'https://semrush-tools.example.net/umbra';
+    manifestEntry.data = Buffer.from(JSON.stringify(parsed), 'utf8');
+
+    const report = verifyPackage({ entries, zipSize: 1000 });
+    const check = report.checks.find((item) => item.name === 'the manifest is store-ready');
+    assert.equal(check.ok, false, `a trademark in manifest.${field} passed the gate`);
+  }
+});
+
+test('the store listing text is scanned for the names the listing bar bans', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'umbra-store-text-'));
+  try {
+    fs.mkdirSync(path.join(root, 'store'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'store', 'description.txt'),
+      'Works great alongside Semrush and Moz.\n',
+    );
+    const failures = checkStoreListingText(root, ['store/description.txt']);
+    assert.ok(failures.length >= 2, `the store description text was not scanned: ${JSON.stringify(failures)}`);
+
+    fs.writeFileSync(path.join(root, 'store', 'description.txt'), 'Drive your own Chrome from a local agent.\n');
+    assert.deepEqual(checkStoreListingText(root, ['store/description.txt']), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

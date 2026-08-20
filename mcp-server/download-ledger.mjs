@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { resolveDownloadDir } from './config.js';
 
 // Render a filesystem path for a message a user reads without printing the
 // account name back at them. Anything inside the running user's home collapses
@@ -28,10 +29,31 @@ function normalizeScope(scope) {
   };
 }
 
+// APFS stores a filename exactly as it was written, so a name Chrome built from
+// page text arrives decomposed (NFD) while a token typed by a caller is composed
+// (NFC), and a plain `includes` misses every accented filename. Both sides go
+// through one normal form before they are compared. `waitForExact` is unaffected
+// because it goes through the kernel, which does its own equivalence matching.
+export function normalizeName(value) {
+  return String(value ?? '').normalize('NFC').toLowerCase();
+}
+
 function lowerTokens(values) {
   return (Array.isArray(values) ? values : [])
-    .map((item) => String(item || '').toLowerCase())
+    .map((item) => normalizeName(item))
     .filter(Boolean);
+}
+
+// A filename is a name inside the watched directory, never a path. Joining a
+// caller-supplied `../..` produced a "completed download" outside the download
+// directory, and `clearExact` runs an unlink on the same join.
+export function containedFilename(filename) {
+  const raw = String(filename ?? '').trim();
+  const base = path.basename(raw);
+  if (!base || base === '.' || base === '..') {
+    throw new Error(`Not a usable download filename: ${raw}`);
+  }
+  return base;
 }
 
 // Cross-session download attribution.
@@ -102,11 +124,25 @@ export class FileDownloadLedger {
     if (this.downloadDirVerified) {
       return;
     }
-    const stat = await fsp.stat(this.downloadDir).catch(() => null);
+    const raw = String(this.downloadDir || '');
+    const stat = await fsp.stat(raw).catch(() => null);
     if (!stat || !stat.isDirectory()) {
       this.record('download_dir_missing', { context });
+      // describeUserPath collapses the home directory to `~`, which is right for
+      // keeping an account name out of an error but makes an unexpanded literal
+      // `~/Downloads` render identically to the working default. Say which one
+      // this is, because "not found: ~/Downloads" on a machine where that folder
+      // plainly exists leaves a person with no lead at all.
+      let detail = '';
+      if (raw.startsWith('~')) {
+        detail = ' The value starts with a literal "~", which nothing expanded, so it names a relative path rather than your home directory.';
+      } else if (!path.isAbsolute(raw)) {
+        detail = ` The value is relative, so it resolved to ${path.resolve(raw)}.`;
+      } else if (stat) {
+        detail = ' That path exists but is a file, not a directory.';
+      }
       throw new Error(
-        `Download directory not found: ${describeUserPath(this.downloadDir)}. `
+        `Download directory not found: ${describeUserPath(raw)}.${detail} `
         + 'Set UMBRA_DOWNLOAD_DIR to the folder Chrome saves downloads into.',
       );
     }
@@ -131,7 +167,7 @@ export class FileDownloadLedger {
     const duplicate = this.expectedDownloads.some((item) => (
       (claim.guid && item.guid === claim.guid)
       || (item.tabId === claim.tabId
-        && item.suggestedFilename.toLowerCase() === claim.suggestedFilename.toLowerCase())
+        && normalizeName(item.suggestedFilename) === normalizeName(claim.suggestedFilename))
     ));
     if (duplicate) {
       return null;
@@ -155,7 +191,7 @@ export class FileDownloadLedger {
     const names = new Set();
     for (const claim of this.expectedDownloads) {
       if (this.isClaimInScope(claim)) {
-        names.add(claim.suggestedFilename.toLowerCase());
+        names.add(normalizeName(claim.suggestedFilename));
       }
     }
     return names;
@@ -182,36 +218,54 @@ export class FileDownloadLedger {
   }
 
   async clearExact(filename) {
-    const finalPath = path.join(this.downloadDir, filename);
+    const safeName = containedFilename(filename);
+    const finalPath = path.join(this.downloadDir, safeName);
     const partialPath = `${finalPath}.crdownload`;
     await fsp.rm(finalPath, { force: true }).catch(() => {});
     await fsp.rm(partialPath, { force: true }).catch(() => {});
-    this.record('clear_exact', { filename, finalPath });
+    this.record('clear_exact', { filename: safeName, finalPath });
   }
 
-  async waitForExact({ filename, timeoutMs, removeExisting = false } = {}) {
+  // `sinceMs` is the wait's own start time unless the caller supplied one. A
+  // tool named wait_for_download must not report a download that never happened,
+  // and export workflows reuse filenames, so an untouched file from last month
+  // sitting at the expected path used to answer immediately with stale data.
+  async waitForExact({ filename, timeoutMs, removeExisting = false, sinceMs = null } = {}) {
     if (!filename) {
       throw new Error('waitForExact requires filename.');
     }
     await this.assertDownloadDirExists('wait_exact');
+    const safeName = containedFilename(filename);
     if (removeExisting) {
-      await this.clearExact(filename);
+      await this.clearExact(safeName);
     }
 
-    const finalPath = path.join(this.downloadDir, filename);
+    const finalPath = path.join(this.downloadDir, safeName);
     const partialPath = `${finalPath}.crdownload`;
     const startedAt = Date.now();
+    const freshAfterMs = Number.isFinite(Number(sinceMs)) ? Number(sinceMs) : startedAt - 1_000;
     let lastSize = -1;
     let stableCount = 0;
     let sawPartial = false;
-    this.record('wait_exact_start', { filename, finalPath, timeoutMs });
+    let sawStale = false;
+    this.record('wait_exact_start', { filename: safeName, finalPath, timeoutMs, sinceMs: freshAfterMs });
 
     while (Date.now() - startedAt <= timeoutMs) {
       if (fs.existsSync(partialPath)) {
         sawPartial = true;
       }
       if (fs.existsSync(finalPath) && !fs.existsSync(partialPath)) {
-        const size = fs.statSync(finalPath).size;
+        const stat = fs.statSync(finalPath);
+        const size = stat.size;
+        if (stat.mtimeMs < freshAfterMs) {
+          // A file that predates the call is not this download. Keep waiting for
+          // Chrome to replace it rather than reporting it as complete.
+          sawStale = true;
+          lastSize = -1;
+          stableCount = 0;
+          await delay(this.pollMs);
+          continue;
+        }
         if (size > 0 && size === lastSize) {
           stableCount += 1;
         } else {
@@ -227,16 +281,19 @@ export class FileDownloadLedger {
             elapsedMs: Date.now() - startedAt,
             ledgerEvents: this.snapshot(),
           };
-          this.record('wait_exact_complete', { filename, finalPath, bytes: size, sawPartial });
+          this.record('wait_exact_complete', { filename: safeName, finalPath, bytes: size, sawPartial });
           return result;
         }
       }
       await delay(this.pollMs);
     }
 
-    this.record('wait_exact_timeout', { filename, finalPath, timeoutMs });
+    this.record('wait_exact_timeout', { filename: safeName, finalPath, timeoutMs });
     throw new Error(
-      `Timed out after ${timeoutMs} ms waiting for ${filename} in ${describeUserPath(this.downloadDir)}.`,
+      `Timed out after ${timeoutMs} ms waiting for ${safeName} in ${describeUserPath(this.downloadDir)}.`
+      + (sawStale
+        ? ` A file with that name is already there but predates this call, so it was not treated as the download.`
+        : ''),
     );
   }
 
@@ -322,7 +379,7 @@ export class FileDownloadLedger {
       if (!entry.isFile() || entry.name.endsWith('.crdownload')) {
         continue;
       }
-      const lowerName = entry.name.toLowerCase();
+      const lowerName = normalizeName(entry.name);
       const expectedMatch = expected.has(lowerName);
       const filtersMatch = (!normalizedExtension || lowerName.endsWith(normalizedExtension))
         && !normalizedIncludes.some((token) => !lowerName.includes(token));
@@ -361,4 +418,48 @@ export class FileDownloadLedger {
       .sort((left, right) => right.mtimeMs - left.mtimeMs)
       .map(({ tier, ...rest }) => ({ ...rest, attributed: tier === 2 }));
   }
+}
+
+// The one tool that runs entirely in this process. Shared by both transports so
+// the exact-filename path and the pattern path cannot drift apart again on which
+// arguments they honour.
+export async function resolveDownloadWait(params = {}, isConnected = () => true, sessionId = '') {
+  const rawTimeoutMs = Number(params.timeoutMs);
+  if (params.timeoutMs !== undefined && (!Number.isFinite(rawTimeoutMs) || rawTimeoutMs <= 0)) {
+    throw new Error(`browser_wait_for_download needs a positive timeoutMs, but got ${params.timeoutMs}.`);
+  }
+  // Because it runs locally it is also the one tool that can burn its whole
+  // timeout and then blame the download folder for a browser that was never
+  // attached in the first place.
+  if (!isConnected()) {
+    throw new Error(
+      `Chrome extension is not connected${sessionId ? ` for session ${sessionId}` : ''}, so no download can arrive. Open the extension and configure the shared key first.`,
+    );
+  }
+
+  const requestedDir = typeof params.dir === 'string' && params.dir.trim() ? params.dir.trim() : '';
+  const ledger = new FileDownloadLedger({ downloadDir: requestedDir || resolveDownloadDir() });
+  const timeoutMs = Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
+    ? Math.min(rawTimeoutMs, 300_000)
+    : 30_000;
+  const sinceMs = Number.isFinite(Number(params.createdAfterMs))
+    ? Number(params.createdAfterMs)
+    : Date.now() - 1_000;
+
+  if (typeof params.filename === 'string' && params.filename.trim()) {
+    // createdAfterMs used to be dropped on this path, so a stale file sitting at
+    // the expected name answered at once and the caller parsed last month's
+    // export as this run's output.
+    return await ledger.waitForExact({ filename: params.filename.trim(), timeoutMs, sinceMs });
+  }
+  const nameIncludes = [];
+  if (typeof params.pattern === 'string' && params.pattern.trim()) {
+    nameIncludes.push(params.pattern.trim());
+  }
+  return await ledger.waitForNew({
+    sinceMs,
+    timeoutMs,
+    extension: params.extension || '',
+    nameIncludes,
+  });
 }

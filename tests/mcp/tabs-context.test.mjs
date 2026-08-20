@@ -49,7 +49,9 @@ describe('Claude parity tabs context, file upload, and shortcuts', () => {
     assert.throws(() => assertLocalUploadFile(''), /filePath/);
     assert.throws(() => assertLocalUploadFile('relative/path.txt'), /absolute/);
     assert.throws(() => assertLocalUploadFile('/tmp/cb-parity-missing-upload-file.txt'), /does not exist/);
-    assert.throws(() => assertLocalUploadFile(os.tmpdir()), /does not exist/);
+    // A directory exists, so reporting it as missing sends a caller looking for
+    // the wrong problem.
+    assert.throws(() => assertLocalUploadFile(os.tmpdir()), /is a directory, not a file/);
 
     const existing = fileURLToPath(import.meta.url);
     assert.equal(assertLocalUploadFile(existing), existing);

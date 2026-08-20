@@ -224,7 +224,10 @@ describe('navigation waits, ref resolution, and page recipes', () => {
     // the namespace comes from the action name, so background.js carries no
     // list of the recipes a checkout might install.
     const runner = functionBlock(background, 'async function runPageAction', 'function getTechnicalSnapshot');
-    assert.match(runner, /globalThis\.__umbraPageRecipes\?\.\[namespace\]/);
+    // Own-property lookup, so an action named after an inherited Object member
+    // (constructor_x, valueOf_x) cannot resolve as a namespace.
+    assert.match(runner, /Object\.hasOwn\(registry, namespace\)/);
+    assert.match(runner, /globalThis\.__umbraPageRecipes/);
     assert.match(runner, /Page recipe not installed in this build/);
     assert.doesNotMatch(runner, /const fireReact =/);
     assert.doesNotMatch(runner, /openTableExport/);
@@ -233,7 +236,10 @@ describe('navigation waits, ref resolution, and page recipes', () => {
     // wait_for_text is not site-specific and stays inline.
     assert.match(runner, /if \(action === 'wait_for_text'\)/);
 
-    assert.match(background, /await ensurePageRecipe\(tab\.id, params\.action\)/);
+    // The injection result is kept, so a recipe that is present but broken
+    // reports why instead of reading as absent.
+    assert.match(background, /const recipe = await ensurePageRecipe\(tab\.id, params\.action\)/);
+    assert.match(runner, /failed to inject/);
     const ensure = functionBlock(background, 'async function ensurePageRecipe', 'async function runPageAction');
     assert.match(ensure, /recipes\/\$\{namespace\}-actions\.js/);
     assert.match(ensure, /chrome\.scripting\.executeScript\(\{ target: \{ tabId \}, files: \[file\] \}\)/);

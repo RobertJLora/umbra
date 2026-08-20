@@ -35,7 +35,17 @@ function resolveBatchRef(ref, results) {
 
 export function resolveBatchParams(value, results) {
   if (typeof value === 'string' && /^\$(prev|\d+|[a-zA-Z][\w-]*)(\.|$)/.test(value)) {
-    return resolveBatchRef(value, results);
+    // The bare-string shorthand runs over every string in every child's params,
+    // so ordinary data shaped like a reference used to fail the whole batch:
+    // a currency amount, a password, a jQuery-style identifier. An unresolvable
+    // shorthand is treated as the literal the caller wrote, which is how the
+    // same value already behaves outside a batch. The documented object form,
+    // {"$ref": "..."}, still fails loudly, because there it is unambiguous.
+    try {
+      return resolveBatchRef(value, results);
+    } catch {
+      return value;
+    }
   }
   if (!value || typeof value !== 'object') {
     return value;
@@ -49,4 +59,15 @@ export function resolveBatchParams(value, results) {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [key, resolveBatchParams(item, results)]),
   );
+}
+
+// resolveBatchParams hands back the referenced value itself when a child's whole
+// params object is a single {"$ref": ...}. Mutating that object writes into the
+// result an earlier step already reported, so the batch report shows a timeoutMs
+// the extension never returned. One shallow copy removes the aliasing.
+export function copyResolvedParams(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return { ...value };
+  }
+  return value;
 }

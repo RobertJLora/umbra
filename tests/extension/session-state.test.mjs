@@ -140,3 +140,51 @@ test('extension session disconnect preserves tabs and group for reconnect reuse'
   assert.deepEqual(reconnected.tabIds, [101, 102]);
   assert.equal(store.markConnected('sess_a', 47822), false);
 });
+
+test('stored state of the wrong shape is never loaded and never overwritten', async () => {
+  for (const corrupt of ['[{"sessionId":"a"}]', { sess_a: { tabIds: [101] } }, 42, 'truncated {']) {
+    const storage = createStorage({ bridgeSessionState: corrupt });
+    const store = await new SessionStateStore(storage).load();
+
+    assert.equal(store.listSessions().length, 0);
+    // The `loaded` guard exists to stop a write that lands before a successful
+    // read from wiping tab ownership. A wrong-shaped value walked past it and
+    // destroyed the same state.
+    assert.equal(await store.persist(), false, 'persist wrote over unreadable stored state');
+    assert.deepEqual(storage.state.bridgeSessionState, corrupt);
+  }
+});
+
+test('a stored map that hands one tab to two sessions keeps only the first owner', async () => {
+  const storage = createStorage({
+    bridgeSessionState: [
+      { sessionId: 'sess_a', tabIds: [101, 102], activeTabId: 101 },
+      { sessionId: 'sess_b', tabIds: [101, 999], activeTabId: 999 },
+    ],
+  });
+  const store = await new SessionStateStore(storage).load();
+
+  assert.equal(store.findOwner(101), 'sess_a');
+  assert.deepEqual(store.listTabIds('sess_b'), [999], 'sess_b kept a tab sess_a owns');
+  assert.equal(store.ownsTab('sess_b', 101), false);
+});
+
+test('a stored tab id that arrived as a string still blocks a second claim', async () => {
+  const storage = createStorage({
+    bridgeSessionState: [{ sessionId: 'sess_a', tabIds: ['101'], activeTabId: '101' }],
+  });
+  const store = await new SessionStateStore(storage).load();
+
+  assert.deepEqual(store.listTabIds('sess_a'), [101]);
+  assert.throws(() => store.claimTab('sess_b', 101), /already owned/);
+});
+
+test('reading a session that does not exist never creates one', async () => {
+  const storage = createStorage();
+  const store = await new SessionStateStore(storage).load();
+
+  assert.deepEqual(store.listTabIds('sess_typo'), []);
+  assert.equal(store.listSessions().length, 0, 'a read created a session record');
+  await store.persist();
+  assert.deepEqual(storage.state.bridgeSessionState, []);
+});

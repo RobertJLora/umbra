@@ -98,6 +98,11 @@ for (const file of process.argv.slice(2)) {
     cursor = end;
     if (type === 'IEND') break;
   }
+  // Bytes past IEND are not a chunk the loop above can drop, so a PNG whose
+  // only foreign data sits after the end marker used to skip the rewrite
+  // entirely and ship with its provenance block intact.
+  const trailing = source.length - cursor;
+  if (trailing > 0) dropped.push(`${trailing} trailing byte(s) after IEND`);
   if (dropped.length === 0) continue;
   fs.writeFileSync(file, Buffer.concat(kept));
   process.stdout.write(`  stripped ${dropped.join(', ')} from ${file.split('/').pop()}\n`);
@@ -126,14 +131,16 @@ fi
 # Strip in the source tree as well as the staged copy, so an unpacked install
 # loaded straight from this checkout carries the same clean bytes the store
 # package does.
-ICON_FILES=""
+# An array, not a space-joined string: a checkout under a path with a space in
+# it word-split the string and the stripper was handed path fragments, after the
+# icons had already been refreshed in the source tree.
+ICON_FILES=()
 for icon in "$EXTENSION_DIR"/icons/*.png; do
   [ -f "$icon" ] || continue
-  ICON_FILES="$ICON_FILES $icon"
+  ICON_FILES+=("$icon")
 done
-[ -n "$ICON_FILES" ] || fail "no icons found in $EXTENSION_DIR/icons"
-# shellcheck disable=SC2086
-node "$STRIP_PNG" $ICON_FILES
+[ ${#ICON_FILES[@]} -gt 0 ] || fail "no icons found in $EXTENSION_DIR/icons"
+node "$STRIP_PNG" "${ICON_FILES[@]}"
 
 # --- stage the allowlist ---------------------------------------------------
 ALLOWLIST="$(UMBRA_VERIFY_MODULE="$VERIFY_SCRIPT" node -e '
@@ -175,12 +182,19 @@ done
 # Pin every staged mtime so two builds of the same source produce the same
 # archive and can be diffed. 1980-01-01 is the earliest date the zip format
 # can record.
+# Pin the modes too. `cp` applies the caller's umask and `zip -X` still records
+# the unix mode, so two builds of the same source under umask 022 and umask 077
+# produced different archives and a colleague's hash never matched.
+find "$STAGE_DIR" -type f -exec chmod 644 {} +
+find "$STAGE_DIR" -type d -exec chmod 755 {} +
 find "$STAGE_DIR" -exec touch -t 198001010000 {} +
 
 # --- build -----------------------------------------------------------------
+# The zip is assembled inside the temp directory and only moved into dist/ once
+# it has passed the gate. Building straight into dist/ left a rejected package
+# sitting at the canonical upload path, indistinguishable from one that passed.
 mkdir -p "$DIST_DIR"
-ZIP_PATH="$DIST_DIR/umbra-$VERSION.zip"
-rm -f "$ZIP_PATH"
+STAGED_ZIP="$BUILD_TMP/umbra-$VERSION.zip"
 
 SORTED_LIST="$BUILD_TMP/sorted.txt"
 LC_ALL=C sort "$STAGED_LIST" > "$SORTED_LIST"
@@ -189,16 +203,31 @@ LC_ALL=C sort "$STAGED_LIST" > "$SORTED_LIST"
   cd "$STAGE_DIR"
   # -X drops platform extra fields, -D omits directory entries, -q keeps the
   # output readable, and -@ takes the file list on stdin in a fixed order.
-  zip -X -D -q -9 "$ZIP_PATH" -@ < "$SORTED_LIST"
+  zip -X -D -q -9 "$STAGED_ZIP" -@ < "$SORTED_LIST"
 )
 
-ZIP_BYTES="$(wc -c < "$ZIP_PATH" | tr -d ' ')"
+ZIP_BYTES="$(wc -c < "$STAGED_ZIP" | tr -d ' ')"
 FILE_COUNT="$(wc -l < "$SORTED_LIST" | tr -d ' ')"
-printf 'Built %s\n  %s files, %s bytes\n' "$ZIP_PATH" "$FILE_COUNT" "$ZIP_BYTES"
 
 if [ "${UMBRA_SKIP_VERIFY:-0}" = "1" ]; then
+  # The filename carries the caveat, so an unverified build cannot be mistaken
+  # for a submittable one.
+  ZIP_PATH="$DIST_DIR/umbra-$VERSION-unverified.zip"
+  rm -f "$ZIP_PATH"
+  mv "$STAGED_ZIP" "$ZIP_PATH"
+  printf 'Built %s\n  %s files, %s bytes\n' "$ZIP_PATH" "$FILE_COUNT" "$ZIP_BYTES"
   printf 'Verification skipped (UMBRA_SKIP_VERIFY=1). Run: node scripts/verify-package.mjs %s\n' "$ZIP_PATH"
   exit 0
 fi
 
-node "$VERIFY_SCRIPT" "$ZIP_PATH"
+printf 'Built %s\n  %s files, %s bytes\n' "$BUILD_TMP/umbra-$VERSION.zip" "$FILE_COUNT" "$ZIP_BYTES"
+
+if ! node "$VERIFY_SCRIPT" "$STAGED_ZIP"; then
+  printf 'The package did not pass verification, so %s was not written.\n' "$DIST_DIR/umbra-$VERSION.zip" >&2
+  exit 1
+fi
+
+ZIP_PATH="$DIST_DIR/umbra-$VERSION.zip"
+rm -f "$ZIP_PATH"
+mv "$STAGED_ZIP" "$ZIP_PATH"
+printf 'Wrote %s\n' "$ZIP_PATH"
