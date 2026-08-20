@@ -59,6 +59,10 @@ pub fn build_bind_message(session_id: &str, client_nonce: &str, server_nonce: &s
     format!("bind:{session_id}:{client_nonce}:{server_nonce}")
 }
 
+pub fn build_register_message(session_id: &str) -> String {
+    format!("register:{session_id}")
+}
+
 pub fn create_mac_hex(shared_key: impl AsRef<[u8]>, message: &str) -> String {
     let mut mac = HmacSha256::new_from_slice(shared_key.as_ref())
         .expect("HMAC accepts shared keys of any byte length");
@@ -123,4 +127,15 @@ pub fn validate_bind_proof(
 ) -> Result<(), AuthError> {
     let message = build_bind_message(session_id, client_nonce, server_nonce);
     verify_mac_hex(shared_key, &message, received_proof)
+}
+
+pub fn validate_register_proof(
+    shared_key: impl AsRef<[u8]>,
+    session_id: &str,
+    received_mac: &str,
+) -> Result<(), AuthError> {
+    if received_mac.is_empty() {
+        return Err(AuthError::MissingMac);
+    }
+    verify_mac_hex(shared_key, &build_register_message(session_id), received_mac)
 }

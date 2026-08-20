@@ -1,4 +1,4 @@
-use umbra_rust_broker::{create_mac_hex, BrokerConfig, RuntimeBroker};
+use umbra_rust_broker::{build_register_message, create_mac_hex, BrokerConfig, RuntimeBroker};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -48,15 +48,7 @@ async fn runtime_routes_shim_commands_and_survives_a_replacement_extension_socke
 
     let mut extension = connect_extension(shared_key, port as u16).await;
 
-    let registered = send_shim(
-        &mut shim,
-        json!({
-            "type": "register_session",
-            "id": "register_a",
-            "session_id": "sess_a"
-        }),
-    )
-    .await;
+    let registered = send_shim(&mut shim, register_session("register_a", "sess_a", shared_key)).await;
     assert_eq!(registered["ok"], true);
 
     let command = json!({
@@ -102,15 +94,7 @@ async fn runtime_routes_shim_commands_and_survives_a_replacement_extension_socke
     assert_eq!(created["result"]["tabId"], 44);
 
     let mut shim_b = connect_shim(&socket_path, &broker_task).await;
-    let _ = send_shim(
-        &mut shim_b,
-        json!({
-            "type": "register_session",
-            "id": "register_b",
-            "session_id": "sess_b"
-        }),
-    )
-    .await;
+    let _ = send_shim(&mut shim_b, register_session("register_b", "sess_b", shared_key)).await;
 
     let impersonated_command = send_shim(
         &mut shim_b,
@@ -210,15 +194,7 @@ async fn runtime_routes_shim_commands_and_survives_a_replacement_extension_socke
     );
 
     let mut shim_c = connect_shim(&socket_path, &broker_task).await;
-    let _ = send_shim(
-        &mut shim_c,
-        json!({
-            "type": "register_session",
-            "id": "register_c",
-            "session_id": "sess_c"
-        }),
-    )
-    .await;
+    let _ = send_shim(&mut shim_c, register_session("register_c", "sess_c", shared_key)).await;
     let post_replacement_command = json!({
         "type": "command",
         "id": "cmd_after_replacement",
@@ -350,6 +326,15 @@ where
         }
     }
     panic!("no {expected_type} frame arrived on the extension socket");
+}
+
+fn register_session(id: &str, session_id: &str, shared_key: &str) -> Value {
+    json!({
+        "type": "register_session",
+        "id": id,
+        "session_id": session_id,
+        "mac": create_mac_hex(shared_key, &build_register_message(session_id)),
+    })
 }
 
 fn now_ms() -> i64 {

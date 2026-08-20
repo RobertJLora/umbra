@@ -3,7 +3,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { resolveDownloadDir } from './config.js';
+import { expandUserPath, resolveDownloadDir } from './config.js';
+import { assertAllowedDirectory } from './fs-guard.js';
 
 // Render a filesystem path for a message a user reads without printing the
 // account name back at them. Anything inside the running user's home collapses
@@ -423,6 +424,35 @@ export class FileDownloadLedger {
 // The one tool that runs entirely in this process. Shared by both transports so
 // the exact-filename path and the pattern path cannot drift apart again on which
 // arguments they honour.
+export const PROCESS_STARTED_AT_MS = Date.now();
+
+function expandAbsoluteDir(raw) {
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed === '~' || trimmed.startsWith('~/')) {
+    return path.resolve(expandUserPath(trimmed));
+  }
+  return trimmed;
+}
+
+export function resolveDownloadWaitDir(params = {}) {
+  const requestedDir = expandAbsoluteDir(params.dir);
+  const downloadDir = requestedDir || resolveDownloadDir();
+  if (!path.isAbsolute(downloadDir)) {
+    throw new Error('dir must be an absolute path.');
+  }
+  return assertAllowedDirectory(downloadDir, { extraRoots: [resolveDownloadDir()] });
+}
+
+export function resolveDownloadSinceMs(params = {}, now = Date.now()) {
+  const requested = Number.isFinite(Number(params.createdAfterMs))
+    ? Number(params.createdAfterMs)
+    : now - 1_000;
+  return Math.max(requested, PROCESS_STARTED_AT_MS);
+}
+
 export async function resolveDownloadWait(params = {}, isConnected = () => true, sessionId = '') {
   const rawTimeoutMs = Number(params.timeoutMs);
   if (params.timeoutMs !== undefined && (!Number.isFinite(rawTimeoutMs) || rawTimeoutMs <= 0)) {
@@ -437,14 +467,11 @@ export async function resolveDownloadWait(params = {}, isConnected = () => true,
     );
   }
 
-  const requestedDir = typeof params.dir === 'string' && params.dir.trim() ? params.dir.trim() : '';
-  const ledger = new FileDownloadLedger({ downloadDir: requestedDir || resolveDownloadDir() });
+  const ledger = new FileDownloadLedger({ downloadDir: resolveDownloadWaitDir(params) });
   const timeoutMs = Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
     ? Math.min(rawTimeoutMs, 300_000)
     : 30_000;
-  const sinceMs = Number.isFinite(Number(params.createdAfterMs))
-    ? Number(params.createdAfterMs)
-    : Date.now() - 1_000;
+  const sinceMs = resolveDownloadSinceMs(params);
 
   if (typeof params.filename === 'string' && params.filename.trim()) {
     // createdAfterMs used to be dropped on this path, so a stale file sitting at

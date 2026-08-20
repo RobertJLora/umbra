@@ -1,6 +1,7 @@
 use umbra_rust_broker::{
-    build_bind_message, build_hello_message, create_mac_hex, validate_bind_proof,
-    validate_hello_query, AuthError, HelloQuery, DEFAULT_MAX_SKEW_MS,
+    build_bind_message, build_hello_message, build_register_message, create_mac_hex,
+    validate_bind_proof, validate_hello_query, validate_register_proof, AuthError, HelloQuery,
+    DEFAULT_MAX_SKEW_MS,
 };
 
 #[test]
@@ -86,4 +87,26 @@ fn validates_bind_proof_against_session_and_nonces() {
     let error = validate_bind_proof(shared_key, session_id, client_nonce, "other_server", &proof)
         .expect_err("mismatched bind proof should fail");
     assert_eq!(error, AuthError::InvalidMac);
+}
+
+#[test]
+fn validates_register_hmac_over_the_session_id() {
+    let shared_key = "test-shared-key";
+    let session_id = "sess_shared";
+    let mac = create_mac_hex(shared_key, &build_register_message(session_id));
+
+    validate_register_proof(shared_key, session_id, &mac)
+        .expect("matching register HMAC should pass");
+
+    let missing = validate_register_proof(shared_key, session_id, "")
+        .expect_err("an empty register HMAC should fail");
+    assert_eq!(missing, AuthError::MissingMac);
+
+    let forged = validate_register_proof(
+        shared_key,
+        session_id,
+        "0000000000000000000000000000000000000000000000000000000000000000",
+    )
+    .expect_err("a forged register HMAC should fail");
+    assert_eq!(forged, AuthError::InvalidMac);
 }

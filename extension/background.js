@@ -703,12 +703,11 @@ async function groupSessionTabs(sessionId, params = {}) {
   };
 }
 
-async function cleanupGroups(params = {}) {
+async function cleanupGroups(sessionId, params = {}) {
   const exactTitle = typeof params.title === 'string' ? params.title.trim() : '';
   const titlePrefix = typeof params.titlePrefix === 'string' ? params.titlePrefix.trim() : '';
   const mode = params.mode === 'ungroupOnly' ? 'ungroupOnly' : 'closeTabs';
   const dryRun = params.dryRun === true;
-  const includeConnected = params.includeConnected === true;
   const maxGroups = Number.isInteger(params.maxGroups) && params.maxGroups > 0 ? Math.min(params.maxGroups, 50) : 12;
 
   if (!exactTitle && !titlePrefix) {
@@ -725,22 +724,23 @@ async function cleanupGroups(params = {}) {
 
   const cleaned = [];
   const skipped = [];
-  const connectedSessions = sessionStore.listSessions().filter((session) => session.connected);
   for (const group of matches) {
     const tabs = await chrome.tabs.query({ groupId: group.id });
     const tabIds = tabs.map((tab) => tab.id).filter((tabId) => Number.isInteger(tabId));
-    const connectedOwners = connectedSessions
-      .filter((session) => session.groupId === group.id || tabIds.some((tabId) => session.tabIds.includes(tabId)))
-      .map((session) => session.sessionId);
+    const foreignOwners = [...new Set(
+      tabIds
+        .map((tabId) => sessionStore.findOwner(tabId))
+        .filter((owner) => owner && owner !== sessionId),
+    )];
 
-    if (connectedOwners.length > 0 && !includeConnected) {
+    if (foreignOwners.length > 0) {
       skipped.push({
         groupId: group.id,
         title: group.title || '',
         color: group.color || '',
         tabCount: tabIds.length,
-        reason: 'connected_session',
-        connectedOwners,
+        reason: 'owned_by_other_session',
+        ownedByOther: true,
       });
       continue;
     }
@@ -783,7 +783,6 @@ async function cleanupGroups(params = {}) {
     matchedTabCount: cleaned.reduce((sum, group) => sum + group.tabCount, 0) + skipped.reduce((sum, group) => sum + group.tabCount, 0),
     mode,
     dryRun,
-    includeConnected,
     groups: cleaned,
     skippedGroups: skipped,
   };
@@ -1175,7 +1174,7 @@ async function findChromeTabs(params = {}) {
   };
 }
 
-async function findChromeGroups(params = {}) {
+async function findChromeGroups(sessionId, params = {}) {
   const titleIncludes = String(params.titleIncludes || '').trim().toLowerCase();
   const title = String(params.title || '').trim().toLowerCase();
   const limit = Math.min(Math.max(Number(params.limit) || 50, 1), 200);
@@ -1193,7 +1192,8 @@ async function findChromeGroups(params = {}) {
 
     const tabs = await chrome.tabs.query({ groupId: group.id }).catch(() => []);
     const owners = [...new Set(tabs.map((tab) => sessionStore.findOwner(tab.id)).filter(Boolean))];
-    const liveOwners = owners.filter((owner) => sessionStore.getSession(owner)?.connected === true);
+    const ownedByCaller = owners.includes(sessionId);
+    const ownedByOther = owners.some((owner) => owner !== sessionId);
     matches.push({
       id: group.id,
       groupId: group.id,
@@ -1203,14 +1203,18 @@ async function findChromeGroups(params = {}) {
       windowId: group.windowId ?? null,
       tabCount: tabs.length,
       owned: owners.length > 0,
-      ownerSessionIds: owners,
-      liveOwnerSessionIds: liveOwners,
-      tabs: tabs.slice(0, 10).map((tab) => ({
-        tabId: tab.id,
-        title: tab.title || '(untitled)',
-        url: tab.url || '',
-        ownerSessionId: sessionStore.findOwner(tab.id),
-      })),
+      ownedByCaller,
+      ownedByOther,
+      tabs: tabs.slice(0, 10).map((tab) => {
+        const owner = sessionStore.findOwner(tab.id);
+        return {
+          tabId: tab.id,
+          title: tab.title || '(untitled)',
+          url: tab.url || '',
+          ownedByCaller: owner === sessionId,
+          ownedByOther: Boolean(owner && owner !== sessionId),
+        };
+      }),
     });
     if (matches.length >= limit) {
       break;
@@ -1334,8 +1338,25 @@ async function serializeSessionGroup(sessionId) {
 
 async function markDebugGroup(sessionId, params = {}) {
   const session = sessionStore.ensureSession(sessionId);
-  let groupId = Number(params.groupId);
-  if (!Number.isInteger(groupId)) {
+  const requestedGroupId = params.groupId === undefined || params.groupId === null || params.groupId === ''
+    ? null
+    : Number(params.groupId);
+  let groupId = requestedGroupId;
+  if (requestedGroupId !== null) {
+    if (!Number.isInteger(requestedGroupId)) {
+      throw new Error('groupId must be an integer.');
+    }
+    if (requestedGroupId !== session.groupId) {
+      const tabs = await chrome.tabs.query({ groupId: requestedGroupId }).catch(() => []);
+      const tabIds = tabs.map((tab) => tab.id).filter((tabId) => Number.isInteger(tabId));
+      const ownedOnlyByCaller = tabIds.length > 0
+        && tabIds.every((tabId) => sessionStore.findOwner(tabId) === sessionId);
+      if (!ownedOnlyByCaller) {
+        throw new Error('groupId is not owned by this session.');
+      }
+    }
+    groupId = requestedGroupId;
+  } else {
     groupId = session.groupId;
   }
   if (!Number.isInteger(groupId)) {
@@ -4503,7 +4524,7 @@ async function handleBridgeCommand(message) {
   }
 
   if (tool === 'browser_find_groups') {
-    return await findChromeGroups(params);
+    return await findChromeGroups(sessionId, params);
   }
 
   if (tool === 'browser_adopt_group') {
@@ -4601,7 +4622,7 @@ async function handleBridgeCommand(message) {
   }
 
   if (tool === 'browser_cleanup_groups') {
-    return await cleanupGroups(params);
+    return await cleanupGroups(sessionId, params);
   }
 
   if (tool === 'browser_screenshot') {
@@ -5210,6 +5231,11 @@ async function handleBridgeCommand(message) {
   }
 
   if (tool === 'browser_reload_extension') {
+    if (Object.prototype.hasOwnProperty.call(chrome.runtime.getManifest(), 'update_url')) {
+      throw new Error(
+        'browser_reload_extension is available only on unpacked developer installs. Use the Reload button on the options page, or chrome://extensions.',
+      );
+    }
     setTimeout(() => {
       chrome.runtime.reload();
     }, 250);
@@ -5219,7 +5245,22 @@ async function handleBridgeCommand(message) {
   throw new Error(`Unsupported tool: ${tool}`);
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+function isTrustedExtensionSender(sender) {
+  const extensionId = chrome.runtime.id;
+  if (!sender || (sender.id && sender.id !== extensionId)) {
+    return false;
+  }
+  const origin = String(sender.origin || '');
+  const url = String(sender.url || '');
+  const extensionOrigin = `chrome-extension://${extensionId}`;
+  return origin === extensionOrigin || url.startsWith(`${extensionOrigin}/`);
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!isTrustedExtensionSender(sender)) {
+    sendResponse({ ok: false, error: 'untrusted_sender' });
+    return false;
+  }
   (async () => {
     // bridge_command, bridge_session_connected, and bridge_session_disconnected
     // all write session state, and a message can wake a cold worker. Await the

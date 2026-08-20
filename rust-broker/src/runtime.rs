@@ -1,11 +1,12 @@
 use crate::auth::{
-    create_mac_hex, validate_bind_proof, validate_hello_query, HelloQuery, DEFAULT_MAX_SKEW_MS,
+    create_mac_hex, validate_bind_proof, validate_hello_query, validate_register_proof, HelloQuery,
+    DEFAULT_MAX_SKEW_MS,
 };
 use crate::broker::{BrokerConfig, RustBroker};
 use crate::session::SessionStatus;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use axum::{Json, Router};
@@ -137,6 +138,8 @@ enum ShimRequest {
     RegisterSession {
         id: String,
         session_id: String,
+        #[serde(default)]
+        mac: String,
     },
     Command {
         id: String,
@@ -740,15 +743,25 @@ impl RuntimeBroker {
     }
 }
 
-async fn health_handler(State(state): State<Arc<RuntimeBroker>>) -> Json<Value> {
-    Json(state.health_value().await)
+async fn health_handler(
+    State(state): State<Arc<RuntimeBroker>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(response) = require_loopback_host(&headers) {
+        return response;
+    }
+    Json(state.health_value().await).into_response()
 }
 
 async fn bridge_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<BridgeHelloParams>,
     State(state): State<Arc<RuntimeBroker>>,
+    headers: HeaderMap,
 ) -> Response {
+    if let Err(response) = require_loopback_host(&headers) {
+        return response;
+    }
     let port = state.config.bound_port.unwrap_or(state.config.port_start);
     let validated = validate_hello_query(
         state.config.shared_key.as_bytes(),
@@ -1225,9 +1238,18 @@ async fn handle_shim_request(
     request: ShimRequest,
 ) -> ShimResponse {
     match request {
-        ShimRequest::RegisterSession { id, session_id } => {
+        ShimRequest::RegisterSession { id, session_id, mac } => {
             if session_id.trim().is_empty() {
                 return ShimResponse::error(id, "invalid_session", "session_id is required");
+            }
+            if validate_register_proof(state.config.shared_key.as_bytes(), &session_id, &mac)
+                .is_err()
+            {
+                return ShimResponse::error(
+                    id,
+                    "invalid_register_mac",
+                    "register_session requires a valid HMAC proof over the session id",
+                );
             }
             // The broker's own session id names the extension's channel. A shim
             // taking it mislabels that channel as `mcp-shim`, pins health at
@@ -1443,15 +1465,75 @@ fn keepalive_reply(message_type: &str) -> Option<Value> {
 ///
 /// Nothing set a mode before, so the live socket was `srwxr-xr-x` purely because
 /// of the ambient umask. A user with umask 002, or anyone on Linux, ended up
-/// with a world-connectable socket, and the shim's `register_session` path
-/// carries no HMAC proof: whoever can connect can drive the signed-in browser.
-/// 0600 makes the file system the gate.
+/// with a world-connectable socket. 0600 makes the file system the first gate;
+/// register_session also requires an HMAC proof over the session id.
 fn restrict_socket_permissions(path: &str) -> Result<(), RuntimeError> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
         RuntimeError::ShimIo(format!(
             "could not restrict the shim socket {path} to its owner: {error}"
         ))
     })
+}
+
+fn should_restrict_directory(path: &Path) -> bool {
+    !matches!(
+        path.to_string_lossy().as_ref(),
+        "/" | "/tmp" | "/var" | "/var/tmp" | "/private" | "/private/tmp" | "/dev" | "/run"
+    )
+}
+
+fn restrict_directory_permissions(path: &Path) -> Result<(), RuntimeError> {
+    if !should_restrict_directory(path) {
+        return Ok(());
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|error| {
+        RuntimeError::ShimIo(format!(
+            "could not restrict the shim socket directory {} to its owner: {error}",
+            path.display()
+        ))
+    })
+}
+
+/// True when the HTTP Host header names loopback. DNS-rebinding keeps the
+/// original Host after the name is pointed at 127.0.0.1, so anything else is
+/// treated as a foreign origin.
+pub fn is_loopback_host_header(host: &str) -> bool {
+    let raw = host.trim().to_ascii_lowercase();
+    if raw.is_empty() {
+        return false;
+    }
+    if raw == "localhost" || raw == "127.0.0.1" || raw == "::1" || raw == "[::1]" {
+        return true;
+    }
+    if let Some(rest) = raw.strip_prefix("localhost:") {
+        return !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit());
+    }
+    if let Some(rest) = raw.strip_prefix("127.0.0.1:") {
+        return !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit());
+    }
+    if let Some(rest) = raw.strip_prefix("[::1]:") {
+        return !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit());
+    }
+    false
+}
+
+fn require_loopback_host(headers: &HeaderMap) -> Result<(), Response> {
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if is_loopback_host_header(host) {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorBody {
+                code: "forbidden_host".to_string(),
+                message: "Host header must be a loopback name".to_string(),
+            }),
+        )
+            .into_response())
+    }
 }
 
 async fn prepare_unix_socket(path: &str) -> Result<(), RuntimeError> {
@@ -1463,6 +1545,7 @@ async fn prepare_unix_socket(path: &str) -> Result<(), RuntimeError> {
                 parent.display()
             ))
         })?;
+        restrict_directory_permissions(parent)?;
     }
     // symlink_metadata rather than exists(): exists() resolves the link, so a
     // dangling symlink at the socket path reported false, survived the unlink,
@@ -1509,6 +1592,7 @@ fn is_empty_shim_session(session: &SessionStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn test_broker() -> RuntimeBroker {
         RuntimeBroker::new(BrokerConfig {
@@ -1530,6 +1614,85 @@ mod tests {
             .authenticate_session(session_id, None, now_ms() as u64)
             .await
             .expect("shim channel should authenticate");
+    }
+
+    #[test]
+    fn loopback_host_header_accepts_only_loopback_names() {
+        for host in [
+            "127.0.0.1",
+            "127.0.0.1:47821",
+            "localhost",
+            "localhost:47821",
+            "[::1]",
+            "[::1]:47821",
+            "::1",
+            "LOCALHOST",
+        ] {
+            assert!(is_loopback_host_header(host), "{host} should be accepted");
+        }
+        for host in [
+            "",
+            "evil.test",
+            "127.0.0.1.evil.test",
+            "localhost.evil.test",
+            "127.0.0.1:47821.evil.test",
+            "0.0.0.0",
+            "127.0.0.2",
+        ] {
+            assert!(!is_loopback_host_header(host), "{host} should be refused");
+        }
+    }
+
+    #[tokio::test]
+    async fn register_session_requires_hmac_proof() {
+        let state = Arc::new(test_broker());
+        let registered = Arc::new(Mutex::new(None));
+        let attached = Arc::new(Mutex::new(HashSet::new()));
+        let denied = handle_shim_request(
+            Arc::clone(&state),
+            Arc::clone(&registered),
+            Arc::clone(&attached),
+            ShimRequest::RegisterSession {
+                id: "r1".to_string(),
+                session_id: "sess_a".to_string(),
+                mac: String::new(),
+            },
+        )
+        .await;
+        assert!(!denied.ok);
+
+        let mac = create_mac_hex(
+            "unit-test-key",
+            &crate::auth::build_register_message("sess_a"),
+        );
+        let accepted = handle_shim_request(
+            Arc::clone(&state),
+            registered,
+            attached,
+            ShimRequest::RegisterSession {
+                id: "r2".to_string(),
+                session_id: "sess_a".to_string(),
+                mac,
+            },
+        )
+        .await;
+        assert!(accepted.ok);
+    }
+
+    #[tokio::test]
+    async fn socket_parent_directory_is_owner_only() {
+        let dir = std::env::temp_dir().join(format!(
+            "umbra-sock-parent-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let socket = dir.join("broker.sock");
+        prepare_unix_socket(socket.to_str().unwrap())
+            .await
+            .expect("prepare should create the parent");
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

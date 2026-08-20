@@ -55,7 +55,7 @@ Click **Save And Reconnect** to store it in the extension.
 node mcp-server/cli.js pair
 ```
 
-That writes the key to `~/.umbra/shared-key` with mode `-rw-------`, prints the key to paste into the options page, and prints the client config block. Pass `--rotate` to replace an existing key, or `umbra pair <key>` to adopt a key you already have.
+That writes the key to `~/.umbra/shared-key` with mode `-rw-------`, prints the key to paste into the options page, and prints the client config block. Pass `--rotate` to replace an existing key. To adopt a key you already have, prefer `umbra pair --stdin` or `umbra pair --key-file <path>`: `umbra pair <key>` puts the secret in process listings and shell history.
 
 Do not commit the key, and do not paste it into anything but the options page and your MCP client config.
 

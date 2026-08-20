@@ -1,5 +1,4 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import { assertReadableUploadFile } from './fs-guard.js';
 
 export const CHROME_GROUP_COLORS = ['blue', 'green', 'yellow', 'pink', 'purple', 'cyan', 'orange'];
 export const MAX_BROWSER_BATCH_CALLS = 25;
@@ -260,7 +259,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_cleanup_groups',
-    description: 'Inspect or clean visible Chrome tab groups by exact title or title prefix. Defaults protect currently connected sessions.',
+    description: 'Inspect or clean visible Chrome tab groups by exact title or title prefix. Groups that contain a tab owned by another session are skipped.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -272,7 +271,6 @@ export const TOOL_DEFINITIONS = [
           description: 'Cleanup mode. closeTabs removes tabs in matching groups; ungroupOnly keeps tabs but removes the group.'
         },
         dryRun: { type: 'boolean', description: 'When true, report matching groups without closing or ungrouping tabs.' },
-        includeConnected: { type: 'boolean', description: 'When true, allow cleanup of groups owned by currently connected bridge sessions. Defaults to false.' },
         maxGroups: { type: 'number', description: 'Safety cap for groups to affect. Defaults to 12.' }
       }
     }
@@ -284,7 +282,7 @@ export const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to capture. Defaults to the active owned tab.' },
-        outputPath: { type: 'string', description: 'Optional local filesystem path where the image should be written. Must be absolute, or start with ~ for the home directory of the account running the companion server. A relative path is refused, and so is a path whose parent folder does not already exist. jpeg is inferred from .jpg or .jpeg.' },
+        outputPath: { type: 'string', description: 'Optional local filesystem path where the image should be written. Must be absolute, or start with ~ for the home directory of the account running the companion server. A relative path is refused, and so is a path whose parent folder does not already exist. The parent must sit inside an allowed root (home, Downloads, the process temp directory, /tmp, the server working directory, plus UMBRA_UPLOAD_DIR or UMBRA_FS_ROOTS). Credential paths and the Umbra home are refused. jpeg is inferred from .jpg or .jpeg.' },
         region: {
           type: 'object',
           description: 'Optional CSS-pixel crop region {x,y,width,height} or {x,y,w,h}.'
@@ -513,14 +511,14 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_file_upload',
-    description: 'Set files on a file input in a session-owned tab from an absolute local path. Refuses a missing file.',
+    description: 'Set files on a file input in a session-owned tab from an absolute local path. Refuses a missing file, a path outside the allowed roots, and well-known credential locations including the Umbra pairing key.',
     inputSchema: {
       type: 'object',
       properties: {
         tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector for an input[type=file] element.' },
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
-        filePath: { type: 'string', description: 'Absolute local path to the file to upload.' },
+        filePath: { type: 'string', description: 'Absolute local path to the file to upload. Must sit inside an allowed root (home, Downloads, the process temp directory, /tmp, the server working directory, plus UMBRA_UPLOAD_DIR or UMBRA_FS_ROOTS). Credential paths and the Umbra home are refused.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before uploading. Defaults to false.' }
       },
       required: ['filePath']
@@ -686,7 +684,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_reload_extension',
-    description: 'Reload the unpacked Umbra extension without opening chrome://extensions. Use after syncing extension files to the Active folder.',
+    description: 'Reload the unpacked Umbra extension without opening chrome://extensions. Advertised only when UMBRA_ALLOW_EXTENSION_RELOAD=1. Store installs refuse this tool; use the options-page Reload button instead.',
     inputSchema: {
       type: 'object',
       properties: {}
@@ -702,7 +700,7 @@ export const TOOL_DEFINITIONS = [
         pattern: { type: 'string', description: 'Case-insensitive filename substring to wait for.' },
         extension: { type: 'string', description: 'Optional file extension filter such as .csv.' },
         createdAfterMs: { type: 'number', description: 'Only match files modified after this epoch millisecond timestamp.' },
-        dir: { type: 'string', description: 'Absolute path to the folder to watch for the new file. Defaults to UMBRA_DOWNLOAD_DIR when that variable is set, otherwise the Downloads folder inside the home directory of the account running the companion server. Set this per call when Chrome saves downloads somewhere else.' },
+        dir: { type: 'string', description: 'Absolute path to the folder to watch for the new file. Must sit inside an allowed root or the configured download directory. Defaults to UMBRA_DOWNLOAD_DIR when that variable is set, otherwise the Downloads folder inside the home directory of the account running the companion server. Set this per call when Chrome saves downloads somewhere else.' },
         timeoutMs: { type: 'number', description: 'Maximum wait time in milliseconds. Defaults to 30000.' }
       }
     }
@@ -753,27 +751,26 @@ export const TOOL_DEFINITIONS = [
   }
 ];
 
-export function assertLocalUploadFile(filePath) {
-  const value = typeof filePath === 'string' ? filePath.trim() : '';
-  if (!value) {
-    throw new Error('browser_file_upload requires filePath.');
+export const DEV_ONLY_TOOL_NAMES = new Set(['browser_reload_extension']);
+
+export function isDevOnlyToolEnabled(name, env = process.env) {
+  if (!DEV_ONLY_TOOL_NAMES.has(name)) {
+    return true;
   }
-  if (!path.isAbsolute(value)) {
-    throw new Error('filePath must be an absolute local path.');
+  const flag = String(env.UMBRA_ALLOW_EXTENSION_RELOAD || '').trim().toLowerCase();
+  return flag === '1' || flag === 'true' || flag === 'yes';
+}
+
+export function assertDevOnlyToolAllowed(name, env = process.env) {
+  if (!isDevOnlyToolEnabled(name, env)) {
+    throw new Error(
+      'browser_reload_extension is disabled unless UMBRA_ALLOW_EXTENSION_RELOAD=1. Use the Reload button on the options page, or chrome://extensions.',
+    );
   }
-  let stats;
-  try {
-    stats = fs.statSync(value);
-  } catch {
-    throw new Error(`File does not exist: ${value}`);
-  }
-  if (stats.isDirectory()) {
-    throw new Error(`Path is a directory, not a file: ${value}`);
-  }
-  if (!stats.isFile()) {
-    throw new Error(`Path is not a regular file: ${value}`);
-  }
-  return value;
+}
+
+export function assertLocalUploadFile(filePath, options = {}) {
+  return assertReadableUploadFile(filePath, options);
 }
 
 export function getToolDefinition(name) {
@@ -792,14 +789,15 @@ export const PAGE_ACTION_TOOL_NAME = 'browser_run_page_action';
 // extra tool definitions, and extra namespaced values for the page-action enum
 // whose implementations live in the matching extension recipe file. No plugin
 // installed means no additions, which is what a published package sees.
-export function buildToolDefinitions({ plugins = null } = {}) {
+export function buildToolDefinitions({ plugins = null, env = process.env } = {}) {
   const extraTools = Array.isArray(plugins?.toolDefinitions) ? plugins.toolDefinitions : [];
   const extraActions = Array.isArray(plugins?.pageActions) ? plugins.pageActions : [];
+  const catalog = TOOL_DEFINITIONS.filter((tool) => isDevOnlyToolEnabled(tool.name, env));
   if (extraTools.length === 0 && extraActions.length === 0) {
-    return TOOL_DEFINITIONS.slice();
+    return catalog.slice();
   }
 
-  const definitions = TOOL_DEFINITIONS.map((tool) => {
+  const definitions = catalog.map((tool) => {
     if (tool.name !== PAGE_ACTION_TOOL_NAME || extraActions.length === 0) {
       return tool;
     }

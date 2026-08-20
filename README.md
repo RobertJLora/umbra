@@ -58,7 +58,9 @@ The package is not on npm yet and the extension is not in the Chrome Web Store y
 `browser_batch`, `browser_wait_click_read`, `browser_navigate_wait_read`, `browser_click_wait_selector_read`
 
 **Escape hatches**
-`browser_javascript`, `browser_run_page_action`, `browser_wait_for_download`, `browser_reload_extension`
+`browser_javascript`, `browser_run_page_action`, `browser_wait_for_download`
+
+`browser_reload_extension` exists for unpacked developer installs only. It is advertised when `UMBRA_ALLOW_EXTENSION_RELOAD=1`, and store installs refuse it. The options-page Reload button covers the same workflow without exposing a cross-session tool.
 
 The list above is the whole surface of every published build. A checkout can carry optional local page-recipe plugins, which are not part of any published build: a module in `mcp-server/plugins/` paired with a page recipe in `extension/recipes/`. Both folders are untracked and unpublished, and a plugin adds its own tools and its own `browser_run_page_action` values to the list only in the install that holds it.
 

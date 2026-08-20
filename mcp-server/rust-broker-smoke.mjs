@@ -144,6 +144,7 @@ async function connectClient() {
       sessionId,
       socketPath,
       requestTimeoutMs: 15000,
+      sharedKey: SHARED_KEY,
     });
     try {
       await client.start();

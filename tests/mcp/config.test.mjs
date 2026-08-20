@@ -153,6 +153,8 @@ describe('mcp-server/package.json', () => {
       'rust-broker-client.js',
       'timeouts.js',
       'config.js',
+      'fs-guard.js',
+      'loopback-host.js',
       'auth.js',
       'session-registry.js',
       'tab-ownership.js',

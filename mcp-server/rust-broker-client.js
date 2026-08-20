@@ -3,10 +3,11 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import net from 'node:net';
 import { EventEmitter } from 'node:events';
-import { MAX_BROWSER_BATCH_CALLS, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
+import { MAX_BROWSER_BATCH_CALLS, assertDevOnlyToolAllowed, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
 import { copyResolvedParams, resolveBatchParams } from './batch-refs.js';
 import { resolveDownloadWait } from './download-ledger.mjs';
 import { resolveBrokerSocketPath } from './config.js';
+import { createRegisterProof } from './auth.js';
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   MAX_COMMAND_TIMEOUT_MS,
@@ -63,6 +64,7 @@ export class RustBrokerClient extends EventEmitter {
     connectDeadlineMs = positiveNumber(process.env.UMBRA_BROKER_CONNECT_TIMEOUT_MS) || DEFAULT_CONNECT_DEADLINE_MS,
     socketFactory = null,
     pluginHandlers = null,
+    sharedKey = '',
   } = {}) {
     super();
     if (!sessionId) {
@@ -73,6 +75,7 @@ export class RustBrokerClient extends EventEmitter {
     this.requestTimeoutMs = requestTimeoutMs;
     this.connectDeadlineMs = connectDeadlineMs;
     this.socketFactory = socketFactory;
+    this.sharedKey = sharedKey;
     // Tools an optional local plugin contributed, answered here rather than
     // forwarded to the extension. Passed in so no plugin module enters this
     // file's import graph.
@@ -236,6 +239,7 @@ export class RustBrokerClient extends EventEmitter {
   }
 
   async sendCommand(tool, params = {}) {
+    assertDevOnlyToolAllowed(tool);
     if (tool === 'browser_batch') {
       return await this.sendBatch(params);
     }
@@ -312,6 +316,7 @@ export class RustBrokerClient extends EventEmitter {
       await this.connect();
       await this.sendRawBrokerRequest('register_session', {
         session_id: this.sessionId,
+        mac: this.sharedKey ? createRegisterProof(this.sharedKey, this.sessionId) : '',
         client_pid: process.pid,
         parent_pid: process.ppid,
       });

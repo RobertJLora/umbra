@@ -163,7 +163,17 @@ describe('CiC extension safety contract', () => {
     assert.match(background, /ownerSession\?\.connected === true/);
     assert.match(background, /browser-internal tabs/);
     assert.doesNotMatch(adoptBlock, /force/);
-    assert.match(findBlock, /findChromeGroups\(params\)/);
+    assert.match(findBlock, /findChromeGroups\(sessionId, params\)/);
+    assert.match(background, /cleanupGroups\(sessionId, params\)/);
+    assert.match(background, /ownedByCaller/);
+    assert.match(background, /ownedByOther/);
+    assert.match(background, /owned_by_other_session/);
+    assert.doesNotMatch(background, /owners: foreignOwners/);
+    assert.doesNotMatch(background, /ownerSessionIds/);
+    assert.doesNotMatch(background, /includeConnected/);
+    assert.match(background, /isTrustedExtensionSender/);
+    assert.match(background, /update_url/);
+    assert.match(background, /groupId is not owned by this session/);
     assert.match(clickBlock, /sendContentAgentCommand\(tab\.id, 'click_interactive_ref'/);
     assert.match(clickBlock, /getOrCreateSessionTab\(sessionId/);
   });

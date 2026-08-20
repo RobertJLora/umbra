@@ -53,6 +53,10 @@ export function buildBindMessage(sessionId, clientNonce, serverNonce) {
   return `bind:${sessionId}:${clientNonce}:${serverNonce}`;
 }
 
+export function buildRegisterMessage(sessionId) {
+  return `register:${sessionId}`;
+}
+
 export function validateHelloQuery({ port, searchParams, sharedKey, now = Date.now() }) {
   const timestamp = validateTimestamp(searchParams.get('ts'), now);
   const nonce = searchParams.get('nonce');
@@ -72,6 +76,10 @@ export function validateHelloQuery({ port, searchParams, sharedKey, now = Date.n
 
 export function createBindProof(sharedKey, sessionId, clientNonce, serverNonce) {
   return createMac(sharedKey, buildBindMessage(sessionId, clientNonce, serverNonce));
+}
+
+export function createRegisterProof(sharedKey, sessionId) {
+  return createMac(sharedKey, buildRegisterMessage(sessionId));
 }
 
 export function validateBindProof({ sharedKey, sessionId, clientNonce, serverNonce, receivedProof }) {

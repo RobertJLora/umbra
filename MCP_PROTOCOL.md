@@ -197,7 +197,8 @@ Register a session:
 {
   "type": "register_session",
   "id": "shim_1",
-  "session_id": "sess_abc123"
+  "session_id": "sess_abc123",
+  "mac": "<hex HMAC-SHA256 of register:{session_id} using the shared key>"
 }
 ```
 

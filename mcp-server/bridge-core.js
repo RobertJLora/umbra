@@ -3,7 +3,7 @@ import { WebSocketServer } from 'ws';
 import { createNonce, validateBindProof, validateHelloQuery } from './auth.js';
 import { SessionRegistry } from './session-registry.js';
 import { TabOwnershipStore } from './tab-ownership.js';
-import { MAX_BROWSER_BATCH_CALLS, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
+import { MAX_BROWSER_BATCH_CALLS, assertDevOnlyToolAllowed, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
 import { copyResolvedParams, resolveBatchParams } from './batch-refs.js';
 import { resolveDownloadWait } from './download-ledger.mjs';
 import {
@@ -14,6 +14,7 @@ import {
   resolveChildCallTimeoutMs,
   resolveTransportTimeoutMs,
 } from './timeouts.js';
+import { isLoopbackHostHeader } from './loopback-host.js';
 
 const DEFAULT_BIND_TIMEOUT_MS = 5_000;
 const DEFAULT_BATCH_TIMEOUT_MS = 30_000;
@@ -145,6 +146,11 @@ export class LocalBridgeServer {
 
   async tryStartPort(port) {
     const httpServer = http.createServer((request, response) => {
+      if (!isLoopbackHostHeader(request.headers.host || '')) {
+        response.writeHead(403, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: 'forbidden_host' }));
+        return;
+      }
       const url = new URL(request.url || '/', `http://${request.headers.host || '127.0.0.1'}`);
       if (url.pathname === '/healthz') {
         const status = this.registry.getStatus();
@@ -178,6 +184,11 @@ export class LocalBridgeServer {
 
     httpServer.on('upgrade', (request, socket, head) => {
       try {
+        if (!isLoopbackHostHeader(request.headers.host || '')) {
+          socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+          socket.destroy();
+          return;
+        }
         const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
         if (url.pathname !== '/bridge') {
           socket.destroy();
@@ -391,6 +402,7 @@ export class LocalBridgeServer {
   }
 
   async sendCommand(tool, params = {}) {
+    assertDevOnlyToolAllowed(tool);
     if (tool === 'browser_batch') {
       return await this.sendBatch(params);
     }

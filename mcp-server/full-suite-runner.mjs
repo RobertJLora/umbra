@@ -417,7 +417,7 @@ async function ensureRustBrokerRuntime(context) {
   return context.brokerRuntime;
 }
 
-async function connectRustBrokerClient({ sessionId, socketPath, timeoutMs }) {
+async function connectRustBrokerClient({ sessionId, socketPath, timeoutMs, sharedKey }) {
   const startedAt = Date.now();
   let lastError = null;
   while (Date.now() - startedAt < timeoutMs) {
@@ -425,6 +425,7 @@ async function connectRustBrokerClient({ sessionId, socketPath, timeoutMs }) {
       sessionId,
       socketPath,
       requestTimeoutMs: timeoutMs,
+      sharedKey,
     });
     try {
       await client.start();
@@ -450,6 +451,7 @@ async function startBridgeSession(context, { suite, label, requestTimeoutMs = co
         sessionId,
         socketPath: runtime.socketPath,
         timeoutMs: requestTimeoutMs,
+        sharedKey: context.sharedKey,
       });
       const health = await waitForAuthenticatedBridge(bridge, sessionId, context.options.timeoutMs);
       port = health?.listener?.port ?? null;

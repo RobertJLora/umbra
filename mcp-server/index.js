@@ -16,6 +16,7 @@ import { createSessionId } from './auth.js';
 import { LocalBridgeServer, parseEnvNumber } from './bridge-core.js';
 import { RustBrokerClient } from './rust-broker-client.js';
 import { expandUserPath, resolveSharedKeyPath } from './config.js';
+import { assertAllowedFsPath } from './fs-guard.js';
 import { loadPlugins } from './plugins-loader.mjs';
 // Namespace import on purpose: `buildToolDefinitions` is added by the tool-schema
 // work and a named import of a not-yet-present export fails at module link time.
@@ -96,6 +97,24 @@ export function resolveOutputPath(outputPath) {
   }
   if (!parentStat.isDirectory()) {
     throw new Error(`outputPath parent is not a directory: ${parent}`);
+  }
+
+  let realParent;
+  try {
+    realParent = fs.realpathSync(parent);
+  } catch {
+    throw new Error(`outputPath directory does not exist: ${parent}. Create it first, or pass a path inside an existing directory.`);
+  }
+  assertAllowedFsPath(realParent, { kind: 'directory' });
+
+  const existing = fs.lstatSync(resolved, { throwIfNoEntry: false });
+  if (existing) {
+    if (existing.isSymbolicLink()) {
+      throw new Error(`outputPath refuses to overwrite a symlink: ${resolved}`);
+    }
+    if (!existing.isFile()) {
+      throw new Error(`outputPath exists and is not a regular file: ${resolved}`);
+    }
   }
 
   return resolved;
@@ -434,6 +453,7 @@ export async function main() {
         sessionId,
         requestTimeoutMs,
         pluginHandlers,
+        sharedKey,
       })
     : new LocalBridgeServer({
         sharedKey,

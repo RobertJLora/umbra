@@ -123,6 +123,7 @@ describe('RustBrokerClient', () => {
         sessionId: 'sess_client',
         socketFactory,
         requestTimeoutMs: 500,
+        sharedKey: 'test-shared-key',
       });
       await client.start();
       const result = await client.sendCommand('browser_create_tab', { url: 'https://example.com' });
@@ -132,9 +133,19 @@ describe('RustBrokerClient', () => {
       assert.equal(result.echoedSessionId, 'sess_client');
       assert.equal(seen[0].type, 'register_session');
       assert.equal(seen[0].session_id, 'sess_client');
+      assert.equal(typeof seen[0].mac, 'string');
+      assert.match(seen[0].mac, /^[0-9a-f]{64}$/);
       assert.equal(seen[1].type, 'command');
       assert.equal(seen[1].tool, 'browser_create_tab');
     });
+  });
+
+  it('refuses browser_reload_extension unless the unpack flag is set', async () => {
+    const client = createOfflineClient();
+    await assert.rejects(
+      () => client.sendCommand('browser_reload_extension', {}),
+      /UMBRA_ALLOW_EXTENSION_RELOAD/,
+    );
   });
 
   it('keeps browser_batch local while routing child tools through Rust', async () => {

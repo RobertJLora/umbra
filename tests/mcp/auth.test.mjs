@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   buildBindMessage,
   buildHelloMessage,
+  buildRegisterMessage,
   createBindProof,
   createMac,
+  createRegisterProof,
   safeEqual,
   validateBindProof,
   validateHelloQuery,
@@ -81,4 +83,12 @@ test('validateBindProof rejects mismatched proof', () => {
     }),
     false,
   );
+});
+
+test('createRegisterProof is an HMAC over the session id', () => {
+  const sharedKey = 'test-shared-key';
+  const sessionId = 'sess_shared';
+  const proof = createRegisterProof(sharedKey, sessionId);
+  assert.equal(proof, createMac(sharedKey, buildRegisterMessage(sessionId)));
+  assert.notEqual(createRegisterProof(sharedKey, 'sess_other'), proof);
 });

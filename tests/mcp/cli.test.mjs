@@ -371,6 +371,21 @@ describe('umbra pair', () => {
     assert.equal(describeFileMode(keyPath), '-rw-------');
     assert.equal(readSharedKeyFile(path.join(dir, 'absent')), null);
   });
+
+  it('writes the key through an exclusive temp file so a pid-named symlink is not followed', () => {
+    const dir = makeTempDir();
+    const keyPath = path.join(dir, '.umbra', 'shared-key');
+    fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+    const victim = path.join(dir, 'victim.txt');
+    fs.writeFileSync(victim, 'KEEP\n');
+    const planted = `${keyPath}.tmp-${process.pid}`;
+    fs.symlinkSync(victim, planted);
+    const key = generateSharedKey();
+    writeSharedKeyFile(keyPath, key);
+    assert.equal(readSharedKeyFile(keyPath), key);
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'KEEP\n');
+    assert.equal(fs.lstatSync(planted).isSymbolicLink(), true);
+  });
 });
 
 describe('umbra start key resolution', () => {
@@ -868,6 +883,8 @@ describe('umbra cli ships nothing machine-specific', () => {
 
   it('derives every default from the shared resolvers rather than a literal', () => {
     assert.match(cliSource, /from '\.\/config\.js'/);
+    assert.match(cliSource, /flag: 'wx'/);
+    assert.doesNotMatch(cliSource, /tmp-\$\{process\.pid\}/);
     assert.match(cliSource, /resolveSharedKeyPath/);
     assert.match(cliSource, /resolveBrokerSocketPath/);
     assert.match(cliSource, /resolveLaunchdLabel/);

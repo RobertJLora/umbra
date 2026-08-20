@@ -437,7 +437,7 @@ function startRustBrokerRuntime({ sharedKey, options, runId }) {
   };
 }
 
-async function connectRustBrokerClient({ sessionId, socketPath, timeoutMs }) {
+async function connectRustBrokerClient({ sessionId, socketPath, timeoutMs, sharedKey }) {
   const startedAt = Date.now();
   let lastError = null;
   while (Date.now() - startedAt < timeoutMs) {
@@ -445,6 +445,7 @@ async function connectRustBrokerClient({ sessionId, socketPath, timeoutMs }) {
       sessionId,
       socketPath,
       requestTimeoutMs: timeoutMs,
+      sharedKey,
     });
     try {
       await client.start();
@@ -469,6 +470,7 @@ async function startBenchmarkBridge(context) {
       sessionId: context.sessionId,
       socketPath: context.brokerRuntime.socketPath,
       timeoutMs: context.options.timeoutMs,
+      sharedKey: context.sharedKey,
     });
     return context.bridge.health();
   }
@@ -747,7 +749,6 @@ async function cleanupTabs({ send, groupTitle, keepTabsOpen }) {
     title: groupTitle,
     dryRun: true,
     mode: 'closeTabs',
-    includeConnected: true,
   });
   return {
     tabsBeforeCleanup: before.tabs?.length || 0,

@@ -248,7 +248,7 @@ describe('CiC MCP tool contract', () => {
     assert.ok(schema.properties.title);
     assert.ok(schema.properties.titlePrefix);
     assert.ok(schema.properties.dryRun);
-    assert.ok(schema.properties.includeConnected);
+    assert.equal(schema.properties.includeConnected, undefined);
     assert.ok(schema.properties.maxGroups);
     assert.equal(schema.required, undefined, 'runtime should enforce title/titlePrefix so dry-run probes can share one schema');
   });

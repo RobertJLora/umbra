@@ -52,7 +52,7 @@ fn default_broker_socket_path() -> String {
         .into_owned()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct BrokerConfig {
     pub shared_key: String,
     pub host: String,
@@ -86,6 +86,30 @@ impl Default for BrokerConfig {
             broker_session_id: DEFAULT_BROKER_SESSION_ID.to_string(),
             socket_path: default_broker_socket_path(),
         }
+    }
+}
+
+impl fmt::Debug for BrokerConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BrokerConfig")
+            .field("shared_key", &"[redacted]")
+            .field("host", &self.host)
+            .field("port_start", &self.port_start)
+            .field("port_end", &self.port_end)
+            .field("bound_port", &self.bound_port)
+            .field("mode", &self.mode)
+            .field("request_timeout_ms", &self.request_timeout_ms)
+            .field("bind_timeout_ms", &self.bind_timeout_ms)
+            .field("idle_empty_session_ttl_ms", &self.idle_empty_session_ttl_ms)
+            .field(
+                "idle_empty_session_min_age_ms",
+                &self.idle_empty_session_min_age_ms,
+            )
+            .field("idle_reaper_interval_ms", &self.idle_reaper_interval_ms)
+            .field("broker_session_id", &self.broker_session_id)
+            .field("socket_path", &self.socket_path)
+            .finish()
     }
 }
 
@@ -494,5 +518,19 @@ mod tests {
             socket_path.ends_with(".umbra/run/broker.sock"),
             "the Rust default must match resolveBrokerSocketPath() in mcp-server/config.js, got {socket_path}"
         );
+    }
+
+    #[test]
+    fn debug_redacts_the_shared_key() {
+        let config = BrokerConfig {
+            shared_key: "super-secret-key".to_string(),
+            ..BrokerConfig::default()
+        };
+        let rendered = format!("{config:?}");
+        assert!(
+            !rendered.contains("super-secret-key"),
+            "Debug of BrokerConfig leaked the shared key: {rendered}"
+        );
+        assert!(rendered.contains("redacted"));
     }
 }

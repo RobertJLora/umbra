@@ -80,14 +80,16 @@ test('a build with no local plugin advertises exactly the built-in surface', () 
   const withPlugin = buildToolDefinitions({ plugins });
   const withoutPlugin = buildToolDefinitions();
 
-  assert.deepEqual(withoutPlugin, TOOL_DEFINITIONS, 'the default build should match the full surface');
-  assert.deepEqual(buildToolDefinitions({ plugins: null }), TOOL_DEFINITIONS);
+  assert.ok(!withoutPlugin.some((tool) => tool.name === 'browser_reload_extension'));
+  const publicCatalog = TOOL_DEFINITIONS.filter((tool) => tool.name !== 'browser_reload_extension');
+  assert.deepEqual(withoutPlugin, publicCatalog, 'the default build should hide the unpacked-only reload tool');
+  assert.deepEqual(buildToolDefinitions({ plugins: null }), publicCatalog);
 
   const addedNames = withPlugin
     .map((tool) => tool.name)
     .filter((name) => !withoutPlugin.some((tool) => tool.name === name));
   assert.deepEqual(addedNames, ['browser_export_vendor']);
-  assert.equal(withPlugin.length, TOOL_DEFINITIONS.length + 1);
+  assert.equal(withPlugin.length, publicCatalog.length + 1);
 
   const localWithout = buildMcpLocalToolNames();
   assert.equal(localWithout.has('browser_export_vendor'), false);
@@ -108,6 +110,28 @@ test('a build with no local plugin advertises exactly the built-in surface', () 
     buildToolDefinitions().find((tool) => tool.name === 'browser_run_page_action').inputSchema.properties.action.enum,
     pageActionWithout.inputSchema.properties.action.enum,
   );
+});
+
+test('browser_reload_extension is advertised only when the unpack flag is set', () => {
+  const previous = process.env.UMBRA_ALLOW_EXTENSION_RELOAD;
+  try {
+    delete process.env.UMBRA_ALLOW_EXTENSION_RELOAD;
+    assert.equal(
+      buildToolDefinitions().some((tool) => tool.name === 'browser_reload_extension'),
+      false,
+    );
+    process.env.UMBRA_ALLOW_EXTENSION_RELOAD = '1';
+    assert.equal(
+      buildToolDefinitions().some((tool) => tool.name === 'browser_reload_extension'),
+      true,
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.UMBRA_ALLOW_EXTENSION_RELOAD;
+    } else {
+      process.env.UMBRA_ALLOW_EXTENSION_RELOAD = previous;
+    }
+  }
 });
 
 test('the download-directory override exists on the tool that waits for a file', () => {

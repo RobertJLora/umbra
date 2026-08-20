@@ -167,14 +167,35 @@ function keyFileWriteError(error, keyPath) {
 // goes to a private temp file and is renamed onto the final path, so two
 // concurrent `umbra pair --rotate` runs cannot interleave a partial write, and
 // the caller can read the file back to learn which key actually won.
+function ensureSharedKeyDirectory(directory) {
+  fs.mkdirSync(directory, { recursive: true, mode: SHARED_KEY_DIR_MODE });
+  const directoryMode = fs.statSync(directory).mode & 0o777;
+  if (directoryMode & 0o077) {
+    fs.chmodSync(directory, SHARED_KEY_DIR_MODE);
+  }
+}
+
+function writeExclusiveFile(targetHint, contents, mode) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = `${targetHint}-${crypto.randomBytes(8).toString('hex')}`;
+    try {
+      fs.writeFileSync(candidate, contents, { mode, flag: 'wx' });
+      fs.chmodSync(candidate, mode);
+      return candidate;
+    } catch (error) {
+      if (error?.code === 'EEXIST') {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error(`Could not create an exclusive file next to ${targetHint}.`);
+}
+
 export function writeSharedKeyFile(keyPath, key) {
   const directory = path.dirname(keyPath);
   try {
-    fs.mkdirSync(directory, { recursive: true, mode: SHARED_KEY_DIR_MODE });
-    const directoryMode = fs.statSync(directory).mode & 0o777;
-    if (directoryMode & 0o077) {
-      fs.chmodSync(directory, SHARED_KEY_DIR_MODE);
-    }
+    ensureSharedKeyDirectory(directory);
 
     // Writing through a symlink truncates whatever it points at, and the link
     // survives, so the substitution is invisible in a later listing.
@@ -190,9 +211,7 @@ export function writeSharedKeyFile(keyPath, key) {
       });
     }
 
-    const tempPath = `${keyPath}.tmp-${process.pid}`;
-    fs.writeFileSync(tempPath, `${key}\n`, { mode: SHARED_KEY_FILE_MODE, flag: 'w' });
-    fs.chmodSync(tempPath, SHARED_KEY_FILE_MODE);
+    const tempPath = writeExclusiveFile(`${keyPath}.tmp`, `${key}\n`, SHARED_KEY_FILE_MODE);
     fs.renameSync(tempPath, keyPath);
   } catch (error) {
     if (error instanceof CliError) {
@@ -205,14 +224,16 @@ export function writeSharedKeyFile(keyPath, key) {
 
 // The previous secret exists in exactly one place on disk, so replacing it is
 // irreversible unless a copy is kept. Timestamped so a second rotation does not
-// overwrite the first backup.
+// overwrite the first backup. wx so a pre-planted symlink is not followed.
 export function backupSharedKeyFile(keyPath, key) {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backupPath = `${keyPath}.bak-${stamp}`;
   try {
-    fs.writeFileSync(backupPath, `${key}\n`, { mode: SHARED_KEY_FILE_MODE, flag: 'w' });
-    fs.chmodSync(backupPath, SHARED_KEY_FILE_MODE);
-    return backupPath;
+    ensureSharedKeyDirectory(path.dirname(keyPath));
+  } catch {
+    return '';
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  try {
+    return writeExclusiveFile(`${keyPath}.bak-${stamp}`, `${key}\n`, SHARED_KEY_FILE_MODE);
   } catch {
     return '';
   }

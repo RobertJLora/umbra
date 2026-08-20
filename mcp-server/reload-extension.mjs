@@ -8,6 +8,8 @@ import { createSessionId } from './auth.js';
 import { LocalBridgeServer } from './bridge-core.js';
 import { resolveSharedKeyPath } from './config.js';
 
+process.env.UMBRA_ALLOW_EXTENSION_RELOAD = process.env.UMBRA_ALLOW_EXTENSION_RELOAD || '1';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 

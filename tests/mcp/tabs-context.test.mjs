@@ -54,7 +54,7 @@ describe('Claude parity tabs context, file upload, and shortcuts', () => {
     assert.throws(() => assertLocalUploadFile(os.tmpdir()), /is a directory, not a file/);
 
     const existing = fileURLToPath(import.meta.url);
-    assert.equal(assertLocalUploadFile(existing), existing);
+    assert.equal(assertLocalUploadFile(existing), fs.realpathSync(existing));
   });
 
   it('lists the shortcut catalog without requiring a dispatch target', () => {
