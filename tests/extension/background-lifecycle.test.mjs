@@ -241,7 +241,7 @@ describe('extension bridge lifecycle', () => {
 
     assert.ok(start >= 0, 'readPageContent should exist');
     assert.ok(end > start, 'readPageContent block should be bounded');
-    assert.match(block, /modeCandidates = \['page', 'body', 'main', 'selector'\]/);
+    assert.match(block, /modeCandidates = \['page', 'body', 'main', 'selector', 'article'\]/);
     assert.match(block, /document\.querySelector\(selector\)/);
     assert.match(block, /includeImages === true/);
     assert.match(block, /maxChars/);
@@ -281,7 +281,10 @@ describe('extension bridge lifecycle', () => {
     );
 
     assert.match(background, /CONTENT_AGENT_PORT_NAME = 'cic-content-agent'/);
-    assert.match(background, /files: \[AX_TREE_SCRIPT, CONTENT_AGENT_SCRIPT\]/);
+    // cursor-overlay.js sits between the two: it reads UmbraAxTree for measure,
+    // and its one host insertion has to land before the agent starts the
+    // observer that would otherwise count it as a DOM change.
+    assert.match(background, /files: \[AX_TREE_SCRIPT, CURSOR_OVERLAY_SCRIPT, CONTENT_AGENT_SCRIPT\]/);
     assert.match(background, /files: \[AX_TREE_SCRIPT\]/);
     assert.match(background, /chrome\.runtime\.onConnect\.addListener/);
     assert.match(background, /sessionStore\.assertOwned\(sessionId, tabId\)/);

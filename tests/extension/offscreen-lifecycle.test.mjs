@@ -53,9 +53,11 @@ function makeSocketClass(created) {
 
 // Runs extension/offscreen.js inside a sandbox with stubbed chrome and
 // WebSocket globals so the real scanner logic can be exercised. The single
-// source transform drops the shared.js import, whose two helpers are supplied
+// source transform drops the leading import block, whose helpers are supplied
 // as sandbox globals instead, and appends a hook exposing the module-scoped
-// functions the tests drive.
+// functions the tests drive. The block is stripped as a whole rather than one
+// line at a time: a second import that survived the transform would make the
+// vm reject the file as a script rather than fail one assertion.
 async function loadOffscreen(configOverrides = {}) {
   const created = [];
   const runtimeMessages = [];
@@ -106,7 +108,7 @@ async function loadOffscreen(configOverrides = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
 
-  const source = `${offscreenSource.replace(/^import[^\n]*\n/, '')}
+  const source = `${offscreenSource.replace(/^(?:import[^\n]*\n)+/, '')}
 globalThis.__umbraTestHooks = {
   connections,
   closeExpiredConnection,

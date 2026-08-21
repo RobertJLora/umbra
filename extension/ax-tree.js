@@ -4,7 +4,7 @@
   // update still holds the previous copy. Matching on the version replaces stale helpers on
   // the next injection while leaving a same-version copy, and the element ref store it owns,
   // untouched. A bare truthiness guard would pin the old code until the page navigated.
-  const AX_TREE_VERSION = '0.2.0';
+  const AX_TREE_VERSION = '0.3.0';
   if (globalThis.UmbraAxTree?.version === AX_TREE_VERSION) {
     return globalThis.UmbraAxTree;
   }
@@ -12,6 +12,17 @@
   const DEFAULT_MAX_NODES = 200;
   const ABSOLUTE_MAX_NODES = 500;
   const DEFAULT_FIND_LIMIT = 10;
+  // A candidate's name is its accessible name, and computeAccessibleName falls
+  // back to innerText, so a wrapper's name is a dump of everything under it.
+  // Ranking and reporting both stop at 120 characters: past that the text
+  // belongs to the subtree, not to the element.
+  const FIND_NAME_MAX = 120;
+  // Past this much subtree text the node contains the query rather than being
+  // the thing the caller asked for. The penalty is larger than the 35 points the
+  // multi-token tail can award and smaller than the 100 an exact name match
+  // earns, so a container still surfaces when nothing better matched.
+  const CONTAINER_TEXT_MAX = 400;
+  const CONTAINER_PENALTY = 45;
   // Far past any real page. The walk recurses once per DOM level and burns about
   // two stack frames per level, so a hostile page nested a few thousand deep
   // used to throw RangeError out of every read tool.
@@ -294,6 +305,13 @@
     if (isInteractiveRole(role, node.tag, node.attrs || {}) || isLandmarkRole(role) || STRUCTURAL_ROLES.has(role)) {
       return true;
     }
+    if (filter === 'find') {
+      // Roleless wrapper: keep it only when its own text is short enough to be a
+      // label. A 500-character name is an article, and admitting it costs the
+      // walk one of the node slots the real links are waiting for.
+      const named = normalize(node.name);
+      return Boolean(named) && (Number(node.nameLength) || named.length) <= FIND_NAME_MAX;
+    }
     return Boolean(normalize(node.name));
   }
 
@@ -363,8 +381,8 @@
     return '';
   }
 
-  function computeAccessibleName(element, documentRef, labelForMap) {
-    return accessibleName({
+  function computeAccessibleNameParts(element, documentRef, labelForMap) {
+    const full = accessibleName({
       ariaLabel: element.getAttribute?.('aria-label') || '',
       labelledByText: labelledByText(element, documentRef),
       labelText: labelText(element, documentRef, labelForMap),
@@ -376,7 +394,14 @@
       title: element.getAttribute?.('title') || '',
       placeholder: element.getAttribute?.('placeholder') || '',
       value: element.value || '',
-    }).slice(0, 500);
+    });
+    // The pre-slice length is the only cheap measure of how much text hangs
+    // under this element, and innerText has already been paid for here.
+    return { name: full.slice(0, 500), nameLength: full.length };
+  }
+
+  function computeAccessibleName(element, documentRef, labelForMap) {
+    return computeAccessibleNameParts(element, documentRef, labelForMap).name;
   }
 
   function elementValue(element) {
@@ -496,7 +521,7 @@
     if (!q) {
       return 0;
     }
-    const name = normalize(node?.name).toLowerCase();
+    const name = normalize(node?.name).toLowerCase().slice(0, FIND_NAME_MAX);
     const role = normalize(node?.role).toLowerCase();
     // Walked nodes carry neither text nor description, so this term is empty for every node
     // rankFindMatches receives from walkAxTree, and it was empty before the unread `text`
@@ -536,6 +561,12 @@
         score += 15;
       }
     }
+    // A node whose subtree text runs past CONTAINER_TEXT_MAX contains the query,
+    // it is not the thing the caller asked for.
+    const subtreeTextLength = Number(node?.nameLength) || name.length;
+    if (subtreeTextLength > CONTAINER_TEXT_MAX && !isInteractiveRole(role, tag, {})) {
+      score -= CONTAINER_PENALTY;
+    }
     return score;
   }
 
@@ -545,7 +576,7 @@
       .map((node, index) => ({
         ref: node.ref,
         role: node.role || '',
-        name: node.name || '',
+        name: String(node.name || '').slice(0, FIND_NAME_MAX),
         score: scoreFindMatch(node, query),
         rect: node.rect || { x: 0, y: 0, width: 0, height: 0 },
         index,
@@ -628,9 +659,14 @@
   }
 
   function walkAxTree(root, options = {}, env = {}) {
-    const filter = ['all', 'interactive', 'landmarks'].includes(options.filter) ? options.filter : 'interactive';
+    // An array root is how browser_find scopes by selector: every element the
+    // selector matched is a root, and their subtrees are searched as one walk
+    // under one node budget.
+    const roots = (Array.isArray(root) ? root : [root]).filter(Boolean);
+    const filter = ['all', 'interactive', 'landmarks', 'find'].includes(options.filter) ? options.filter : 'interactive';
+    const withNameLength = options.withNameLength === true;
     const maxNodes = clampMaxNodes(options.maxNodes);
-    const documentRef = env.document || root?.ownerDocument || globalThis.document;
+    const documentRef = env.document || roots[0]?.ownerDocument || globalThis.document;
     const store = env.refStore || sharedRefStore;
     const domVersion = Number.isInteger(env.domVersion) ? env.domVersion : store.domVersion || 0;
     const labelForMap = buildLabelForMap(documentRef);
@@ -643,12 +679,17 @@
     // traversal itself and reports the stop as a truncation.
     const maxVisits = Math.max(MIN_VISIT_BUDGET, maxNodes * VISIT_BUDGET_FACTOR);
     let visits = 0;
+    // Selector roots can nest inside each other, so an element reached from two
+    // roots must not be walked, counted, or reported twice.
+    const seen = new Set();
 
     const visit = (element, parentAx, context, depth = 0) => {
-      if (!element || nodes.length >= maxNodes) {
-        if (element && nodes.length >= maxNodes) {
-          truncated = true;
-        }
+      if (!element || seen.has(element)) {
+        return;
+      }
+      seen.add(element);
+      if (nodes.length >= maxNodes) {
+        truncated = true;
         return;
       }
       // A deeply nested page used to blow the JavaScript stack, and the
@@ -675,9 +716,15 @@
       // decide on role, tag, and attributes alone, so they compute the name only for nodes
       // they keep. Everything else an included node reports, value, checked, disabled, and
       // the rect, is computed inside the include branch for the same reason.
-      const nameDecidesInclusion = filter === 'all';
-      let name = nameDecidesInclusion ? computeAccessibleName(element, documentRef, labelForMap) : '';
-      let include = shouldIncludeAxNode({ tag, role, name, attrs }, filter);
+      const nameDecidesInclusion = filter === 'all' || filter === 'find';
+      let nameLength = 0;
+      let name = '';
+      if (nameDecidesInclusion) {
+        const parts = computeAccessibleNameParts(element, documentRef, labelForMap);
+        name = parts.name;
+        nameLength = parts.nameLength;
+      }
+      let include = shouldIncludeAxNode({ tag, role, name, nameLength, attrs }, filter);
       let measuredRect = null;
       let rectMeasured = false;
       if (include && filter === 'interactive') {
@@ -690,7 +737,9 @@
       let axNode = null;
       if (include && nodes.length < maxNodes) {
         if (!nameDecidesInclusion) {
-          name = computeAccessibleName(element, documentRef, labelForMap);
+          const parts = computeAccessibleNameParts(element, documentRef, labelForMap);
+          name = parts.name;
+          nameLength = parts.nameLength;
         }
         if (!rectMeasured) {
           measuredRect = measureElementRect(element);
@@ -705,6 +754,9 @@
           disabled: elementDisabled(element),
           rect: roundRect(measuredRect),
           tag,
+          // Find-only. browser_read_page's output must not grow, so the length
+          // signal ranking needs rides along only when the caller asked for it.
+          ...(withNameLength ? { nameLength } : {}),
           childrenRefs: [],
         };
         nodes.push(axNode);
@@ -731,7 +783,9 @@
       }
     };
 
-    visit(root, null, { insideSection: false }, 0);
+    for (const entry of roots) {
+      visit(entry, null, { insideSection: false }, 0);
+    }
     return {
       nodes,
       filter,
@@ -743,8 +797,9 @@
 
   function findAxNodes(root, options = {}, env = {}) {
     const walked = walkAxTree(root, {
-      filter: options.filter || 'all',
+      filter: options.filter || 'find',
       maxNodes: options.maxNodes || ABSOLUTE_MAX_NODES,
+      withNameLength: true,
     }, env);
     return {
       ...walked,

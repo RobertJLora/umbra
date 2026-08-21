@@ -60,15 +60,26 @@ describe('CiC MCP tool contract', () => {
       'browser_javascript',
       'browser_click',
       'browser_click_text',
+      'browser_drag',
       'browser_fill',
       'browser_form_input',
       'browser_file_upload',
+      'browser_upload_image',
       'browser_hover',
       'browser_select_option',
       'browser_type',
       'browser_press_key',
       'browser_shortcut',
       'browser_scroll',
+      'browser_cursor',
+      'browser_gif',
+      'browser_read_network_requests',
+      // The composites hardcoded activate: false into their click and navigate
+      // children and declared no flag, so a caller could neither request
+      // foreground nor discover that it was off.
+      'browser_wait_click_read',
+      'browser_navigate_wait_read',
+      'browser_click_wait_selector_read',
     ]) {
       assert.equal(schemaFor(name).properties.activate.type, 'boolean', `${name} should expose an explicit activate flag`);
       assert.match(schemaFor(name).properties.activate.description, /Defaults to false/);
@@ -115,7 +126,7 @@ describe('CiC MCP tool contract', () => {
   it('captures the updated page content, wait, pressure, and freeze schemas', () => {
     const pageContent = schemaFor('browser_get_page_content');
     assert.deepEqual(pageContent.properties.format.enum, ['text', 'html']);
-    assert.deepEqual(pageContent.properties.mode.enum, ['page', 'body', 'main', 'selector']);
+    assert.deepEqual(pageContent.properties.mode.enum, ['page', 'body', 'main', 'selector', 'article']);
     assert.equal(pageContent.properties.selector.type, 'string');
     // Bounded integers, so the validator that already runs catches 0, -1 and 3.7
     // instead of forwarding them to the extension.
@@ -124,9 +135,16 @@ describe('CiC MCP tool contract', () => {
     assert.equal(pageContent.properties.includeImages.type, 'boolean');
 
     const wait = schemaFor('browser_wait');
-    assert.deepEqual(wait.required, ['selector']);
+    // A selector is no longer the only thing worth waiting for: an agent that
+    // just submitted a form needs to wait on the URL, and a selector that is
+    // already on the un-navigated page answers immediately and hides the
+    // failure. The handler throws when none of the three predicates is given.
+    assert.equal(wait.required, undefined);
     assert.equal(wait.properties.visible.type, 'boolean');
     assert.equal(wait.properties.timeoutMs.type, 'number');
+    assert.equal(wait.properties.urlContains.type, 'string');
+    assert.equal(wait.properties.urlChanged.type, 'boolean');
+    assert.equal(wait.properties.fromUrl.type, 'string');
 
     const pressure = schemaFor('browser_get_bridge_pressure');
     assert.equal(pressure.properties.includeTabs.type, 'boolean');

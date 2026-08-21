@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { assertReadableUploadFile } from './fs-guard.js';
 
 export const CHROME_GROUP_COLORS = ['blue', 'green', 'yellow', 'pink', 'purple', 'cyan', 'orange'];
@@ -51,23 +53,25 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_navigate_back',
-    description: 'Go back to the previous page on a session-owned tab.',
+    description: 'Go back to the previous page on a session-owned tab. urlChanged is the authoritative field: the tabs-API lane reports moved true whenever Chrome accepted the call, whether or not the URL actually changed.',
     inputSchema: {
       type: 'object',
       properties: {
         tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
-        activate: { type: 'boolean', description: 'Whether to activate the tab before navigating back. Defaults to false.' }
+        activate: { type: 'boolean', description: 'Whether to activate the tab before navigating back. Defaults to false.' },
+        timeoutMs: { type: 'number', description: 'How long to wait for the tab to settle after the move. Defaults to 45000.' }
       }
     }
   },
   {
     name: 'browser_navigate_forward',
-    description: 'Go forward to the next page on a session-owned tab.',
+    description: 'Go forward to the next page on a session-owned tab. urlChanged is the authoritative field: the tabs-API lane reports moved true whenever Chrome accepted the call, whether or not the URL actually changed.',
     inputSchema: {
       type: 'object',
       properties: {
         tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
-        activate: { type: 'boolean', description: 'Whether to activate the tab before navigating forward. Defaults to false.' }
+        activate: { type: 'boolean', description: 'Whether to activate the tab before navigating forward. Defaults to false.' },
+        timeoutMs: { type: 'number', description: 'How long to wait for the tab to settle after the move. Defaults to 45000.' }
       }
     }
   },
@@ -81,12 +85,15 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_tabs_context',
-    description: 'List open http, https, file, and about tabs with ownership flags. Read-only: does not adopt, activate, or close tabs. When createIfEmpty is true and this session owns no tabs, create an about:blank tab owned by the session.',
+    description: 'List open http, https, file, and about tabs with ownership flags. Read-only: does not adopt, activate, or close tabs. Session-owned tabs are listed first and are never dropped by the URL filter. When createIfEmpty is true and this session owns no tabs, create an about:blank tab owned by the session and include it in the result. Each row carries groupId, and url is exactly what Chrome reports unless urlMaxLength turns shortening on. The response also reports ownedCount, matchedCount, returnedCount and truncatedByLimit.',
     inputSchema: {
       type: 'object',
       properties: {
-        createIfEmpty: { type: 'boolean', description: 'When true and this session owns no tabs, create an about:blank owned tab in a collapsed group without activating it. Defaults to false.' },
-        includeInternal: { type: 'boolean', description: 'When true, include chrome and extension internal pages. Defaults to false.' }
+        createIfEmpty: { type: 'boolean', description: 'When true and this session owns no tabs, create an about:blank owned tab in a collapsed group without activating it, and return it in the tabs array. Defaults to false.' },
+        includeInternal: { type: 'boolean', description: 'When true, include chrome and extension internal pages. Applies to unowned tabs only, since owned tabs are always listed. Defaults to false.' },
+        ownedOnly: { type: 'boolean', description: 'When true, list only the tabs this session owns and skip the rest of the browser. Defaults to false.' },
+        limit: { type: 'integer', minimum: 1, description: 'Maximum rows to return, owned tabs first. Defaults to 200, max 500. truncatedByLimit reports when rows were dropped.' },
+        urlMaxLength: { type: 'integer', minimum: 0, description: 'Maximum characters per returned URL, after the query and fragment collapse to a marker. Pass 0, the default, to get the URL exactly as Chrome reports it. A positive value turns shortening on and is clamped to 40 minimum, 4096 maximum; rows that were shortened carry urlTruncated true and their url is no longer navigable.' }
       }
     }
   },
@@ -310,8 +317,8 @@ export const TOOL_DEFINITIONS = [
         format: { type: 'string', enum: ['text', 'html'], description: 'Content format. Defaults to text.' },
         mode: {
           type: 'string',
-          enum: ['page', 'body', 'main', 'selector'],
-          description: 'Content root to read when selector is not supplied. Defaults to page.'
+          enum: ['page', 'body', 'main', 'selector', 'article'],
+          description: 'Content root to read when selector is not supplied. Defaults to page. Article picks the densest body-text block on the page and leaves out navigation, sidebars, share widgets and related-link rails. It reports which node it chose as articleRootSelector only when the in-page content agent served the read, which contentAgent.fallback tells you; the one-shot fallback omits that field.'
         },
         selector: { type: 'string', description: 'Optional CSS selector to scope the content read.' },
         maxChars: { type: 'integer', minimum: 1, description: 'Maximum characters to return from text or HTML content. Defaults to 500000, which is also the hard ceiling: a larger value is clamped down to it. Content longer than the limit is truncated, and the result reports truncated: true with the full originalLength.' },
@@ -384,7 +391,7 @@ export const TOOL_DEFINITIONS = [
       properties: {
         tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to search. Defaults to the active owned tab.' },
         query: { type: 'string', description: 'Case-insensitive name, role, or description to match.' },
-        selector: { type: 'string', description: 'Optional CSS selector to scope the search.' },
+        selector: { type: 'string', description: 'Optional CSS selector constraining the search. Every element it matches, and everything inside those elements, is searched. Omit to search the whole page.' },
         limit: { type: 'integer', minimum: 1, description: 'Maximum matches to return. Defaults to 10.' }
       },
       required: ['query']
@@ -460,8 +467,40 @@ export const TOOL_DEFINITIONS = [
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         x: { type: 'number', description: 'CSS-pixel X coordinate in the viewport. Provide both x and y to click that point.' },
         y: { type: 'number', description: 'CSS-pixel Y coordinate in the viewport. Provide both x and y to click that point.' },
-        doubleClick: { type: 'boolean', description: 'When true, perform a double click.' },
+        doubleClick: { type: 'boolean', description: 'When true, perform a double click. Same thing as clickCount 2.' },
+        button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Mouse button. Defaults to left.' },
+        clickCount: { type: 'integer', minimum: 1, maximum: 3, description: '1 for a single click, 2 for a double, 3 for a triple. Defaults to 1.' },
+        modifiers: {
+          type: 'object',
+          description: 'Modifier keys held during the click.',
+          properties: {
+            ctrl: { type: 'boolean' },
+            shift: { type: 'boolean' },
+            alt: { type: 'boolean' },
+            meta: { type: 'boolean' }
+          }
+        },
         activate: { type: 'boolean', description: 'Whether to activate the tab before clicking. Defaults to false.' }
+      }
+    }
+  },
+  {
+    name: 'browser_drag',
+    description: 'Drag from one point or element to another in a session-owned tab, firing the pointer sequence and, for draggable elements, the drag and drop events.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
+        startX: { type: 'number', description: 'Start point, CSS-pixel X in the viewport.' },
+        startY: { type: 'number', description: 'Start point, CSS-pixel Y in the viewport.' },
+        x: { type: 'number', description: 'End point, CSS-pixel X in the viewport.' },
+        y: { type: 'number', description: 'End point, CSS-pixel Y in the viewport.' },
+        startRef: { type: 'string', description: 'Short-lived ref for the drag source, used instead of startX and startY.' },
+        startSelector: { type: 'string', description: 'CSS selector for the drag source, used instead of startX and startY.' },
+        ref: { type: 'string', description: 'Short-lived ref for the drop target, used instead of x and y.' },
+        selector: { type: 'string', description: 'CSS selector for the drop target, used instead of x and y.' },
+        steps: { type: 'integer', minimum: 2, maximum: 40, description: 'Intermediate move events between the two points. Defaults to 12.' },
+        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' }
       }
     }
   },
@@ -525,6 +564,23 @@ export const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'browser_upload_image',
+    description: 'Put a local image into a session-owned tab, either by populating a file input named by ref or selector, or by dropping it at a viewport point on a drop zone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
+        filePath: { type: 'string', description: 'Absolute local path to the image. Must sit inside an allowed root, the same roots browser_file_upload accepts.' },
+        ref: { type: 'string', description: 'Short-lived ref for a file input. Preferred: this mode has no file size limit.' },
+        selector: { type: 'string', description: 'CSS selector for a file input. Preferred: this mode has no file size limit.' },
+        x: { type: 'number', description: 'Drop point, CSS-pixel X in the viewport. A file dropped this way is capped at 700 KB.' },
+        y: { type: 'number', description: 'Drop point, CSS-pixel Y in the viewport. A file dropped this way is capped at 700 KB.' },
+        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' }
+      },
+      required: ['filePath']
+    }
+  },
+  {
     name: 'browser_type',
     description: 'Type text into a field in a session-owned tab, optionally slowly and with Enter.',
     inputSchema: {
@@ -535,7 +591,8 @@ export const TOOL_DEFINITIONS = [
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         text: { type: 'string', description: 'Text to type into the field.' },
         slowly: { type: 'boolean', description: 'When true, type one character at a time instead of filling instantly.' },
-        submit: { type: 'boolean', description: 'When true, press Enter after typing the text.' },
+        submit: { type: 'boolean', description: 'When true, press Enter after typing and let Enter submit the form the way a real keypress would.' },
+        defaultAction: { type: 'boolean', description: 'When true, the Enter that submit sends also does what Enter does in a browser: click the form default submit button, or submit a form that has none. Defaults to true. Set false for raw event dispatch only.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before typing. Defaults to false.' }
       },
       required: ['text']
@@ -567,7 +624,10 @@ export const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
-        key: { type: 'string', description: 'Key value such as Enter or Escape.' },
+        key: { type: 'string', description: 'Key value such as Enter or Escape. Accepts a space-separated sequence such as Tab Tab Enter, dispatched in order.' },
+        repeat: { type: 'integer', minimum: 1, maximum: 100, description: 'How many times to run the whole sequence. Defaults to 1.' },
+        selector: { type: 'string', description: 'Optional CSS selector to focus and aim the key at. Defaults to the focused element.' },
+        defaultAction: { type: 'boolean', description: 'When true, Enter also does what Enter does in a browser: click the form default submit button, or submit a form that has none. Defaults to true. Set false for raw event dispatch only.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before dispatching the key. Defaults to false.' }
       },
       required: ['key']
@@ -599,13 +659,14 @@ export const TOOL_DEFINITIONS = [
           }
         },
         list: { type: 'boolean', description: 'When true, return the supported shortcut catalog and do not dispatch. Defaults to false.' },
+        defaultAction: { type: 'boolean', description: 'When true, Enter also does what Enter does in a browser: click the form default submit button, or submit a form that has none. Defaults to true. Set false for raw event dispatch only.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before dispatching. Defaults to false.' }
       }
     }
   },
   {
     name: 'browser_scroll',
-    description: 'Scroll a session-owned tab by selector or pixel delta.',
+    description: 'Scroll a session-owned tab by selector, direction, or pixel delta, optionally at a point so an inner pane scrolls instead of the window.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -614,22 +675,29 @@ export const TOOL_DEFINITIONS = [
         ref: { type: 'string', description: 'Short-lived ref returned by browser_read_page, browser_find, or browser_read_interactive.' },
         x: { type: 'number', description: 'Horizontal scroll delta.' },
         y: { type: 'number', description: 'Vertical scroll delta.' },
+        direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'Scroll direction. Used with amount instead of x and y.' },
+        amount: { type: 'integer', minimum: 1, maximum: 30, description: 'Scroll clicks in the given direction, about 100 CSS pixels each. Defaults to 3.' },
+        atX: { type: 'number', description: 'CSS-pixel X of the point to scroll at, so an inner scrollable pane under that point scrolls instead of the window.' },
+        atY: { type: 'number', description: 'CSS-pixel Y of the point to scroll at, so an inner scrollable pane under that point scrolls instead of the window.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab before scrolling. Defaults to false.' }
       }
     }
   },
   {
     name: 'browser_wait',
-    description: 'Wait for a selector state in a session-owned tab without foregrounding Chrome.',
+    description: 'Wait for a selector, a URL change, or a fixed number of milliseconds in a session-owned tab without foregrounding Chrome.',
     inputSchema: {
       type: 'object',
       properties: {
         tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID. Defaults to the active owned tab.' },
         selector: { type: 'string', description: 'CSS selector to wait for.' },
+        durationMs: { type: 'number', minimum: 50, maximum: 30000, description: 'Sleep this many milliseconds. On its own it is a plain sleep that never touches the page, for an animation that settles with no DOM signal to wait on. Combined with a selector or a URL predicate it runs first, then the predicate is checked.' },
+        urlContains: { type: 'string', description: 'Wait until the tab URL contains this substring and the page has finished loading. Use it to confirm that a submit or a click actually navigated.' },
+        urlChanged: { type: 'boolean', description: 'Wait until the tab URL differs from where it was when the wait started. Defaults to false.' },
+        fromUrl: { type: 'string', description: 'Optional baseline URL for urlChanged. Defaults to the tab URL when the wait starts.' },
         visible: { type: 'boolean', description: 'When true, wait for a visible selector match. Defaults to false.' },
         timeoutMs: { type: 'number', description: 'Maximum wait time in milliseconds. Defaults to 10000.' }
-      },
-      required: ['selector']
+      }
     }
   },
   {
@@ -644,6 +712,9 @@ export const TOOL_DEFINITIONS = [
         ref: { type: 'string', description: 'Optional interactive ref to click instead of clickSelector.' },
         readSelector: { type: 'string', description: 'Optional selector scope for the final read.' },
         format: { type: 'string', enum: ['text', 'html'], description: 'Final read format. Defaults to text.' },
+        visible: { type: 'boolean', description: 'When true, the wait step requires a visible selector match. Defaults to false.' },
+        maxChars: { type: 'integer', minimum: 1, description: 'Optional character cap on the final read.' },
+        activate: { type: 'boolean', description: 'Whether the click and navigate steps may foreground Chrome. Defaults to false. A child result reporting active true means the tab is the active tab of its own window, not that Chrome came forward; read the activated field on this result instead.' },
         timeoutMs: { type: 'number', description: 'Total recipe timeout in milliseconds.' }
       },
       required: ['waitSelector']
@@ -660,6 +731,9 @@ export const TOOL_DEFINITIONS = [
         waitSelector: { type: 'string', description: 'Selector to wait for after navigation.' },
         readSelector: { type: 'string', description: 'Optional selector scope for the final read.' },
         format: { type: 'string', enum: ['text', 'html'], description: 'Final read format. Defaults to text.' },
+        visible: { type: 'boolean', description: 'When true, the wait step requires a visible selector match. Defaults to false.' },
+        maxChars: { type: 'integer', minimum: 1, description: 'Optional character cap on the final read.' },
+        activate: { type: 'boolean', description: 'Whether the click and navigate steps may foreground Chrome. Defaults to false. A child result reporting active true means the tab is the active tab of its own window, not that Chrome came forward; read the activated field on this result instead.' },
         timeoutMs: { type: 'number', description: 'Total recipe timeout in milliseconds.' }
       },
       required: ['url', 'waitSelector']
@@ -677,6 +751,9 @@ export const TOOL_DEFINITIONS = [
         waitSelector: { type: 'string', description: 'Selector to wait for after clicking.' },
         readSelector: { type: 'string', description: 'Optional selector scope for the final read.' },
         format: { type: 'string', enum: ['text', 'html'], description: 'Final read format. Defaults to text.' },
+        visible: { type: 'boolean', description: 'When true, the wait step requires a visible selector match. Defaults to false.' },
+        maxChars: { type: 'integer', minimum: 1, description: 'Optional character cap on the final read.' },
+        activate: { type: 'boolean', description: 'Whether the click and navigate steps may foreground Chrome. Defaults to false. A child result reporting active true means the tab is the active tab of its own window, not that Chrome came forward; read the activated field on this result instead.' },
         timeoutMs: { type: 'number', description: 'Total recipe timeout in milliseconds.' }
       },
       required: ['waitSelector']
@@ -748,6 +825,66 @@ export const TOOL_DEFINITIONS = [
       },
       required: ['calls']
     }
+  },
+  {
+    name: 'browser_cursor',
+    description: 'Turn the on-page agent cursor on or off for this session, or read its current state. The cursor draws a pointer that glides to each target and pulses on action.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean', description: 'Turn the session cursor on or off. Omit to read the current state without changing it.' },
+        tabId: { type: 'integer', minimum: 1, description: 'Optional owned tab to report state for.' },
+        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' }
+      }
+    }
+  },
+  {
+    name: 'browser_gif',
+    description: 'Record an animated GIF of one owned tab. Start a recording, stop it, export the frames to a file on disk, or clear the buffer without exporting.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['start', 'stop', 'export', 'clear', 'status'],
+          description: 'Recording control. Start begins capture, stop ends it and keeps the frames, export writes the animation to outputPath, clear discards the frames, status reports frame count and state.'
+        },
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab to record. Required when the session owns more than one tab.' },
+        fps: { type: 'number', minimum: 1, maximum: 10, description: 'Interval frames per second while recording. Defaults to 4. Frames are also captured around each action regardless of this value.' },
+        maxFrames: { type: 'integer', minimum: 2, maximum: 300, description: 'Frame buffer ceiling. Defaults to 120. Oldest frames drop first once the buffer is full.' },
+        maxWidth: { type: 'integer', minimum: 160, maximum: 1600, description: 'Frame width in CSS pixels, aspect preserved. Defaults to 800. Lower values encode faster and smaller.' },
+        quality: { type: 'integer', minimum: 1, maximum: 30, description: 'Palette quality, 1 for the richest colours and 30 for the smallest file. Defaults to 10.' },
+        overlays: { type: 'boolean', description: 'Draw click indicators, drag arrows, action labels, the progress bar and the watermark onto the exported frames. Defaults to true.' },
+        watermark: { type: 'string', maxLength: 40, description: 'Corner text drawn on each exported frame. Defaults to Umbra. Pass an empty string to omit it.' },
+        outputPath: { type: 'string', description: 'Absolute path, or a path starting with ~/, that the exported GIF is written to. Required for export. The parent directory must already exist.' },
+        timeoutMs: { type: 'number', description: 'Maximum time for this call in milliseconds. Defaults to 60000.' },
+        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' }
+      },
+      required: ['action']
+    }
+  },
+  {
+    name: 'browser_read_network_requests',
+    description: 'Read the HTTP request log for one owned tab. The first call starts logging and usually returns nothing, so act on the page and read again. Pass stop to end logging.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab to read. Required when the session owns more than one tab.' },
+        urlPattern: { type: 'string', maxLength: 300, description: 'Case-insensitive substring that a request URL must contain to be returned.' },
+        types: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['xhr', 'fetch', 'document', 'script', 'stylesheet', 'image', 'font', 'media', 'other']
+          },
+          description: 'Resource types to return. Defaults to xhr, fetch and document.'
+        },
+        limit: { type: 'integer', minimum: 1, maximum: 300, description: 'Maximum entries to return, newest first. Defaults to 50.' },
+        clear: { type: 'boolean', description: 'Discard the buffered entries after returning them. Defaults to false.' },
+        stop: { type: 'boolean', description: 'Stop logging on this tab and release the attachment. Defaults to false.' },
+        activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' }
+      }
+    }
   }
 ];
 
@@ -773,12 +910,74 @@ export function assertLocalUploadFile(filePath, options = {}) {
   return assertReadableUploadFile(filePath, options);
 }
 
+// Drop mode sends the file's bytes to the extension in params, because nothing
+// running in the page can read a local path. Params travel the request direction,
+// where the broker caps one shim line at 1 MiB and exceeding it kills the
+// connection instead of returning an error, so the pre-encode size is capped
+// well under that and the caller is pointed at the mode that has no limit.
+export const UPLOAD_IMAGE_DROP_MAX_BYTES = 700 * 1024;
+
+const UPLOAD_IMAGE_MIME_TYPES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+};
+
+// Called by both transports before a browser_upload_image leaves the server, so
+// the legacy Node lane and the Rust broker lane cannot diverge. File-input mode
+// passes the path through untouched and never reads the bytes.
+export function prepareUploadImageParams(params = {}, options = {}) {
+  const filePath = assertLocalUploadFile(params.filePath, options);
+  const hasRefOrSelector = Boolean(
+    (typeof params.ref === 'string' && params.ref.trim())
+    || (typeof params.selector === 'string' && params.selector.trim()),
+  );
+  const hasPoint = Number.isFinite(Number(params.x)) && Number.isFinite(Number(params.y));
+  if (hasRefOrSelector || !hasPoint) {
+    return { ...params, filePath };
+  }
+
+  const stats = fs.statSync(filePath);
+  if (stats.size > UPLOAD_IMAGE_DROP_MAX_BYTES) {
+    throw new Error(
+      `browser_upload_image cannot drop a file over ${Math.floor(UPLOAD_IMAGE_DROP_MAX_BYTES / 1024)} KB at a point (${filePath} is ${Math.round(stats.size / 1024)} KB). Name the file input with ref or selector instead, which has no size limit.`,
+    );
+  }
+  const extension = path.extname(filePath).toLowerCase();
+  return {
+    ...params,
+    filePath,
+    fileName: path.basename(filePath),
+    mimeType: UPLOAD_IMAGE_MIME_TYPES[extension] || 'application/octet-stream',
+    fileData: fs.readFileSync(filePath).toString('base64'),
+  };
+}
+
 export function getToolDefinition(name) {
   return TOOL_DEFINITIONS.find((tool) => tool.name === name) ?? null;
 }
 
 export function isMcpLocalTool(name) {
   return MCP_LOCAL_TOOL_NAMES.has(name);
+}
+
+// Both guards that keep an encoded animation off the wire key on the top-level
+// tool name: the pre-call check in index.js and the disk-write branch in
+// buildMcpResponse. Inside a batch the top-level name is browser_batch for both,
+// so a browser_gif export run as a child slipped past them, encoded up to
+// MAX_GIF_BYTES, and landed as roughly 32 MB of base64 in one MCP text block.
+// This is the same rule stated once, for every lane that dispatches a child.
+// Returns an error message, or an empty string when the child is allowed.
+export function batchChildRejectionReason(name, params = {}) {
+  if (name === 'browser_gif' && String(params?.action || '') === 'export') {
+    return 'browser_gif export cannot run inside browser_batch, because the encoded animation would be returned inline instead of written to disk. Call browser_gif directly with outputPath.';
+  }
+  return '';
 }
 
 export const PAGE_ACTION_TOOL_NAME = 'browser_run_page_action';

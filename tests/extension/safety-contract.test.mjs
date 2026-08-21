@@ -58,6 +58,7 @@ describe('CiC extension safety contract', () => {
       'browser_javascript',
       'browser_click',
       'browser_click_text',
+      'browser_drag',
       'browser_fill',
       'browser_press_key',
       'browser_scroll',
@@ -70,6 +71,7 @@ describe('CiC extension safety contract', () => {
       'browser_type',
       'browser_console_messages',
       'browser_file_upload',
+      'browser_upload_image',
       'browser_shortcut',
     ]) {
       const block = getToolBlock(background, toolName);
@@ -82,6 +84,22 @@ describe('CiC extension safety contract', () => {
     assert.match(tabsContextBlock, /createIfEmpty/);
     assert.match(tabsContextBlock, /includeInternal/);
     assert.match(tabsContextBlock, /owned/);
+    // Rebuilding the list from the query snapshot dropped the tab this tool had
+    // just created, because a fresh tab reports an empty url until its
+    // navigation commits and the URL filter then rejected it. Ownership is known
+    // from the session store, so an owned tab is never URL-filtered.
+    assert.match(tabsContextBlock, /liveOwnedTabs/, 'owned tabs must come from the session store, not the query snapshot');
+    assert.match(tabsContextBlock, /buildTabsContextRow/);
+    assert.match(tabsContextBlock, /createdTabId/);
+    assert.match(tabsContextBlock, /ownedOnly/);
+    assert.match(tabsContextBlock, /truncatedByLimit/);
+    assert.doesNotMatch(tabsContextBlock, /owned: true[\s\S]{0,200}isTabsContextUrl/);
+    const tabsContextHelpers = background.slice(
+      background.indexOf('function normalizeTabGroupId'),
+      background.indexOf('function requireAbsoluteFilePath'),
+    );
+    assert.match(tabsContextHelpers, /pendingUrl/, 'a freshly created tab reports url empty and pendingUrl set');
+    assert.match(tabsContextHelpers, /TAB_GROUP_ID_NONE/);
     assert.doesNotMatch(tabsContextBlock, /adoptExistingTab/);
     assert.doesNotMatch(tabsContextBlock, /chrome\.tabs\.remove/);
     assert.doesNotMatch(getToolBlock(background, 'browser_list_tabs'), /chrome\.tabs\.query\(\{\}\)/);

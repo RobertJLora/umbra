@@ -538,12 +538,374 @@ if (chrome.storage?.onChanged) {
   });
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  (async () => {
-    if (message?.type !== 'bridge_resync_now') {
-      return { ok: false };
+// --- GIF frame store and encoder -------------------------------------------
+// Recorded frames live here rather than in the service worker: MV3 evicts the
+// worker after roughly thirty seconds idle and a buffer held in worker memory
+// would go with it. This document is a real page and is never evicted, so the
+// only thing that ends a recording early is the document itself closing, which
+// happens when the bridge is disabled or the shared key is cleared.
+
+// 24 MB of GIF is roughly 32 MB of base64, comfortably inside the 64 MiB
+// message ceiling the WebSocket layer inherits. Past that the export fails with
+// a message naming the four parameters that bring it down instead of killing
+// the connection.
+const MAX_GIF_BYTES = 24 * 1024 * 1024;
+const GIF_MAX_STORED_FRAMES = 300;
+const GIF_DEFAULT_MAX_FRAMES = 120;
+const GIF_DEFAULT_MAX_WIDTH = 800;
+const GIF_MIN_FRAME_DELAY_MS = 40;
+const GIF_MAX_FRAME_DELAY_MS = 2_000;
+// How many frames after a click keep drawing its marker, at falling opacity, so
+// a click is visible in the exported animation rather than gone in one frame.
+const GIF_CLICK_TRAIL_FRAMES = 2;
+const GIF_CLICK_COLOR = '#ff8a3d';
+const GIF_DRAG_COLOR = '#e5484d';
+
+// tabId -> { frames: [], droppedFrames, truncatedFrames }
+const gifFrameStores = new Map();
+
+function gifStore(tabId) {
+  let store = gifFrameStores.get(tabId);
+  if (!store) {
+    store = { frames: [], droppedFrames: 0, truncatedFrames: false };
+    gifFrameStores.set(tabId, store);
+  }
+  return store;
+}
+
+function base64ToBytes(payload) {
+  const raw = String(payload || '');
+  const comma = raw.startsWith('data:') ? raw.indexOf(',') : -1;
+  const binary = atob(comma >= 0 ? raw.slice(comma + 1) : raw);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function gifBase64FromBytes(bytes) {
+  // Fixed windows joined once, the same shape the screenshot encoder in the
+  // background worker uses. A per-byte append on a 20 MB animation spends most
+  // of its time flattening a rope.
+  const chunkSize = 32_768;
+  const chunks = [];
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    chunks.push(String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunkSize)));
+  }
+  return btoa(chunks.join(''));
+}
+
+// A frame is stored as a downscaled PNG rather than as raw pixels. Raw pixels
+// for the default 120 frames at 800 px wide is roughly 190 MB resident in this
+// document; the same frames as PNG are around a tenth of that, and the only
+// cost is one decode per frame at export, which happens once.
+async function storeGifFrame({ tabId, dataUrl, maxWidth, maxFrames, meta }) {
+  const store = gifStore(tabId);
+  const limit = Math.min(
+    GIF_MAX_STORED_FRAMES,
+    Math.max(2, Number(maxFrames) || GIF_DEFAULT_MAX_FRAMES),
+  );
+  const targetWidth = Math.max(160, Number(maxWidth) || GIF_DEFAULT_MAX_WIDTH);
+
+  const source = await createImageBitmap(new Blob([base64ToBytes(dataUrl)], { type: 'image/png' }));
+  const scale = Math.min(1, targetWidth / source.width);
+  // Even width and height: some GIF decoders cope badly with odd dimensions
+  // after a palette pass, and the rounding costs at most one pixel.
+  const width = Math.max(2, Math.round(source.width * scale / 2) * 2);
+  const height = Math.max(2, Math.round(source.height * scale / 2) * 2);
+  const canvas = new OffscreenCanvas(width, height);
+  const context = canvas.getContext('2d');
+  context.drawImage(source, 0, 0, width, height);
+  const sourceWidth = source.width;
+  const sourceHeight = source.height;
+  source.close();
+
+  const blob = await canvas.convertToBlob({ type: 'image/png' });
+  store.frames.push({
+    blob,
+    width,
+    height,
+    sourceWidth,
+    sourceHeight,
+    meta: meta && typeof meta === 'object' ? meta : {},
+  });
+
+  while (store.frames.length > limit) {
+    store.frames.shift();
+    store.droppedFrames += 1;
+    store.truncatedFrames = true;
+  }
+
+  return store;
+}
+
+function gifFrameDelays(frames, fps) {
+  const fallback = Math.round(1000 / Math.min(10, Math.max(1, Number(fps) || 4)));
+  return frames.map((frame, index) => {
+    const next = frames[index + 1];
+    const gap = next ? Number(next.meta?.ts) - Number(frame.meta?.ts) : fallback;
+    if (!Number.isFinite(gap)) {
+      return fallback;
+    }
+    return Math.min(GIF_MAX_FRAME_DELAY_MS, Math.max(GIF_MIN_FRAME_DELAY_MS, Math.round(gap)));
+  });
+}
+
+function isGifClickKind(kind) {
+  return ['click', 'rightClick', 'double', 'triple'].includes(String(kind || ''));
+}
+
+function drawGifRoundedPlate(context, x, y, width, height, radius) {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
+  context.closePath();
+  context.fill();
+}
+
+// Frame metadata carries CSS pixel coordinates while the capture is in device
+// pixels, so every point is mapped through the ratio the recording read once at
+// start plus the downscale this document applied.
+function gifCssToCanvas(frame) {
+  const dpr = Number(frame.meta?.dpr);
+  const ratio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  return (frame.width * ratio) / Math.max(1, frame.sourceWidth);
+}
+
+function drawGifOverlays(context, frames, index, { watermark }) {
+  const frame = frames[index];
+  const scale = gifCssToCanvas(frame);
+  const { width, height } = frame;
+
+  // Click marker on the frame that carried the click and the two after it, at
+  // falling opacity, so it survives long enough to read at four frames a second.
+  for (let back = 0; back <= GIF_CLICK_TRAIL_FRAMES; back += 1) {
+    const source = frames[index - back];
+    if (!source || !isGifClickKind(source.meta?.kind)) {
+      continue;
+    }
+    const x = Number(source.meta.x) * scale;
+    const y = Number(source.meta.y) * scale;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    context.save();
+    context.globalAlpha = 1 - (back / (GIF_CLICK_TRAIL_FRAMES + 1));
+    context.strokeStyle = GIF_CLICK_COLOR;
+    context.lineWidth = 3;
+    context.beginPath();
+    context.arc(x, y, 18, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+    break;
+  }
+
+  if (String(frame.meta?.kind || '') === 'drag') {
+    const x1 = Number(frame.meta.x) * scale;
+    const y1 = Number(frame.meta.y) * scale;
+    const x2 = Number(frame.meta.endX) * scale;
+    const y2 = Number(frame.meta.endY) * scale;
+    if ([x1, y1, x2, y2].every((value) => Number.isFinite(value))) {
+      context.save();
+      context.strokeStyle = GIF_DRAG_COLOR;
+      context.fillStyle = GIF_DRAG_COLOR;
+      context.lineWidth = 3;
+      context.beginPath();
+      context.moveTo(x1, y1);
+      context.lineTo(x2, y2);
+      context.stroke();
+      const angle = Math.atan2(y2 - y1, x2 - x1);
+      context.beginPath();
+      context.moveTo(x2, y2);
+      context.lineTo(x2 - (12 * Math.cos(angle - 0.4)), y2 - (12 * Math.sin(angle - 0.4)));
+      context.lineTo(x2 - (12 * Math.cos(angle + 0.4)), y2 - (12 * Math.sin(angle + 0.4)));
+      context.closePath();
+      context.fill();
+      context.restore();
+    }
+  }
+
+  const label = typeof frame.meta?.label === 'string' ? frame.meta.label.slice(0, 60) : '';
+  if (label) {
+    context.save();
+    context.font = '13px system-ui, -apple-system, Segoe UI, sans-serif';
+    context.textBaseline = 'middle';
+    const textWidth = context.measureText(label).width;
+    context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    drawGifRoundedPlate(context, 12, 12, textWidth + 20, 26, 6);
+    context.fillStyle = '#ffffff';
+    context.fillText(label, 22, 25);
+    context.restore();
+  }
+
+  context.save();
+  context.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  context.fillRect(0, height - 4, width, 4);
+  context.fillStyle = GIF_CLICK_COLOR;
+  context.fillRect(0, height - 4, width * ((index + 1) / frames.length), 4);
+  context.restore();
+
+  const mark = typeof watermark === 'string' ? watermark.slice(0, 40) : '';
+  if (mark) {
+    context.save();
+    context.font = '11px system-ui, -apple-system, Segoe UI, sans-serif';
+    context.textAlign = 'right';
+    context.textBaseline = 'alphabetic';
+    context.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    context.fillText(mark, width - 10, height - 12);
+    context.restore();
+  }
+}
+
+// Loaded here rather than at the top of the file. This document holds the bridge
+// sockets and runs the port scanner, so a static import of the vendored encoder
+// made a missing, truncated or half-copied gifenc.js stop the whole module from
+// evaluating and take the transport down with it. As a dynamic import a broken
+// encoder costs one tool call and nothing else. The CSP is script-src 'self',
+// which allows a same-origin dynamic import.
+let gifencModulePromise = null;
+
+function loadGifenc() {
+  if (!gifencModulePromise) {
+    gifencModulePromise = import('./vendor/gifenc.js').catch((error) => {
+      gifencModulePromise = null;
+      const failure = new Error(`The vendored GIF encoder could not be loaded: ${error?.message || error}`);
+      failure.code = 'gif_encoder_unavailable';
+      throw failure;
+    });
+  }
+  return gifencModulePromise;
+}
+
+async function encodeGif(tabId, { quality, overlays, watermark, fps }) {
+  const { GIFEncoder, quantize, applyPalette } = await loadGifenc();
+  const store = gifFrameStores.get(tabId);
+  const frames = store?.frames || [];
+  if (frames.length === 0) {
+    const error = new Error('No frames to export. Start a recording on this tab first.');
+    error.code = 'gif_no_frames';
+    throw error;
+  }
+
+  const { width, height } = frames[0];
+  const canvas = new OffscreenCanvas(width, height);
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  // The 1 to 30 scale runs from a full 256 colour palette down to a small one
+  // that encodes fast and small, which is the same direction the scale runs in
+  // the tool that inspired it.
+  const paletteSize = Math.max(8, Math.round(256 - ((Math.min(30, Math.max(1, Number(quality) || 10)) - 1) * 8)));
+  const delays = gifFrameDelays(frames, fps);
+  const encoder = GIFEncoder();
+  const startedAt = Number(frames[0].meta?.ts) || 0;
+  const endedAt = Number(frames[frames.length - 1].meta?.ts) || startedAt;
+
+  for (let index = 0; index < frames.length; index += 1) {
+    const frame = frames[index];
+    const bitmap = await createImageBitmap(frame.blob);
+    context.clearRect(0, 0, width, height);
+    // Every frame is drawn to the first frame's box. A window resized mid
+    // recording changes the capture size, and a GIF has one canvas size.
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+
+    if (overlays !== false) {
+      drawGifOverlays(context, frames, index, { watermark });
     }
 
+    const { data } = context.getImageData(0, 0, width, height);
+    const palette = quantize(data, paletteSize);
+    const indexed = applyPalette(data, palette);
+    encoder.writeFrame(indexed, width, height, { palette, delay: delays[index] });
+  }
+
+  encoder.finish();
+  const bytes = encoder.bytesView();
+  if (bytes.length > MAX_GIF_BYTES) {
+    const error = new Error(
+      `The encoded animation is ${bytes.length} bytes, over the ${MAX_GIF_BYTES} byte ceiling. Reduce fps, maxFrames or maxWidth, or raise quality, then export again.`,
+    );
+    error.code = 'gif_too_large';
+    throw error;
+  }
+
+  return {
+    data: gifBase64FromBytes(bytes),
+    bytes: bytes.length,
+    frameCount: frames.length,
+    droppedFrames: store.droppedFrames,
+    truncatedFrames: store.truncatedFrames === true,
+    durationMs: Math.max(0, endedAt - startedAt),
+    width,
+    height,
+  };
+}
+
+const GIF_MESSAGE_TYPES = new Set(['gif_frame', 'gif_export', 'gif_clear', 'gif_status']);
+
+async function handleGifMessage(message) {
+  const tabId = Number(message?.tabId);
+  if (!Number.isInteger(tabId)) {
+    const error = new Error('A recorder message needs a tabId.');
+    error.code = 'gif_bad_tab';
+    throw error;
+  }
+
+  if (message.type === 'gif_frame') {
+    const store = await storeGifFrame({
+      tabId,
+      dataUrl: message.dataUrl,
+      maxWidth: message.maxWidth,
+      maxFrames: message.maxFrames,
+      meta: message.meta,
+    });
+    return {
+      ok: true,
+      frameCount: store.frames.length,
+      droppedFrames: store.droppedFrames,
+      truncatedFrames: store.truncatedFrames === true,
+    };
+  }
+
+  if (message.type === 'gif_clear') {
+    const had = gifFrameStores.has(tabId);
+    gifFrameStores.delete(tabId);
+    return { ok: true, cleared: had };
+  }
+
+  if (message.type === 'gif_status') {
+    const store = gifFrameStores.get(tabId);
+    return {
+      ok: true,
+      frameCount: store ? store.frames.length : 0,
+      droppedFrames: store ? store.droppedFrames : 0,
+      truncatedFrames: store?.truncatedFrames === true,
+    };
+  }
+
+  return { ok: true, ...(await encodeGif(tabId, message)) };
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // Only bridge_resync_now and the recorder messages belong to this document.
+  // Returning false for everything else leaves the reply channel to the
+  // background worker; answering here raced it and handed callers a response
+  // with no config.
+  const isGifMessage = GIF_MESSAGE_TYPES.has(message?.type);
+  if (message?.type !== 'bridge_resync_now' && !isGifMessage) {
+    return false;
+  }
+  (async () => {
+    if (isGifMessage) {
+      return await handleGifMessage(message);
+    }
     await resyncConnections({ forceFullScan: true });
     return {
       ok: true,
@@ -553,8 +915,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     .then((response) => sendResponse(response))
     .catch((error) => sendResponse({
       __error: {
-        code: 'offscreen_resync_failed',
-        message: error?.message || 'Offscreen resync failed.',
+        code: error?.code || (isGifMessage ? 'gif_offscreen_failed' : 'offscreen_resync_failed'),
+        message: error?.message || (isGifMessage ? 'Recorder call failed.' : 'Offscreen resync failed.'),
       },
     }));
 
@@ -571,3 +933,22 @@ setInterval(() => {
 }, SCAN_TICK_MS);
 
 void resyncConnections({ forceFullScan: true });
+
+// The service worker has no DOM, so this document reports the OS color scheme
+// for toolbar icon switching and re-reports whenever it changes. Guarded
+// because the test harness runs this file in a Node vm with no window.
+const colorSchemeQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null;
+
+function reportColorScheme() {
+  if (!colorSchemeQuery) {
+    return;
+  }
+  void sendRuntimeMessage({ type: 'bridge_color_scheme', dark: colorSchemeQuery.matches }).catch(() => {});
+}
+
+if (colorSchemeQuery) {
+  colorSchemeQuery.addEventListener('change', reportColorScheme);
+  reportColorScheme();
+}

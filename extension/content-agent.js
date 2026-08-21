@@ -91,6 +91,28 @@
     return [...element.getClientRects()].some((rect) => rect.width >= minimum && rect.height >= minimum);
   };
 
+  const CURSOR_HOST_TAG = 'UMBRA-CURSOR-LAYER';
+
+  function isCursorHostNode(node) {
+    return node?.nodeType === 1 && node.tagName === CURSOR_HOST_TAG;
+  }
+
+  function isCursorHostOnly(records) {
+    if (!Array.isArray(records) || records.length === 0) {
+      return false;
+    }
+    for (const record of records) {
+      if (record.type !== 'childList') {
+        return false;
+      }
+      const touched = [...(record.addedNodes || []), ...(record.removedNodes || [])];
+      if (touched.length === 0 || !touched.every(isCursorHostNode)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   function markDomChanged() {
     const href = typeof location === 'object' ? location.href : state.lastHref;
     if (href !== state.lastHref) {
@@ -119,7 +141,17 @@
     if (state.observer || !(document.documentElement || document)) {
       return;
     }
-    state.observer = new MutationObserver(() => {
+    state.observer = new MutationObserver((records) => {
+      // The agent's own furniture is not a page change. On the normal path the
+      // cursor host goes in before this observer starts, but a page driven only
+      // by coordinate calls or page recipes brings the agent up first and the
+      // overlay later, and that one appendChild used to bump domVersion and
+      // expire every outstanding element ref. A record that only added or
+      // removed the cursor host is ignored; anything else in the same batch
+      // still counts.
+      if (isCursorHostOnly(records)) {
+        return;
+      }
       markDomChanged();
     });
     state.observer.observe(document.documentElement || document, {
@@ -230,6 +262,162 @@
     return `Rendered images (${images.length} visible):\n${rows.join('\n')}`;
   }
 
+  // Subtrees that are furniture on every article page. They are excluded from
+  // the returned text, not removed from the page: nothing here mutates the DOM.
+  const ARTICLE_STRIP_SELECTOR = 'script, style, nav, aside, footer, header, form, noscript, [aria-hidden="true"]';
+  const ARTICLE_NOISE_RE = /nav|menu|sidebar|footer|header|comment|share|promo|related|breadcrumb/i;
+  // Markup that names a body outright. Density alone let Wikipedia's whole Vector
+  // shell win over the body it wraps, and these are the hooks that separate them.
+  const ARTICLE_BODY_SELECTOR = '[itemprop="articleBody"], .mw-parser-output, #mw-content-text, #bodyContent, article, main article';
+
+  function describeArticleRoot(element) {
+    if (!element || !element.tagName) {
+      return '';
+    }
+    const tag = element.tagName.toLowerCase();
+    if (element.id) {
+      return `${tag}#${element.id}`;
+    }
+    const className = typeof element.className === 'string' ? element.className.trim().split(/\s+/)[0] : '';
+    return className ? `${tag}.${className}` : tag;
+  }
+
+  // Density scoring in the shape Readability uses: the best candidate is the one
+  // with the most text that is not link text, nudged for the markup that names an
+  // article body and away from the class and id names boilerplate wears.
+  function extractArticleText(root) {
+    const scope = root || document.body || document.documentElement;
+    const candidates = [...scope.querySelectorAll('p, div, section, article, td')];
+    if (typeof scope.matches === 'function' && scope.matches('p, div, section, article, td')) {
+      candidates.push(scope);
+    }
+
+    // Memoized, because the ancestor walk below re-scores up to six parents and
+    // each of those re-reads its whole subtree. Without it a long article paid
+    // for the same text several times over on the page's own main thread.
+    const scoreCache = new WeakMap();
+    const scoreOf = (node) => {
+      const cached = scoreCache.get(node);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const score = computeScore(node);
+      scoreCache.set(node, score);
+      return score;
+    };
+
+    const computeScore = (node) => {
+      // textContent, not innerText. innerText forces a layout flush on every
+      // candidate, and there is one candidate per p, div, section, article and
+      // td in the document. The cheap read decides whether this node is even
+      // worth measuring; only the ones that clear the floor cost anything more.
+      const textLength = (node.textContent || '').trim().length;
+      if (textLength < 100) {
+        return 0;
+      }
+      let linkTextLength = 0;
+      for (const link of node.querySelectorAll('a')) {
+        linkTextLength += (link.textContent || '').trim().length;
+      }
+      const linkDensity = Math.min(1, linkTextLength / Math.max(1, textLength));
+      // The spec's flat penalty is the second term. On its own it moves a score
+      // by at most 40 points, which never separates a link list from prose once
+      // a candidate runs past a few hundred characters, so the proportional term
+      // carries the decision and the flat one breaks ties.
+      let score = (textLength * (1 - linkDensity)) - ((40 * linkTextLength) / Math.max(1, textLength));
+      const tag = node.tagName.toLowerCase();
+      const namedBody = tag === 'article'
+        || node.getAttribute('itemprop') === 'articleBody'
+        || (typeof node.matches === 'function' && node.matches(ARTICLE_BODY_SELECTOR));
+      if (namedBody) {
+        score *= 1.35;
+      }
+      const label = `${node.className && typeof node.className === 'string' ? node.className : ''} ${node.id || ''}`;
+      if (ARTICLE_NOISE_RE.test(label)) {
+        score *= 0.4;
+      }
+      return score;
+    };
+
+    let best = null;
+    let bestScore = 0;
+    for (const candidate of candidates) {
+      const score = scoreOf(candidate);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    if (!best) {
+      best = scope;
+      bestScore = scoreOf(scope);
+    }
+
+    // A byline, a lede image and the body are often siblings under a wrapper the
+    // per-node pass scores just below the body itself. Walking up while the
+    // parent still scores at least 90 percent of the child recovers them without
+    // swallowing the page chrome, which scores far lower.
+    let node = best;
+    for (let depth = 0; depth < 6; depth += 1) {
+      const parent = node.parentElement;
+      if (!parent || parent === document.body || parent === document.documentElement) {
+        break;
+      }
+      if (scoreOf(parent) < bestScore * 0.9) {
+        break;
+      }
+      // A parent carrying far more text than the child is a page shell, not the
+      // wrapper around a byline and a lede image. Wikipedia's div.mw-page-container
+      // cleared the 90 percent score rule on link density alone and still brought
+      // the whole navigation, header and footer with it.
+      const parentLength = (parent.textContent || '').trim().length;
+      const nodeLength = (node.textContent || '').trim().length;
+      if (nodeLength > 0 && parentLength > nodeLength * 1.6) {
+        break;
+      }
+      node = parent;
+    }
+
+    // The same guard ax-tree.js added after a deeply nested page threw RangeError
+    // out of every read tool. An uncapped recursion here is the identical hazard.
+    const MAX_READ_DEPTH = 1_000;
+    const readBlock = (element, depth = 0) => {
+      if (depth > MAX_READ_DEPTH) {
+        return element.textContent || '';
+      }
+      if (element.matches(ARTICLE_STRIP_SELECTOR)) {
+        return '';
+      }
+      if (!element.querySelector(ARTICLE_STRIP_SELECTOR)) {
+        return element.innerText || element.textContent || '';
+      }
+      let out = '';
+      for (const child of element.childNodes) {
+        if (child.nodeType === 3) {
+          out += child.textContent;
+          continue;
+        }
+        if (child.nodeType !== 1) {
+          continue;
+        }
+        const part = readBlock(child, depth + 1);
+        if (!part) {
+          continue;
+        }
+        out += out && !out.endsWith('\n') ? `\n${part}` : part;
+      }
+      return out;
+    };
+
+    const heading = document.querySelector('h1');
+    return {
+      root: node,
+      selector: describeArticleRoot(node),
+      title: normalize(heading?.innerText || heading?.textContent || document.title || ''),
+      text: readBlock(node).replace(/\n{3,}/g, '\n\n').trim(),
+    };
+  }
+
   function readPageContent(options = {}) {
     const config = typeof options === 'string' ? { format: options } : options || {};
     const format = config.format === 'html' ? 'html' : 'text';
@@ -237,7 +425,7 @@
     const requestedMode = String(config.mode || '').trim();
     const mode = selector
       ? 'selector'
-      : ['page', 'body', 'main', 'selector'].includes(requestedMode)
+      : ['page', 'body', 'main', 'selector', 'article'].includes(requestedMode)
         ? requestedMode
         : 'page';
     const includeImages = config.includeImages === true;
@@ -249,6 +437,7 @@
       ? Math.min(Math.floor(rawMaxChars), MAX_CHARS_LIMIT)
       : DEFAULT_MAX_CHARS;
 
+    let article = null;
     const resolveRoot = () => {
       if (selector) {
         return document.querySelector(selector);
@@ -258,6 +447,10 @@
       }
       if (mode === 'main') {
         return document.querySelector('main, article, [role="main"]') || document.body || document.documentElement;
+      }
+      if (mode === 'article') {
+        article = extractArticleText(document.body || document.documentElement);
+        return article.root || document.body || document.documentElement;
       }
       return document.documentElement;
     };
@@ -278,6 +471,9 @@
       maxChars,
       includeImages,
       renderedImages,
+      // Article mode names the node it picked, so a caller that disagrees can
+      // rerun with that selector instead of guessing why the text is short.
+      ...(article ? { articleTitle: article.title, articleRootSelector: article.selector } : {}),
       contentAgent: {
         used: true,
         version: VERSION,
@@ -287,7 +483,14 @@
 
     if (format === 'html') {
       const rawHtml = root === document.documentElement ? document.documentElement.outerHTML : root.outerHTML || '';
-      const html = truncate(rawHtml, maxChars);
+      // The cursor overlay leaves one empty custom element on the page. Its
+      // shadow content is not serialized, so the whole of it in raw HTML is this
+      // one deterministic tag pair, and a caller reading markup should not have
+      // to know the agent's own furniture is in it.
+      const stripped = globalThis.UmbraCursor && rawHtml.includes('<umbra-cursor-layer')
+        ? rawHtml.replace(/<umbra-cursor-layer\b[^>]*><\/umbra-cursor-layer>/g, '')
+        : rawHtml;
+      const html = truncate(stripped, maxChars);
       return {
         ...base,
         // The html branch never folds the image summary into content, so this
@@ -300,7 +503,7 @@
       };
     }
 
-    const rawBodyText = root.innerText || root.textContent || '';
+    const rawBodyText = article ? article.text : (root.innerText || root.textContent || '');
     // content is body text plus the rendered-image summary when one exists.
     // With no summary the two strings are identical, which is every read at
     // the default includeImages: false, so bodyText is emitted only when it
@@ -515,6 +718,40 @@
     return { element, control, snapshot };
   }
 
+  // Selecting the block under a triple click is a browser default action, and a
+  // dispatched event has none: the click reported clickCount 3 and
+  // getSelection() stayed empty. Rebuilt here, and only when the page made no
+  // selection of its own.
+  const TRIPLE_CLICK_BLOCK_SELECTOR = 'p, li, td, th, dd, dt, blockquote, h1, h2, h3, h4, h5, h6, pre, figcaption';
+
+  function selectTripleClicked(node) {
+    const selection = typeof document.getSelection === 'function' ? document.getSelection() : null;
+    if (!selection || String(selection).length > 0) {
+      return 0;
+    }
+    const tag = String(node.tagName || '').toUpperCase();
+    if ((tag === 'INPUT' || tag === 'TEXTAREA') && typeof node.select === 'function') {
+      node.select();
+      return String(node.value || '').length;
+    }
+    let block = typeof node.closest === 'function' ? node.closest(TRIPLE_CLICK_BLOCK_SELECTOR) : null;
+    for (let walk = node; !block && walk && walk !== document.body; walk = walk.parentElement) {
+      const display = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(walk).display : '';
+      if ((display === 'block' || display === 'list-item' || display === 'table-cell')
+        && (walk.textContent || '').trim().length > 0) {
+        block = walk;
+      }
+    }
+    if (!block || (block.textContent || '').trim().length === 0) {
+      return 0;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return String(selection).length;
+  }
+
   function clickInteractiveRef(ref, options = {}) {
     const resolved = resolveInteractiveRef(ref, options);
     if (resolved.__error) {
@@ -525,22 +762,72 @@
       return { __error: 'Interactive ref resolved to a disabled element.' };
     }
     const doubleClick = options.doubleClick === true;
+    const buttonName = options.button === 'right' || options.button === 'middle' ? options.button : 'left';
+    const button = buttonName === 'right' ? 2 : buttonName === 'middle' ? 1 : 0;
+    const held = button === 2 ? 2 : button === 1 ? 4 : 1;
+    const modifiers = options.modifiers || {};
+    const ctrlKey = modifiers.ctrl === true;
+    const shiftKey = modifiers.shift === true;
+    const altKey = modifiers.alt === true;
+    const metaKey = modifiers.meta === true;
+    const modified = ctrlKey || shiftKey || altKey || metaKey;
+    const rawCount = Number(options.clickCount);
+    const clickCount = Number.isFinite(rawCount) && rawCount >= 1
+      ? Math.min(3, Math.floor(rawCount))
+      : (doubleClick ? 2 : 1);
     element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
     const rect = element.getBoundingClientRect();
-    const fireClick = () => {
-      element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
-      element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-      element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-      element.click();
+    const init = (detail, buttons) => ({
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      button,
+      buttons,
+      detail,
+      ctrlKey,
+      shiftKey,
+      altKey,
+      metaKey,
+    });
+    const fireClick = (detail) => {
+      element.dispatchEvent(new MouseEvent('mouseover', init(0, held)));
+      element.dispatchEvent(new MouseEvent('mousedown', init(detail, held)));
+      element.dispatchEvent(new MouseEvent('mouseup', init(detail, 0)));
+      if (button === 2) {
+        // No click on a right press. The page gets contextmenu and renders its
+        // own menu if it has one.
+        element.dispatchEvent(new MouseEvent('contextmenu', init(detail, 0)));
+        return;
+      }
+      if (button === 0 && !modified) {
+        // Dispatch first, then element.click(). The dispatched event is the only
+        // one that carries `detail`, and a page implementing select-paragraph
+        // reads click.detail === 3; returning on element.click() alone left
+        // detail at 0 on every pass, so browser_click { ref, clickCount: 3 }
+        // reported clickCount 3 and selected nothing. element.click() still
+        // follows, because it is what runs activation behavior.
+        element.dispatchEvent(new MouseEvent('click', init(detail, 0)));
+        element.click();
+        return;
+      }
+      element.dispatchEvent(new MouseEvent('click', init(detail, 0)));
+      if (button === 1) {
+        element.dispatchEvent(new MouseEvent('auxclick', init(detail, 0)));
+      }
     };
-    fireClick();
-    if (doubleClick) {
-      fireClick();
-      element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window, detail: 2 }));
+    for (let pass = 1; pass <= clickCount; pass += 1) {
+      fireClick(pass);
+      if (pass === 2 && button !== 2) {
+        element.dispatchEvent(new MouseEvent('dblclick', init(2, 0)));
+      }
     }
+    const selectedTextLength = clickCount >= 3 && button === 0 ? selectTripleClicked(element) : 0;
     return {
       clicked: true,
-      doubleClick,
+      doubleClick: clickCount === 2,
+      clickCount,
+      ...(selectedTextLength > 0 ? { selectedTextLength } : {}),
+      button: buttonName,
       ref,
       tagName: control?.tagName || element.tagName.toLowerCase(),
       role: control?.role || element.getAttribute('role') || '',
@@ -728,7 +1015,18 @@
       element.textContent = '';
     }
     for (const char of value) {
-      const init = { key: char, bubbles: true, cancelable: true };
+      // keyCode, which and code were all zero or empty here, so a page handler
+      // that branches on event.keyCode ignored every character Umbra typed.
+      const legacy = char.toUpperCase().charCodeAt(0) || 0;
+      const init = {
+        key: char,
+        code: /[a-z]/i.test(char) ? `Key${char.toUpperCase()}` : (/[0-9]/.test(char) ? `Digit${char}` : ''),
+        keyCode: legacy,
+        which: legacy,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+      };
       element.dispatchEvent(new KeyboardEvent('keydown', init));
       element.dispatchEvent(new KeyboardEvent('keypress', init));
       if (isField) {
@@ -947,6 +1245,19 @@
     return document.body || document.documentElement;
   }
 
+  // browser_find treats selector as a constraint, not as a single walk root:
+  // every element the selector matched is searched, along with everything inside
+  // it. Walking only the first match meant `selector: "a"` searched inside the
+  // page's first anchor and reported zero matches on a page of links.
+  function resolveAxRoots(selector) {
+    const scope = String(selector || '').trim();
+    if (!scope) {
+      const root = document.body || document.documentElement;
+      return root ? [root] : [];
+    }
+    return [...document.querySelectorAll(scope)];
+  }
+
   function readAxTree(options = {}) {
     const ax = getAxTreeApi();
     if (!ax?.walkAxTree) {
@@ -993,15 +1304,14 @@
       throw new Error('browser_find requires query.');
     }
     const selector = String(options.selector || '').trim();
-    const root = resolveAxRoot(selector);
-    if (!root) {
+    const roots = resolveAxRoots(selector);
+    if (!roots.length) {
       throw new Error(selector ? `Selector not found: ${selector}` : 'Page root was not found.');
     }
-    const found = ax.findAxNodes(root, {
+    const found = ax.findAxNodes(roots, {
       query,
       selector,
       limit: options.limit,
-      filter: 'all',
     }, {
       document,
       refStore: ax.getSharedRefStore(),

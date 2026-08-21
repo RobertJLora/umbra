@@ -32,6 +32,20 @@ describe('Claude parity tabs context, file upload, and shortcuts', () => {
     assert.match(tool.description, /Read-only/);
     assert.match(tool.description, /does not adopt, activate, or close tabs/i);
     assert.equal(schema.properties.activate, undefined);
+
+    // The three defects the eval hit: the created tab was missing because the
+    // URL filter was applied to owned tabs, groupId was absent while
+    // browser_list_tabs reported it, and 110 rows of full URLs came back with no
+    // way to ask for less.
+    assert.equal(schema.properties.ownedOnly.type, 'boolean');
+    assert.equal(schema.properties.limit.type, 'integer');
+    assert.equal(schema.properties.urlMaxLength.type, 'integer');
+    assert.equal(schema.properties.urlMaxLength.minimum, 0);
+    assert.match(schema.properties.urlMaxLength.description, /Pass 0/);
+    assert.match(schema.properties.limit.description, /Defaults to 200/);
+    assert.match(tool.description, /groupId/);
+    assert.match(tool.description, /never dropped by the URL filter/);
+
     assert.notEqual(getToolDefinition('browser_list_tabs').description, tool.description);
     assert.match(getToolDefinition('browser_list_tabs').description, /owned by the current session only/);
   });

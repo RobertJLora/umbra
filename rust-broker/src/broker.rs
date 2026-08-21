@@ -156,6 +156,36 @@ fn expand_user(value: &str) -> String {
     expand_user_with_home(value, &env::var("HOME").unwrap_or_default())
 }
 
+/// The pre-move default. MCP shims started against that path still dial it.
+/// Binding here again would split sessions across two brokers, so both resolvers
+/// treat this value as unset and keep the per-user socket.
+const RETIRED_BROKER_SOCKET_PATH: &str = "/tmp/umbra-rust-broker.sock";
+
+fn is_retired_broker_socket_path(path: &str) -> bool {
+    path == RETIRED_BROKER_SOCKET_PATH
+}
+
+fn resolve_socket_path(from_env: Option<String>) -> String {
+    match from_env {
+        Some(raw) => {
+            let expanded = expand_user(&raw);
+            if is_retired_broker_socket_path(&expanded) {
+                // Say so. An operator who deliberately set that env value gets a
+                // different socket, and with nothing in the log the broker and
+                // the client look like they simply failed to find each other.
+                let resolved = default_broker_socket_path();
+                eprintln!(
+                    "umbra-rust-broker: UMBRA_BROKER_SOCKET names the retired path {expanded}; binding {resolved} instead"
+                );
+                resolved
+            } else {
+                expanded
+            }
+        }
+        None => default_broker_socket_path(),
+    }
+}
+
 fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "::1" | "localhost" | "[::1]")
 }
@@ -189,9 +219,7 @@ impl BrokerConfig {
         )?;
         config.broker_session_id =
             trimmed_env("UMBRA_BROKER_SESSION_ID").unwrap_or(config.broker_session_id);
-        if let Some(socket_path) = trimmed_env("UMBRA_BROKER_SOCKET") {
-            config.socket_path = expand_user(&socket_path);
-        }
+        config.socket_path = resolve_socket_path(trimmed_env("UMBRA_BROKER_SOCKET"));
         config.mode = BrokerMode::RustBroker;
 
         if config.port_start > config.port_end {
@@ -532,6 +560,20 @@ mod tests {
             socket_path.ends_with(".umbra/run/broker.sock"),
             "the Rust default must match resolveBrokerSocketPath() in mcp-server/config.js, got {socket_path}"
         );
+    }
+
+    #[test]
+    fn the_retired_tmp_socket_is_treated_as_unset() {
+        let live = default_broker_socket_path();
+        assert_eq!(
+            resolve_socket_path(Some(RETIRED_BROKER_SOCKET_PATH.to_string())),
+            live
+        );
+        assert_eq!(
+            resolve_socket_path(Some("/var/tmp/umbra/custom.sock".to_string())),
+            "/var/tmp/umbra/custom.sock"
+        );
+        assert_eq!(resolve_socket_path(None), live);
     }
 
     #[test]

@@ -33,6 +33,11 @@ const DEFAULT_SHUTDOWN_CLOSE_TIMEOUT_MS = 3_000;
 // payload so a client that truncates a long text block still reads it.
 export const COMPACT_SUMMARY_THRESHOLD_BYTES = 30_000;
 
+// Tools whose result carries image bytes and which therefore write a file when
+// the caller names one. Everything else returns JSON, so this set is what gates
+// the only disk write in the server.
+const FILE_WRITING_TOOLS = new Set(['browser_screenshot', 'browser_gif']);
+
 function resolveScreenshotMimeType(result, args = {}) {
   const reported = typeof result?.mimeType === 'string' ? result.mimeType.trim().toLowerCase() : '';
   if (reported === 'image/jpeg' || reported === 'image/jpg') {
@@ -57,6 +62,17 @@ function resolveScreenshotMimeType(result, args = {}) {
   }
 
   return reported || 'image/png';
+}
+
+// The recorder is the only producer of a type the screenshot resolver has never
+// had to know about, so it is answered here and everything else falls through
+// to the resolver unchanged.
+function resolveFileWritingMimeType(result, args = {}) {
+  const reported = typeof result?.mimeType === 'string' ? result.mimeType.trim().toLowerCase() : '';
+  if (reported === 'image/gif') {
+    return 'image/gif';
+  }
+  return resolveScreenshotMimeType(result, args);
 }
 
 // The screenshot `outputPath` is the only value that makes this server write to
@@ -121,9 +137,9 @@ export function resolveOutputPath(outputPath) {
 }
 
 export function buildMcpResponse(toolName, result, args = {}) {
-  if (toolName === 'browser_screenshot' && result?.data) {
+  if (FILE_WRITING_TOOLS.has(toolName) && result?.data) {
     const outputPath = typeof args.outputPath === 'string' ? args.outputPath.trim() : '';
-    const mimeType = resolveScreenshotMimeType(result, args);
+    const mimeType = resolveFileWritingMimeType(result, args);
     if (outputPath) {
       const resolvedOutputPath = resolveOutputPath(outputPath);
       const imageBuffer = Buffer.from(result.data, 'base64');
@@ -133,22 +149,47 @@ export function buildMcpResponse(toolName, result, args = {}) {
       // know from the result.
       const replaced = fs.statSync(resolvedOutputPath, { throwIfNoEntry: false });
       fs.writeFileSync(resolvedOutputPath, imageBuffer);
-      const structuredContent = {
-        tabId: result.tabId,
-        activated: Boolean(result.activated),
-        mimeType,
-        outputPath: resolvedOutputPath,
-        bytes: imageBuffer.length,
-        replacedExistingFile: Boolean(replaced),
-        replacedBytes: replaced ? replaced.size : null,
-        cropped: Boolean(result.cropped),
-        region: result.region || null,
-        preflight: result.preflight || null,
-      };
+      const structuredContent = toolName === 'browser_gif'
+        ? {
+          tabId: result.tabId,
+          mimeType,
+          outputPath: resolvedOutputPath,
+          bytes: imageBuffer.length,
+          replacedExistingFile: Boolean(replaced),
+          replacedBytes: replaced ? replaced.size : null,
+          frameCount: result.frameCount ?? null,
+          droppedFrames: result.droppedFrames ?? 0,
+          failedCaptures: result.failedCaptures ?? 0,
+          truncatedFrames: Boolean(result.truncatedFrames),
+          durationMs: result.durationMs ?? null,
+          fps: result.fps ?? null,
+          width: result.width ?? null,
+          height: result.height ?? null,
+        }
+        : {
+          tabId: result.tabId,
+          activated: Boolean(result.activated),
+          mimeType,
+          outputPath: resolvedOutputPath,
+          bytes: imageBuffer.length,
+          replacedExistingFile: Boolean(replaced),
+          replacedBytes: replaced ? replaced.size : null,
+          cropped: Boolean(result.cropped),
+          region: result.region || null,
+          preflight: result.preflight || null,
+        };
       return {
         content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
         structuredContent,
       };
+    }
+
+    if (toolName === 'browser_gif') {
+      // An animation returned inline is the whole file in model context, which
+      // is the mistake the disk-write branch above exists to avoid. The call
+      // handler refuses an export with no outputPath before the frames are ever
+      // encoded; this is the same rule for any other caller of this function.
+      throw new Error('browser_gif export requires outputPath so the animation is written to disk instead of returned inline.');
     }
 
     return {
@@ -524,6 +565,19 @@ export async function main() {
         throw new McpError(ErrorCode.InvalidParams, `${toolName}: ${missing.join('; ')}`);
       }
       reportSchemaMismatch(toolName, issues);
+    }
+
+    // Checked before the call rather than after it: an export with nowhere to go
+    // would encode the whole animation, cross the transport, and then fail on
+    // the way out with the work already spent.
+    if (toolName === 'browser_gif' && String(args.action || '') === 'export') {
+      const requested = typeof args.outputPath === 'string' ? args.outputPath.trim() : '';
+      if (!requested) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          'browser_gif: export requires outputPath, an absolute path the animation is written to.',
+        );
+      }
     }
 
     try {

@@ -6,7 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { resolveBrokerSocketPath, resolveLaunchdLabel } from './config.js';
+import {
+  RETIRED_BROKER_SOCKET_PATH,
+  ensureBrokerSocketAlias,
+  resolveBrokerSocketPath,
+  resolveLaunchdLabel,
+} from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -144,8 +149,15 @@ async function waitUntilHealthy(ms) {
   return health();
 }
 
+function publishRetiredAlias() {
+  // Leftover MCP shims still dial the pre-move /tmp path. Point that name at
+  // the live socket instead of starting a second broker there.
+  ensureBrokerSocketAlias(RETIRED_BROKER_SOCKET_PATH, socketPath);
+}
+
 async function main() {
   if (await health()) {
+    publishRetiredAlias();
     process.stdout.write('ok\n');
     process.exit(0);
   }
@@ -158,6 +170,7 @@ async function main() {
   }
 
   if (await waitUntilHealthy(waitMs)) {
+    publishRetiredAlias();
     process.stdout.write('ok\n');
     process.exit(0);
   }

@@ -139,6 +139,9 @@ describe('launch-mcp.sh', () => {
     assert.match(ensureSource, /UMBRA_BROKER_SOCKET: socketPath/);
     assert.match(ensureSource, /ensureDirectory\(path\.dirname\(logPath\)\)/);
     assert.match(ensureSource, /mode: 0o700/);
+    assert.match(ensureSource, /ensureBrokerSocketAlias/);
+    assert.match(ensureSource, /RETIRED_BROKER_SOCKET_PATH/);
+    assert.match(ensureSource, /publishRetiredAlias/);
   });
 
   it('check-rust-broker honours UMBRA_BROKER_SOCKET end to end', async () => {

@@ -555,7 +555,7 @@
     <div class="shell">
       <header class="hero">
         <div class="orb">
-          <span class="orb-disc"><img src="icons/icon128.png" alt="Umbra" /></span>
+          <span class="orb-disc"><img src="icons/mark-light.png" alt="Umbra" /></span>
           <span class="orb-ring" aria-hidden="true"></span>
         </div>
         <h1>Umbra</h1>
@@ -685,6 +685,31 @@
       </section>
 
       <section class="card">
+        <div class="split">
+          <div>
+            <h2>Agent Cursor</h2>
+            <p class="side-note">A pointer that glides to each target and pulses on action, so you can
+              watch what a session is doing without it taking focus.</p>
+          </div>
+          <div>
+            <div class="toggle-row">
+              <span class="label">Show the agent cursor on pages</span>
+              <span class="switch">
+                <input id="cursorOverlay" type="checkbox" checked />
+                <span class="track" aria-hidden="true"></span>
+                <span class="knob" aria-hidden="true"></span>
+              </span>
+            </div>
+            <p class="hint">
+              The cursor is drawn inside the tab, never on top of Chrome, so a background tab stays in
+              the background. Screenshots hide it before capture. A session can turn it off for itself
+              without changing this setting.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
         <p class="eyebrow">Session Status</p>
         <ul class="sessions" id="sessionsList"></ul>
       </section>
@@ -695,7 +720,7 @@
       </section>
 
       <p class="footer">
-        <span class="mono">Umbra 0.5.0</span>
+        <span class="mono" id="versionLabel">Umbra</span>
         <span class="sep" aria-hidden="true">&middot;</span>
         <a id="homepageLink" href="#" target="_blank" rel="noreferrer" hidden>Setup guide and source</a>
       </p>

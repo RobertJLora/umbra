@@ -37,11 +37,16 @@ export const EXTENSION_FILES = [
   'background.js',
   'content-agent.js',
   'ax-tree.js',
+  'cursor-overlay.js',
   'session-state.js',
   'shared.js',
   'javascript-safety.js',
   'offscreen.html',
   'offscreen.js',
+  // The vendored GIF encoder offscreen.js imports. Without it on this list the
+  // packaged build ships an offscreen document whose module never loads, which
+  // takes the whole bridge down rather than just the recorder.
+  'vendor/gifenc.js',
   'options.html',
   'options.js',
   'popup.html',
@@ -49,9 +54,12 @@ export const EXTENSION_FILES = [
 ];
 
 // icons/ ships as a directory so a new size does not need a code change, but
-// the names are pinned so nothing else can hide in there.
+// the names are pinned so nothing else can hide in there. iconNN.png is the
+// light-toolbar set, iconNN-dark.png the white set setIcon swaps in for dark
+// color schemes, and mark-light.png the white mark the popup and options
+// pages render on their dark UI.
 export const ICON_DIR = 'icons/';
-export const ICON_ENTRY_PATTERN = /^icons\/icon\d{2,4}\.png$/;
+export const ICON_ENTRY_PATTERN = /^icons\/(?:icon\d{2,4}(?:-dark)?|mark-light)\.png$/;
 
 // Paths that must never appear in a built package, checked by name so the
 // failure message can say which boundary was crossed.

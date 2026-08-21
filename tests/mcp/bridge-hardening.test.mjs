@@ -312,6 +312,20 @@ describe('CiC bridge hardening', () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.timeoutMs, 15_000);
+    // The composite hardcoded activate: false and declared no flag, so a caller
+    // who wanted the tab in front had to abandon the recipe for three separate
+    // calls. Default stays background, and the result says which it was.
+    assert.equal(result.activated, false);
+    assert.equal(forwarded.find((call) => call.tool === 'browser_navigate').params.activate, false);
+
+    const foreground = await bridge.sendCommand('browser_navigate_wait_read', {
+      url: 'https://example.com',
+      waitSelector: 'main',
+      timeoutMs: 15_000,
+      activate: true,
+    });
+    assert.equal(foreground.activated, true);
+    assert.equal(forwarded.filter((call) => call.tool === 'browser_navigate').at(-1).params.activate, true);
 
     const navigate = forwarded.find((call) => call.tool === 'browser_navigate');
     const wait = forwarded.find((call) => call.tool === 'browser_wait');

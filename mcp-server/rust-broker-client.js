@@ -3,10 +3,10 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import net from 'node:net';
 import { EventEmitter } from 'node:events';
-import { MAX_BROWSER_BATCH_CALLS, assertDevOnlyToolAllowed, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
+import { MAX_BROWSER_BATCH_CALLS, assertDevOnlyToolAllowed, assertLocalUploadFile, batchChildRejectionReason, getToolDefinition, isMcpLocalTool, prepareUploadImageParams } from './tools.js';
 import { copyResolvedParams, resolveBatchParams } from './batch-refs.js';
 import { resolveDownloadWait } from './download-ledger.mjs';
-import { resolveBrokerSocketPath } from './config.js';
+import { isRetiredBrokerSocketPath, resolveBrokerSocketPath } from './config.js';
 import { createRegisterProof } from './auth.js';
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -71,7 +71,14 @@ export class RustBrokerClient extends EventEmitter {
       throw new Error('RustBrokerClient requires a sessionId.');
     }
     this.sessionId = sessionId;
-    this.socketPath = socketPath;
+    if (isRetiredBrokerSocketPath(socketPath)) {
+      // A caller who passed socketPath explicitly no longer gets what they
+      // passed, so the substitution is stated instead of silent.
+      this.socketPath = resolveBrokerSocketPath();
+      console.error(`[umbra] socketPath ${socketPath} is the retired broker path; using ${this.socketPath} instead.`);
+    } else {
+      this.socketPath = socketPath;
+    }
     this.requestTimeoutMs = requestTimeoutMs;
     this.connectDeadlineMs = connectDeadlineMs;
     this.socketFactory = socketFactory;
@@ -161,7 +168,7 @@ export class RustBrokerClient extends EventEmitter {
       try {
         child = spawn(process.execPath, [ENSURE_BROKER_SCRIPT], {
           stdio: 'ignore',
-          env: process.env,
+          env: { ...process.env, UMBRA_BROKER_SOCKET: this.socketPath },
         });
       } catch {
         finish(false);
@@ -187,6 +194,14 @@ export class RustBrokerClient extends EventEmitter {
         return await this.openBrokerSocket();
       } catch (error) {
         lastError = error;
+        if (isRetiredBrokerSocketPath(this.socketPath)) {
+          this.socketPath = resolveBrokerSocketPath();
+          try {
+            return await this.openBrokerSocket();
+          } catch (retryError) {
+            lastError = retryError;
+          }
+        }
       }
 
       // The last iteration ends on its connect attempt. Starting a broker that
@@ -272,6 +287,12 @@ export class RustBrokerClient extends EventEmitter {
   async sendExtensionCommand(tool, params = {}, { budgetMs = null } = {}) {
     if (tool === 'browser_file_upload') {
       params = { ...params, filePath: assertLocalUploadFile(params.filePath) };
+    }
+    // The same hook lives in bridge-core.js. Both lanes need it, because
+    // launch-mcp.sh falls back to the legacy Node lane when the Rust broker is
+    // not ready and a hook in only one file is a bug that appears only there.
+    if (tool === 'browser_upload_image') {
+      params = prepareUploadImageParams(params);
     }
     const resolvedTimeoutMs = resolveBrokerRequestTimeoutMs(this.requestTimeoutMs, params);
     // Adding a flat COMMAND_TIMEOUT_SLACK_MS on top of a budget whose own floor
@@ -526,6 +547,31 @@ export class RustBrokerClient extends EventEmitter {
         continue;
       }
 
+      // Mirrored from bridge-core.js. launch-mcp.sh falls back to that lane when
+      // the broker is not ready, so a guard in only one file is a hole that opens
+      // only under fallback.
+      const rejection = batchChildRejectionReason(toolName, call.params);
+      if (rejection) {
+        results.push({
+          ...entry,
+          ok: false,
+          durationMs: Date.now() - childStartedAt,
+          error: { code: 'invalid_batch_tool', message: rejection },
+        });
+        if (stopOnError) {
+          return {
+            ok: false,
+            stopped: true,
+            stopIndex: index,
+            callCount: calls.length,
+            timeoutMs,
+            durationMs: Date.now() - startedAt,
+            results,
+          };
+        }
+        continue;
+      }
+
       try {
         const rawChildParams =
           call.params && typeof call.params === 'object' && !Array.isArray(call.params)
@@ -609,39 +655,50 @@ export class RustBrokerClient extends EventEmitter {
   // first step and the navigate step stops inheriting the extension's 45,000 ms
   // load default.
   async sendWaitClickRead(params = {}) {
-    return await this.sendBatch({
+    // Threaded rather than hardcoded, and kept identical to the bridge-core copy:
+    // which transport runs depends on broker availability, not on the caller.
+    const activate = params.activate === true;
+    const batch = await this.sendBatch({
       timeoutMs: params.timeoutMs,
       stopOnError: true,
       calls: [
         { tool: 'browser_wait', label: 'wait', params: { tabId: params.tabId, selector: params.waitSelector, visible: params.visible === true } },
-        { tool: 'browser_click', label: 'click', params: { tabId: params.tabId, selector: params.clickSelector, ref: params.ref, activate: false } },
+        { tool: 'browser_click', label: 'click', params: { tabId: params.tabId, selector: params.clickSelector, ref: params.ref, activate } },
         { tool: 'browser_get_page_content', label: 'read', params: { tabId: params.tabId, selector: params.readSelector || '', format: params.format || 'text', maxChars: params.maxChars } },
       ],
     });
+    // `active` inside a child result is Chrome's "active tab of its own window"
+    // and is true for any tab alone in a background window. This is the field
+    // that answers "did the recipe foreground anything".
+    return { ...batch, activated: activate };
   }
 
   async sendNavigateWaitRead(params = {}) {
-    return await this.sendBatch({
+    const activate = params.activate === true;
+    const batch = await this.sendBatch({
       timeoutMs: params.timeoutMs,
       stopOnError: true,
       calls: [
-        { tool: 'browser_navigate', label: 'navigate', params: { tabId: params.tabId, url: params.url, activate: false } },
+        { tool: 'browser_navigate', label: 'navigate', params: { tabId: params.tabId, url: params.url, activate } },
         { tool: 'browser_wait', label: 'wait', params: { tabId: { $ref: 'navigate.tabId' }, selector: params.waitSelector, visible: params.visible === true } },
         { tool: 'browser_get_page_content', label: 'read', params: { tabId: { $ref: 'navigate.tabId' }, selector: params.readSelector || '', format: params.format || 'text', maxChars: params.maxChars } },
       ],
     });
+    return { ...batch, activated: activate };
   }
 
   async sendClickWaitSelectorRead(params = {}) {
-    return await this.sendBatch({
+    const activate = params.activate === true;
+    const batch = await this.sendBatch({
       timeoutMs: params.timeoutMs,
       stopOnError: true,
       calls: [
-        { tool: 'browser_click', label: 'click', params: { tabId: params.tabId, selector: params.clickSelector, ref: params.ref, activate: false } },
+        { tool: 'browser_click', label: 'click', params: { tabId: params.tabId, selector: params.clickSelector, ref: params.ref, activate } },
         { tool: 'browser_wait', label: 'wait', params: { tabId: params.tabId, selector: params.waitSelector, visible: params.visible === true } },
         { tool: 'browser_get_page_content', label: 'read', params: { tabId: params.tabId, selector: params.readSelector || '', format: params.format || 'text', maxChars: params.maxChars } },
       ],
     });
+    return { ...batch, activated: activate };
   }
 
   async waitForDownload(params = {}) {

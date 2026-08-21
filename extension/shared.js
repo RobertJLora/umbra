@@ -5,6 +5,7 @@ export const DEFAULT_CONFIG = {
   portStart: DEFAULT_PORT_START,
   portEnd: DEFAULT_PORT_END,
   bridgeEnabled: true,
+  cursorOverlay: true,
   installId: '',
 };
 
@@ -55,6 +56,7 @@ export async function loadBridgeConfig() {
     portStart: clampPort(config.portStart, DEFAULT_PORT_START),
     portEnd: clampPort(config.portEnd, DEFAULT_PORT_END),
     bridgeEnabled: config.bridgeEnabled !== false,
+    cursorOverlay: config.cursorOverlay !== false,
     installId: String(config.installId || ''),
   };
 }
@@ -79,6 +81,7 @@ export async function saveBridgeConfig(partialConfig) {
   next.portStart = clampPort(next.portStart, existing.portStart);
   next.portEnd = clampPort(next.portEnd, existing.portEnd);
   next.bridgeEnabled = next.bridgeEnabled !== false;
+  next.cursorOverlay = next.cursorOverlay !== false;
   // An empty string from an unhydrated key field used to replace a working
   // key. Merge keeps the stored key unless the caller sent a real one.
   if (!String(next.sharedKey || '').trim()) {

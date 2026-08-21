@@ -363,11 +363,19 @@ describe('RustBrokerClient broker startup', () => {
 
   it('resolves its socket and download directory from config.js, with no author paths', () => {
     assert.match(CLIENT_SOURCE, /from '\.\/config\.js'/);
+    assert.match(CLIENT_SOURCE, /isRetiredBrokerSocketPath/);
+    assert.match(CLIENT_SOURCE, /UMBRA_BROKER_SOCKET: this\.socketPath/);
     assert.doesNotMatch(CLIENT_SOURCE, /\/Users\//);
     assert.doesNotMatch(CLIENT_SOURCE, /\/tmp\/umbra/);
     const client = createOfflineClient();
     assert.ok(client.socketPath.length > 0);
     assert.doesNotMatch(client.socketPath, /^\/tmp\//);
+  });
+
+  it('remaps a leftover /tmp socket onto the live path', () => {
+    const client = createOfflineClient({ socketPath: '/tmp/umbra-rust-broker.sock' });
+    assert.doesNotMatch(client.socketPath, /^\/tmp\//);
+    assert.match(client.socketPath, /\.umbra\/run\/broker\.sock$/);
   });
 });
 
@@ -395,9 +403,18 @@ describe('RustBrokerClient batch budgets', () => {
         waitSelector: 'main',
         timeoutMs: 15_000,
       });
+      const foreground = await client.sendCommand('browser_navigate_wait_read', {
+        url: 'https://example.com',
+        waitSelector: 'main',
+        timeoutMs: 15_000,
+        activate: true,
+      });
       await client.stop();
 
       assert.equal(result.ok, true);
+      const navigateCalls = commands.filter((command) => command.tool === 'browser_navigate');
+      assert.equal(navigateCalls.at(-1).params.activate, true, 'a caller asking for foreground must reach the navigate child');
+      assert.equal(foreground.activated, true);
       const navigate = commands.find((command) => command.tool === 'browser_navigate');
       const wait = commands.find((command) => command.tool === 'browser_wait');
       const read = commands.find((command) => command.tool === 'browser_get_page_content');
@@ -409,6 +426,11 @@ describe('RustBrokerClient batch budgets', () => {
       );
       assert.ok(wait.params.timeoutMs > 0 && wait.params.timeoutMs < 15_000);
       assert.notEqual(navigate.params.timeoutMs, wait.params.timeoutMs);
+      // The composite defaults to background, and says so on the result. Both
+      // transports carry the same threading, because which lane runs depends on
+      // broker availability rather than on the caller.
+      assert.equal(navigate.params.activate, false);
+      assert.equal(result.activated, false);
       // browser_get_page_content declares no timeoutMs, so the budget stays on
       // the transport instead of being invented as a schema parameter.
       assert.equal(read.params.timeoutMs, undefined);

@@ -59,6 +59,8 @@ The service worker is the right place for tab and extension API access, and the 
 
 The offscreen document is deliberately thin. It holds sockets, authenticates, and relays; it makes no Chrome API call and holds no ownership state. Every command it receives is passed to the worker, which decides whether the calling session is allowed to run it.
 
+It holds one more thing, for the same reason it holds the socket: the frames of a `browser_gif` recording. The worker captures each frame and forwards it immediately, and the document downscales it to the recording's `maxWidth`, keeps it as a compressed image, and drops the oldest once the buffer reaches `maxFrames`. A buffer kept in the worker would be lost every time the worker was evicted, which for a recording that spans a minute of browsing is most of it. Export runs in the document too, because that is where the frames already are: it draws the click markers, drag arrows, labels, progress bar and watermark onto each frame, quantizes with the vendored encoder in `extension/vendor/gifenc.js`, and hands the worker one base64 payload the MCP server writes to disk. The cost of that placement is one hard limitation: closing the document, which is what disabling the bridge or clearing the shared key does, destroys an in-flight recording, and Chrome allows only one offscreen document per extension so there is nowhere else to put it.
+
 ## Session ownership
 
 - Each session gets one session id and one named Chrome tab group.
@@ -89,6 +91,8 @@ Two paths, and the difference is visible to the user.
 
 The default activates the session-owned tab and calls `chrome.tabs.captureVisibleTab`. It is simple, needs no debugger attach, and steals focus for the moment of capture. Chrome requires a literal broad host permission for it, which is why site access has to be granted before the first screenshot.
 
-`silent: true` attaches `chrome.debugger` to the owned tab for one `Page.captureScreenshot` and detaches straight after. Nothing is activated and nothing is focused, and Chrome shows its automation banner for as long as the attach lasts. The banner is the honest signal that something is driving the browser, so the quieter path is also the more visible one.
+`silent: true` attaches `chrome.debugger` to the owned tab for one `Page.captureScreenshot` and detaches straight after. Nothing is activated and nothing is focused, and Chrome shows its automation banner for as long as the attach lasts. The banner is the honest signal that something is driving the browser, so the quieter path is also the more visible one. The same attach helper fires `Input.dispatchMouseEvent` when a page action returns a submit rect, so a download-gated control gets a trusted click without activating the tab.
 
 Full-page capture stitches slices and is capped by height, because a tall page multiplied by the device pixel ratio can otherwise build a canvas large enough to fail inside Chrome rather than in any code here.
+
+`browser_gif` records with the silent path and nothing else. The visible-tab API forces the tab active and Chrome throttles it to roughly two calls a second, which is neither a frame rate nor a background operation. A recording claims the attachment once and holds it, rather than attaching and detaching several times a second, and it claims it on the same refcount the one-shot helper uses, so a screenshot taken during a recording joins the existing attachment instead of colliding with it.

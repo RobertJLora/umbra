@@ -30,3 +30,27 @@ dist/
 extension/recipes/
 mcp-server/plugins/
 tests/local/
+
+# The internal parity implementation spec. It names the maintainer's own machine
+# layout and the third-party products the local page recipes drive, and docs/ is
+# a published directory, so it stays local. release-check.mjs scans untracked
+# files, so an unignored copy here also turns the identity gate red.
+docs/CiC_Parity_Implementation_Spec.md
+
+# Store submission working files: the screenshot set staged for upload, the
+# submission evidence capture, and the Python bytecode cache next to
+# store/paste_stepper.py. All regenerated, none reviewable.
+store/__pycache__/
+store/shots/
+store/submit_evidence_*.png
+
+# Dated branding archives kept while the icon work settled. The current set under
+# branding/icons/ and branding/store-screenshots/ is the tracked one.
+branding/*_old_*/
+branding/mark_v1_archive_*/
+branding/icons_glyph_*/
+branding/extension_ui_evidence_*/
+
+# State the store watcher writes back into the tree on every run.
+scripts/automation/*-state.json
+scripts/automation/store-watch-result.md

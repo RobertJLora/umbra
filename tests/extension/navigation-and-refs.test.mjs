@@ -41,6 +41,46 @@ describe('navigation waits, ref resolution, and page recipes', () => {
     assert.match(background, /waitForTabComplete\(tab\.id, clampTimeoutMs\(params\.timeoutMs\), url, \{\n\s*navigationPending: true,\n\s*\}\)/);
   });
 
+  it('reports why a back move was refused and falls back to the renderer', () => {
+    const block = functionBlock(background, 'async function moveTabHistory', 'async function ensureSessionGroup');
+
+    // chrome.tabs.goBack answers the browser-side CanGoBack(), which skips every
+    // entry Chrome flagged should_skip_on_back_forward_ui. Agent clicks are
+    // untrusted synthetic events, so an agent-driven tab holding four entries
+    // reports an empty back stack while forward, which has no such filter, works.
+    assert.match(block, /chrome\.tabs\.goBack\(tabId\)/);
+    assert.match(block, /chrome\.tabs\.goForward\(tabId\)/);
+
+    // The renderer ignores the skip flag, so window.history is the fallback, and
+    // chrome.scripting is used rather than the content agent because the
+    // onUpdated listener invalidates the agent on this very navigation.
+    assert.match(block, /executeInTabWithRetry\(tabId, historyGo/);
+    assert.match(background, /function historyGo\(delta\)/);
+
+    // A bare `catch {}` rewrote every refusal as no-history and threw the reason
+    // away, which made the failure unattributable. The API message now rides out
+    // with the result, and only a real empty stack keeps the no-history label.
+    assert.match(block, /const HISTORY_NO_ENTRY_RE = \/cannot find a next page in history\/i|noEntry \? 'no-history' : 'navigation-failed'/);
+    assert.match(background, /const HISTORY_NO_ENTRY_RE = /);
+    assert.match(block, /message: apiError/);
+
+    // "Did we move" is a URL question, not a status question: tabs.update
+    // resolves before the tab leaves the old document, and a same-document move
+    // never re-enters `loading`, so the pre-move URL is read before the move.
+    assert.match(background, /async function waitForTabUrlChange\(tabId, fromUrl/);
+    const preMoveIndex = block.indexOf('const fromUrl = before?.url');
+    assert.ok(preMoveIndex > 0, 'moveTabHistory should read a pre-move URL');
+    assert.ok(preMoveIndex < block.indexOf('chrome.tabs.goBack'), 'the pre-move URL must be read before the move is issued');
+
+    for (const toolName of ['browser_navigate_back', 'browser_navigate_forward']) {
+      const start = background.indexOf(`if (tool === '${toolName}')`);
+      assert.ok(start >= 0, `${toolName} handler should exist`);
+      const toolBlock = background.slice(start, background.indexOf('\n  if (tool ===', start + 1));
+      assert.match(toolBlock, /moveTabHistory\(tab\.id, '(back|forward)'/);
+      assert.doesNotMatch(toolBlock, /catch \{\s*\n\s*return/, 'a swallowed rejection hides why Chrome refused the move');
+    }
+  });
+
   it('awaits the session-state load before any handler touches session state', () => {
     // A message can wake a cold worker. Persisting before the stored map is read
     // back wrote an empty map over chrome.storage.session and orphaned every
@@ -235,6 +275,11 @@ describe('navigation waits, ref resolution, and page recipes', () => {
 
     // wait_for_text is not site-specific and stays inline.
     assert.match(runner, /if \(action === 'wait_for_text'\)/);
+    // click_control must not synthesize an untrusted gesture. Chrome blocks
+    // downloads from element.click() / dispatched MouseEvents, so the action
+    // returns a rect and the worker fires Input.dispatchMouseEvent.
+    assert.match(runner, /pendingTrustedClick: true/);
+    assert.doesNotMatch(runner, /element\.click\(\)/);
 
     // The injection result is kept, so a recipe that is present but broken
     // reports why instead of reading as absent.

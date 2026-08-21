@@ -149,6 +149,7 @@ function renderState(state) {
   el('portStart').value = config.portStart;
   el('portEnd').value = config.portEnd;
   el('bridgeEnabled').checked = config.bridgeEnabled !== false;
+  el('cursorOverlay').checked = config.cursorOverlay !== false;
   settingsHydrated = true;
 
   const connectedCount = bridgeStatus?.connectedCount || 0;
@@ -225,6 +226,12 @@ el('saveButton').addEventListener(
       bridgeEnabled: settingsHydrated
         ? el('bridgeEnabled').checked
         : stored.bridgeEnabled !== false,
+      // Same guard, same reason: a checkbox that starts checked in HTML would
+      // persist a false the user never chose if Save ran before renderState
+      // painted the stored value.
+      cursorOverlay: settingsHydrated
+        ? el('cursorOverlay').checked
+        : stored.cursorOverlay !== false,
     };
     if (!config.sharedKey) {
       throw new Error('A shared key is required. Click Generate Key to create one.');
@@ -287,4 +294,9 @@ chrome.permissions.onRemoved.addListener(() => {
 
 renderHomepageLink();
 void refreshSiteAccess();
+const versionLabel = document.getElementById('versionLabel');
+if (versionLabel) {
+  versionLabel.textContent = `Umbra ${chrome.runtime.getManifest().version}`;
+}
+
 void refresh().catch((error) => setStatus(describeError(error), 'error'));

@@ -357,6 +357,89 @@ describe('AX tree helpers', () => {
     assert.equal(Ax.rankFindMatches(nodes, 'nope', 5).length, 0);
   });
 
+  it('ranks the real link above the wrapper whose inner text merely contains the query', () => {
+    // computeAccessibleName falls back to innerText, so a wrapper's name is a
+    // dump of its whole subtree. Those dumps scored on name.includes(q) and,
+    // worse, came first in document order and ate the node budget before the
+    // walk ever reached the link.
+    const filler = 'Chrome Web Store hosts extensions and themes for the browser. '.repeat(12);
+    const link = new FakeNode('a', { href: '/store' }, ['Chrome Web Store']);
+    const wrapper = new FakeNode('div', {}, [filler, link]);
+    const { document, body } = createPage([wrapper]);
+
+    const found = Ax.findAxNodes(
+      body,
+      { query: 'Chrome Web Store' },
+      { document, refStore: Ax.createRefStore(), domVersion: 1 },
+    );
+
+    assert.ok(found.matches.length > 0, 'the link should be findable');
+    assert.equal(found.matches[0].role, 'link');
+    assert.equal(found.matches[0].name, 'Chrome Web Store');
+    for (const match of found.matches) {
+      assert.ok(match.name.length <= 120, `a returned name ran to ${match.name.length} characters`);
+    }
+    const wrapperMatch = found.matches.find((match) => match.role === 'generic');
+    if (wrapperMatch) {
+      assert.ok(wrapperMatch.score < found.matches[0].score, 'a container must never outrank the element itself');
+    }
+  });
+
+  it('drops long-text roleless wrappers from the find walk so the real controls fit the budget', () => {
+    const filler = 'Long article body that mentions the Chrome Web Store repeatedly. '.repeat(12);
+    const wrapper = new FakeNode('div', {}, [filler]);
+    const link = new FakeNode('a', { href: '/store' }, ['Chrome Web Store']);
+    const { document, body } = createPage([wrapper, link]);
+
+    const walked = Ax.walkAxTree(
+      body,
+      { filter: 'find', maxNodes: 50, withNameLength: true },
+      { document, refStore: Ax.createRefStore(), domVersion: 1 },
+    );
+    const tags = walked.nodes.map((node) => node.tag);
+
+    assert.ok(tags.includes('a'), 'the link must survive the find filter');
+    assert.ok(!tags.includes('div'), 'a wrapper whose own text is an article is not a candidate');
+
+    // browser_read_page must not grow: nameLength is find-only.
+    const readPageWalk = Ax.walkAxTree(
+      body,
+      { filter: 'all', maxNodes: 50 },
+      { document, refStore: Ax.createRefStore(), domVersion: 1 },
+    );
+    for (const node of readPageWalk.nodes) {
+      assert.equal(Object.prototype.hasOwnProperty.call(node, 'nameLength'), false);
+    }
+  });
+
+  it('searches every element a selector matched rather than only the first', () => {
+    // `selector: "a"` used to walk the subtree of the page's first anchor, which
+    // on a real page is a 1x1 skip link, so a page of 1,125 links reported zero
+    // matches.
+    const first = new FakeNode('a', { href: '/skip' }, ['Jump to content']);
+    const second = new FakeNode('a', { href: '/store' }, ['Chrome Web Store']);
+    const { document, body } = createPage([first, second]);
+
+    const found = Ax.findAxNodes(
+      [first, second],
+      { query: 'Chrome Web Store' },
+      { document, refStore: Ax.createRefStore(), domVersion: 1 },
+    );
+    assert.equal(found.matches.length, 1);
+    assert.equal(found.matches[0].name, 'Chrome Web Store');
+
+    // Nested roots must not double-walk the elements they share.
+    const outer = new FakeNode('div', { id: 'outer' }, [new FakeNode('button', {}, ['Export CSV'])]);
+    const nested = createPage([outer]);
+    const inner = outer.children[0];
+    const both = Ax.findAxNodes(
+      [outer, inner],
+      { query: 'Export CSV' },
+      { document: nested.document, refStore: Ax.createRefStore(), domVersion: 1 },
+    );
+    assert.equal(both.matches.filter((match) => match.role === 'button').length, 1);
+  });
+
   it('sets native values and dispatches input/change so React-style listeners can see them', () => {
     const input = new FakeNode('input', { type: 'text', 'aria-label': 'Name' });
     const result = Ax.applyFormInput(input, { value: 'Ada' });

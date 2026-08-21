@@ -11,13 +11,82 @@ const TAB_COMPLETE_POLL_INTERVAL_MS = 750;
 const CONTENT_AGENT_PORT_NAME = 'cic-content-agent';
 const CONTENT_AGENT_SCRIPT = 'content-agent.js';
 const AX_TREE_SCRIPT = 'ax-tree.js';
+const CURSOR_OVERLAY_SCRIPT = 'cursor-overlay.js';
+// Glide time scales with travel distance between these two, so a short hop does
+// not sit through a full half second before the real dispatch runs.
+const CURSOR_MIN_GLIDE_MS = 260;
+const CURSOR_MAX_GLIDE_MS = 520;
+// Distance, in CSS pixels, at which a glide reaches CURSOR_MAX_GLIDE_MS.
+const CURSOR_FULL_TRAVEL_PX = 900;
+// How long browser_screenshot waits for an already-started cursor injection to
+// land before hiding and capturing anyway.
+const CURSOR_SETTLE_BEFORE_CAPTURE_MS = 150;
+// The install setting is read from chrome.storage on a short TTL rather than on
+// every click, because a per-action storage round trip would show up as latency
+// on the one path that has to stay fast.
+const CURSOR_CONFIG_TTL_MS = 5_000;
+// Recording defaults and bounds. The schema in mcp-server/tools.js states the
+// same numbers to the caller; these are what an omitted parameter becomes.
+const GIF_DEFAULT_FPS = 4;
+const GIF_MIN_FPS = 1;
+const GIF_MAX_FPS = 10;
+const GIF_DEFAULT_MAX_FRAMES = 120;
+const GIF_MIN_MAX_FRAMES = 2;
+const GIF_MAX_MAX_FRAMES = 300;
+const GIF_DEFAULT_MAX_WIDTH = 800;
+const GIF_MIN_MAX_WIDTH = 160;
+const GIF_MAX_MAX_WIDTH = 1600;
+const GIF_DEFAULT_QUALITY = 10;
+const GIF_MIN_QUALITY = 1;
+const GIF_MAX_QUALITY = 30;
+const GIF_DEFAULT_WATERMARK = 'Umbra';
+// A recording that outlives this is torn down wherever the check runs first.
+// The shim and the broker both cap a single call at 185000 ms, so a recording
+// left running past three minutes has already outlived any call that could stop
+// it, and the tab would keep its attachment and its automation banner forever.
+const MAX_RECORDING_MS = 180_000;
 const CONTENT_AGENT_READY_TIMEOUT_MS = 2_000;
 const CONTENT_AGENT_COMMAND_TIMEOUT_MS = 120_000;
 const READ_CACHE_TTL_MS = 1_500;
 const FULL_PAGE_SCREENSHOT_MAX_HEIGHT_PX = 16_000;
 const CONSOLE_MESSAGE_CAP = 200;
+// One console call can reach the buffer twice: once as a Runtime.consoleAPICalled
+// event and once from the MAIN-world mirror, with timestamps a few milliseconds
+// apart. An exact-timestamp check let both in.
+const CONSOLE_CROSS_SOURCE_WINDOW_MS = 1_000;
+// Runtime.consoleAPICalled is delivered on its own task, and the debugger
+// detaches the moment the evaluate callback returns, so queued events need one
+// turn to land before the attachment goes away.
+const CONSOLE_DRAIN_MS = 50;
 const SCREENSHOT_STITCH_SETTLE_MS = 120;
+// browser_press_key takes a space-separated sequence and a repeat count. The
+// gap keeps each keystroke a separate task, and the dispatch cap stops one call
+// from holding the worker for minutes. Drag and scroll bounds are not here
+// because those functions are stringified into the page, where a worker
+// constant does not resolve; they carry their own numbers.
+const KEY_SEQUENCE_GAP_MS = 20;
+const KEY_SEQUENCE_MAX_DISPATCHES = 400;
+// Request-log ring size per tab. A busy page fires a few hundred requests on
+// first paint, so this is deep enough to survive one page load and shallow
+// enough that the worker never holds more than a few hundred small objects.
+const NETWORK_LOG_CAP = 400;
+// A log left running holds a debugger attachment, and an attachment shows
+// Chrome's automation banner. Five idle minutes ends it, so a caller who walks
+// away never leaves a banner up forever.
+const NETWORK_LOG_IDLE_MS = 300_000;
+// A data: or blob: URL can be megabytes long. The log records where a request
+// went, not what it carried, so the URL is capped at a length that still shows
+// the path and query a caller filters on.
+const NETWORK_LOG_URL_MAX = 600;
 const consoleBuffers = new Map();
+// Tabs whose MAIN-world console mirror is already installed. The mirror lives on
+// a page global that a navigation wipes, so this is cleared alongside the
+// buffers below.
+const pageConsoleMirrors = new Set();
+// tabId -> request-log state for browser_read_network_requests. Only tabs a
+// caller has read at least once are in here: capture starts on the first read
+// and ends on stop, so no tab carries an attachment it was never asked for.
+const networkLogs = new Map();
 const sessionStore = new SessionStateStore();
 // One session-state read per worker lifetime, started at module scope so it is
 // already in flight before any message arrives. Everything that touches
@@ -33,6 +102,14 @@ const contentAgents = new Map();
 // tabId -> { refCount, attachPromise }. Chrome allows one debugger client per
 // target, so every Umbra call on a tab shares a single attachment.
 const tabDebuggerAttachments = new Map();
+// tabId -> recorder state for an in-flight GIF recording. The frames themselves
+// are not here: they live in the offscreen document, which is a real page and is
+// never evicted, while this worker is torn down after about thirty seconds idle.
+// What lives here is only what the worker needs to keep pumping and to tear the
+// recording down: { sessionId, startedAt, stoppedAt, recording, fps, maxFrames,
+// maxWidth, dpr, label, intervalId, watchdogId, frameIntervalMs, lastCaptureMs,
+// frameCount, droppedFrames }.
+const gifRecordings = new Map();
 const readCache = new Map();
 let initializePromise = null;
 let bootstrapped = false;
@@ -154,10 +231,19 @@ function pushConsoleMessage(tabId, message) {
     level,
     text: String(message?.text || '').slice(0, 2000),
     ts: Number(message?.ts) || Date.now(),
+    // Internal only, stripped by filterConsoleMessages. Two sources can report
+    // the same console call with slightly different timestamps, and the label is
+    // what lets the dedupe below tell that apart from a page that really logged
+    // the same line twice.
+    source: message?.source || 'page',
   };
   const buffer = getConsoleBuffer(tabId);
   const duplicate = buffer.messages.some((existing) => (
-    existing.ts === entry.ts && existing.level === entry.level && existing.text === entry.text
+    existing.level === entry.level
+    && existing.text === entry.text
+    && (existing.ts === entry.ts
+      || (existing.source !== entry.source
+        && Math.abs(existing.ts - entry.ts) <= CONSOLE_CROSS_SOURCE_WINDOW_MS))
   ));
   if (duplicate) {
     return;
@@ -180,7 +266,161 @@ function filterConsoleMessages(tabId, { level = 'info', all = false } = {}) {
   return buffer.messages
     .filter((message) => (ranks[message.level] || 20) >= minRank)
     .filter((message) => all || message.ts >= buffer.lastNavTs)
-    .slice(-CONSOLE_MESSAGE_CAP);
+    .slice(-CONSOLE_MESSAGE_CAP)
+    // The source label is bookkeeping for the dedupe above, so it never reaches
+    // a caller: browser_console_messages returns exactly level, text, and ts.
+    .map(({ level: entryLevel, text, ts }) => ({ level: entryLevel, text, ts }));
+}
+
+// CDP resource types are a longer list than the tool advertises, and the tool's
+// enum is the contract. Anything outside it reads as other rather than leaking a
+// protocol spelling into a result.
+const NETWORK_RESOURCE_TYPES = new Set([
+  'xhr',
+  'fetch',
+  'document',
+  'script',
+  'stylesheet',
+  'image',
+  'font',
+  'media',
+]);
+const NETWORK_DEFAULT_TYPES = ['xhr', 'fetch', 'document'];
+
+function normalizeNetworkResourceType(type) {
+  const key = String(type || '').toLowerCase();
+  return NETWORK_RESOURCE_TYPES.has(key) ? key : 'other';
+}
+
+function networkHostname(url) {
+  try {
+    return new URL(String(url || '')).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+function createNetworkLog(sessionId, hostname) {
+  return {
+    sessionId,
+    hostname: hostname ?? null,
+    // Ring of finished and in-flight entries, oldest first. index maps a CDP
+    // requestId to the entry so the response and failure events can complete
+    // the row the request event opened.
+    entries: [],
+    index: new Map(),
+    // The frame the first navigation request was seen on, so a cross-origin
+    // iframe cannot be mistaken for the tab moving to another site.
+    mainFrameId: null,
+    pinned: false,
+    // The debugger entry this log incremented, so stop can only decrement that
+    // one. Null whenever the log holds no refcount.
+    pinHandle: null,
+    startedAt: 0,
+    lastEventAt: 0,
+    idleTimerId: null,
+    droppedEntries: 0,
+  };
+}
+
+function pushNetworkEntry(tabId, entry) {
+  const log = networkLogs.get(tabId);
+  if (!log) {
+    return;
+  }
+  log.entries.push(entry);
+  log.index.set(entry.requestId, entry);
+  while (log.entries.length > NETWORK_LOG_CAP) {
+    const dropped = log.entries.shift();
+    log.droppedEntries += 1;
+    if (log.index.get(dropped.requestId) === dropped) {
+      log.index.delete(dropped.requestId);
+    }
+  }
+}
+
+function clearNetworkLog(tabId) {
+  const log = networkLogs.get(tabId);
+  if (!log) {
+    return 0;
+  }
+  const cleared = log.entries.length;
+  log.entries = [];
+  log.index = new Map();
+  log.droppedEntries = 0;
+  return cleared;
+}
+
+// A cross-site move drops the log: the requests of the page you left are noise
+// once you are somewhere else. A same-host move, including every pushState
+// navigation inside a single-page app, keeps it.
+//
+// The trigger is the new document's own request, not chrome.tabs.onUpdated.
+// onUpdated reports a URL once the navigation has committed, which is after
+// Network.requestWillBeSent for that document has already landed, so clearing
+// from there wiped the one row a caller who navigates and then reads wants most:
+// the navigation itself. Clearing here, before the push, keeps it.
+function clearNetworkLogForNavigation(tabId, url) {
+  const log = networkLogs.get(tabId);
+  if (!log) {
+    return false;
+  }
+  const hostname = networkHostname(url);
+  if (!hostname) {
+    return false;
+  }
+  if (log.hostname === null) {
+    log.hostname = hostname;
+    return false;
+  }
+  if (log.hostname === hostname) {
+    return false;
+  }
+  log.hostname = hostname;
+  clearNetworkLog(tabId);
+  return true;
+}
+
+// Chrome announcing that the tab itself is about to load a new document. Two
+// signals separate it from a subresource and from an iframe: CDP sets loaderId
+// equal to requestId only on a navigation request, and the frame has to be the
+// one the log adopted. The first navigation a log sees defines that frame, which
+// holds because capture starts before the navigation it is watching for.
+function isMainFrameDocumentRequest(log, event) {
+  if (!log || normalizeNetworkResourceType(event?.type) !== 'document') {
+    return false;
+  }
+  const requestId = String(event?.requestId || '');
+  if (!requestId || String(event?.loaderId || '') !== requestId) {
+    return false;
+  }
+  const frameId = String(event?.frameId || '');
+  if (!frameId) {
+    return true;
+  }
+  if (log.mainFrameId === null) {
+    log.mainFrameId = frameId;
+    return true;
+  }
+  return log.mainFrameId === frameId;
+}
+
+function filterNetworkEntries(tabId, { urlPattern = '', types = null, limit = 50 } = {}) {
+  const log = networkLogs.get(tabId);
+  if (!log) {
+    return [];
+  }
+  const needle = String(urlPattern || '').toLowerCase();
+  const wanted = new Set(
+    (Array.isArray(types) && types.length > 0 ? types : NETWORK_DEFAULT_TYPES)
+      .map((type) => normalizeNetworkResourceType(type)),
+  );
+  const matched = log.entries.filter((entry) => (
+    wanted.has(entry.resourceType)
+    && (needle === '' || entry.url.toLowerCase().includes(needle))
+  ));
+  // Newest first, which is the order a caller reading after an action wants.
+  return matched.slice(-limit).reverse().map((entry) => ({ ...entry }));
 }
 
 function invalidateSessionReadCache(sessionId) {
@@ -532,6 +772,208 @@ function normalizeBridgeUrl(rawUrl = 'about:blank') {
   }
 
   return parsed.href;
+}
+
+// Waits in the worker rather than in the page. A page-side wait dies with the
+// document the navigation replaces, which is the exact event being observed.
+// chrome.tabs.onUpdated reports changeInfo.url for pushState moves too, so a
+// single-page app is covered and the interval poll is the backstop.
+async function waitForTabUrl(tabId, options = {}) {
+  const timeoutMs = clampTimeoutMs(options.timeoutMs, 10_000, 120_000);
+  const needle = String(options.urlContains || '');
+  const requireChange = options.urlChanged === true;
+  const startedAt = Date.now();
+  const existing = await safeGetTab(tabId);
+  const fromUrl = String(options.fromUrl || existing?.url || '');
+
+  const matches = (tab) => {
+    if (!tab) {
+      return false;
+    }
+    const url = String(tab.url || '');
+    if (needle && !url.includes(needle)) {
+      return false;
+    }
+    if (requireChange && url === fromUrl) {
+      return false;
+    }
+    return tab.status === 'complete';
+  };
+
+  const payload = (tab, strategy) => {
+    const url = String(tab?.url || '');
+    return {
+      url,
+      fromUrl,
+      urlChanged: url !== fromUrl,
+      ...(needle ? { matchedUrlContains: url.includes(needle) } : {}),
+      elapsedMs: Date.now() - startedAt,
+      timedOut: false,
+      strategy,
+    };
+  };
+
+  if (matches(existing)) {
+    return payload(existing, 'immediate');
+  }
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      clearInterval(poll);
+      chrome.tabs.onUpdated.removeListener(listener);
+      callback();
+    };
+
+    const timer = setTimeout(() => {
+      safeGetTab(tabId)
+        .then((tab) => {
+          finish(() => {
+            // The message carries where the tab actually is, which is how a
+            // caller learns that the submit it was waiting on never navigated.
+            const error = new Error(`Timed out waiting for the tab URL. Still on ${String(tab?.url || fromUrl) || 'an unknown page'}.`);
+            error.code = 'wait_timeout';
+            reject(error);
+          });
+        })
+        .catch(() => {
+          finish(() => {
+            const error = new Error(`Timed out waiting for the tab URL. Still on ${fromUrl || 'an unknown page'}.`);
+            error.code = 'wait_timeout';
+            reject(error);
+          });
+        });
+    }, timeoutMs);
+
+    const settle = (tab, strategy) => {
+      if (matches(tab)) {
+        finish(() => resolve(payload(tab, strategy)));
+      }
+    };
+
+    const poll = setInterval(() => {
+      safeGetTab(tabId)
+        .then((tab) => settle(tab, 'poll'))
+        .catch(() => {});
+    }, TAB_COMPLETE_POLL_INTERVAL_MS);
+
+    function listener(updatedTabId) {
+      if (updatedTabId !== tabId) {
+        return;
+      }
+      safeGetTab(tabId)
+        .then((tab) => settle(tab, 'listener'))
+        .catch(() => {});
+    }
+
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+const HISTORY_NO_ENTRY_RE = /cannot find a next page in history/i;
+
+// chrome.tabs.update resolves before the tab leaves the old document, and a
+// same-document move never re-enters `loading`, so "did we move" is a URL
+// question, not a status question.
+async function waitForTabUrlChange(tabId, fromUrl, timeoutMs = 8_000) {
+  const deadline = Date.now() + Math.max(Number(timeoutMs) || 0, 500);
+  while (Date.now() < deadline) {
+    const tab = await safeGetTab(tabId);
+    if (!tab) {
+      return { changed: false, url: fromUrl };
+    }
+    const url = tab.url || '';
+    if (url && url !== fromUrl) {
+      return { changed: true, url };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+  const settled = await safeGetTab(tabId);
+  const url = settled?.url || fromUrl;
+  return { changed: Boolean(url) && url !== fromUrl, url };
+}
+
+// chrome.tabs.goBack answers the browser-side CanGoBack(), which skips every
+// entry Chrome flagged should_skip_on_back_forward_ui. Agent clicks are
+// untrusted synthetic events, so the entries behind the current one carry that
+// flag and the tabs API reports an empty back stack on a tab holding four
+// entries. CanGoForward() has no such filter, which is why forward works. The
+// renderer ignores the flag, so window.history is the fallback. Never guess:
+// carry the API's own message out with the result.
+async function moveTabHistory(tabId, direction, timeoutMs) {
+  const settleMs = Math.min(Number(timeoutMs) || 45_000, 10_000);
+  const before = await safeGetTab(tabId);
+  const fromUrl = before?.url || '';
+  const delta = direction === 'back' ? -1 : 1;
+
+  let apiError = '';
+  try {
+    if (direction === 'back') {
+      await chrome.tabs.goBack(tabId);
+    } else {
+      await chrome.tabs.goForward(tabId);
+    }
+    const settle = await waitForTabUrlChange(tabId, fromUrl, settleMs);
+    if (settle.changed) {
+      await waitForTabComplete(tabId, timeoutMs);
+    }
+    const after = await safeGetTab(tabId);
+    return {
+      moved: true,
+      via: 'tabs',
+      url: after?.url || settle.url || fromUrl,
+      urlChanged: settle.changed,
+    };
+  } catch (error) {
+    apiError = error?.message || String(error);
+  }
+
+  const noEntry = HISTORY_NO_ENTRY_RE.test(apiError);
+  let page = null;
+  try {
+    page = await executeInTabWithRetry(tabId, historyGo, [delta]);
+  } catch (scriptError) {
+    return {
+      moved: false,
+      reason: noEntry ? 'no-history' : 'navigation-failed',
+      message: apiError,
+      fallback: 'unavailable',
+      fallbackError: scriptError?.message || String(scriptError),
+    };
+  }
+
+  if (!page?.attempted) {
+    return {
+      moved: false,
+      reason: 'no-history',
+      message: apiError,
+      entryCount: page?.length ?? null,
+    };
+  }
+
+  const settle = await waitForTabUrlChange(tabId, fromUrl, settleMs);
+  if (!settle.changed) {
+    return {
+      moved: false,
+      reason: noEntry ? 'no-history' : 'navigation-failed',
+      message: apiError,
+      entryCount: page.length,
+    };
+  }
+  await waitForTabComplete(tabId, timeoutMs);
+  const after = await safeGetTab(tabId);
+  return {
+    moved: true,
+    via: 'page',
+    url: after?.url || settle.url,
+    urlChanged: true,
+    entryCount: page.length,
+  };
 }
 
 async function ensureSessionGroup(sessionId, anchorTabId, groupOptions = {}) {
@@ -1405,6 +1847,269 @@ async function executeInTab(tabId, func, args = [], options = {}) {
   return result?.result;
 }
 
+// Per-session cursor overrides, set by browser_cursor and dropped when the
+// session disconnects. An entry here wins over the install setting.
+const cursorSessionOverrides = new Map();
+// Last point the cursor was driven to, per tab, so a glide can scale its length
+// to the distance travelled without asking the page where the pointer is.
+const cursorLastPoint = new Map();
+let cursorInstallDefault = null;
+let cursorInstallDefaultAt = 0;
+
+async function cursorInstallDefaultEnabled() {
+  const now = Date.now();
+  if (cursorInstallDefault !== null && now - cursorInstallDefaultAt < CURSOR_CONFIG_TTL_MS) {
+    return cursorInstallDefault;
+  }
+  try {
+    const config = await loadBridgeConfig();
+    cursorInstallDefault = config.cursorOverlay !== false;
+  } catch {
+    // An unreadable config keeps the documented default rather than turning the
+    // cursor off on a storage hiccup.
+    cursorInstallDefault = true;
+  }
+  cursorInstallDefaultAt = now;
+  return cursorInstallDefault;
+}
+
+async function cursorEnabledForSession(sessionId) {
+  if (sessionId && cursorSessionOverrides.has(sessionId)) {
+    return cursorSessionOverrides.get(sessionId) === true;
+  }
+  return await cursorInstallDefaultEnabled();
+}
+
+function cursorGlideDurationMs(fromX, fromY, toX, toY) {
+  const dx = Number(toX) - Number(fromX);
+  const dy = Number(toY) - Number(fromY);
+  const distance = Number.isFinite(dx) && Number.isFinite(dy) ? Math.hypot(dx, dy) : CURSOR_FULL_TRAVEL_PX;
+  const ratio = Math.min(1, Math.max(0, distance / CURSOR_FULL_TRAVEL_PX));
+  return Math.round(CURSOR_MIN_GLIDE_MS + ((CURSOR_MAX_GLIDE_MS - CURSOR_MIN_GLIDE_MS) * ratio));
+}
+
+function cursorRippleVariant(kind) {
+  if (kind === 'rightClick' || kind === 'double' || kind === 'triple') {
+    return kind;
+  }
+  return 'click';
+}
+
+// tabId -> the last cursor injection started on that tab. The glide and the
+// post-action indicator are both started rather than awaited, so without this
+// browser_screenshot could run its hide before the ripple injection landed and
+// capture the ring the hide exists to remove.
+const cursorPendingAnimations = new Map();
+
+function trackCursorAnimation(tabId, promise) {
+  if (!promise || typeof promise.then !== 'function') {
+    return;
+  }
+  const settled = promise.then(() => {}, () => {});
+  cursorPendingAnimations.set(tabId, settled);
+  void settled.then(() => {
+    if (cursorPendingAnimations.get(tabId) === settled) {
+      cursorPendingAnimations.delete(tabId);
+    }
+  });
+}
+
+// Bounded on purpose. The point is to let an injection already on the wire land
+// before the hide, never to hold a capture behind a page that stopped answering.
+async function settleCursorAnimations(tabId, timeoutMs = CURSOR_SETTLE_BEFORE_CAPTURE_MS) {
+  const pending = cursorPendingAnimations.get(tabId);
+  if (!pending) {
+    return;
+  }
+  await Promise.race([
+    pending,
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+// The overlay brackets whatever dispatch already runs; it never replaces it.
+// Every step except run() is swallowed on failure, so a throw inside the
+// animation can only ever cost the animation. A throw from run() propagates
+// untouched, because that one is the tool's real result.
+async function withCursorFeedback(tabId, spec = {}, run) {
+  if (typeof run !== 'function') {
+    throw new Error('withCursorFeedback requires a run function.');
+  }
+
+  const kind = String(spec.kind || 'click');
+
+  let enabled = false;
+  try {
+    enabled = await cursorEnabledForSession(spec.sessionId || '');
+  } catch {
+    enabled = false;
+  }
+
+  let ready = false;
+  if (enabled) {
+    try {
+      ready = await ensureCursorOverlay(tabId);
+    } catch {
+      ready = false;
+    }
+  }
+  if (!ready) {
+    // The recorder's action frames used to live entirely inside the cursor path,
+    // so a recording taken with the cursor off got interval ticks and nothing
+    // else: no click markers, no labels, no drag ends. The animation is optional;
+    // the evidence is not. Coordinates are used when the caller supplied them
+    // and left off otherwise.
+    const rawX = Number(spec.x);
+    const rawY = Number(spec.y);
+    const known = Number.isFinite(rawX) && Number.isFinite(rawY);
+    const frameMeta = {
+      label: gifActionLabel(kind),
+      ...(known ? { x: rawX, y: rawY } : {}),
+    };
+    pumpGifActionFrame(tabId, { ...frameMeta, kind: `${kind}_before` });
+    try {
+      return await run();
+    } finally {
+      pumpGifActionFrame(tabId, { ...frameMeta, kind: kind === 'drag' ? 'drag' : cursorRippleVariant(kind) });
+    }
+  }
+
+  let point = null;
+  try {
+    const hasCoords = Number.isFinite(Number(spec.x)) && Number.isFinite(Number(spec.y));
+    point = hasCoords
+      ? { x: Number(spec.x), y: Number(spec.y) }
+      : await executeInTab(tabId, umbraCursorMeasure, [{
+        selector: spec.selector || '',
+        ref: spec.ref || '',
+        // Only a plain window scroll asks for this. Everything else wants null
+        // when it named no element, so browser_click_text can place the cursor
+        // from its own result instead of on the middle of the viewport.
+        fallback: spec.fallback === 'viewport' ? 'viewport' : '',
+      }]);
+  } catch {
+    point = null;
+  }
+  if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) {
+    // Nothing to aim at up front. browser_click_text is the case that matters:
+    // the element is only known once the text has been matched, so the cursor
+    // catches up afterwards rather than not showing at all.
+    const result = await run();
+    try {
+      const after = typeof spec.pointFromResult === 'function' ? spec.pointFromResult(result) : null;
+      const afterX = Number(after?.x);
+      const afterY = Number(after?.y);
+      if (Number.isFinite(afterX) && Number.isFinite(afterY)) {
+        cursorLastPoint.set(tabId, { x: afterX, y: afterY });
+        trackCursorAnimation(tabId, executeInTab(tabId, umbraCursorDrive, [{
+          op: 'glide',
+          x: afterX,
+          y: afterY,
+          durationMs: CURSOR_MIN_GLIDE_MS,
+        }])
+          .then(() => executeInTab(tabId, umbraCursorDrive, [{
+            op: 'ripple',
+            variant: cursorRippleVariant(kind),
+            x: afterX,
+            y: afterY,
+          }])));
+        pumpGifActionFrame(tabId, {
+          kind: cursorRippleVariant(kind),
+          label: gifActionLabel(kind),
+          x: afterX,
+          y: afterY,
+        });
+      }
+    } catch {
+      // A result that carries no usable point simply gets no animation.
+    }
+    return result;
+  }
+
+  const x = Number(point.x);
+  const y = Number(point.y);
+  const points = Array.isArray(spec.points) && spec.points.length > 1
+    ? spec.points
+    : (Number.isFinite(Number(spec.endX)) && Number.isFinite(Number(spec.endY))
+      ? [{ x, y }, { x: Number(spec.endX), y: Number(spec.endY) }]
+      : null);
+
+  try {
+    // Travel is measured against the last point this worker drove the cursor to
+    // rather than a round trip into the page, which would put a second script
+    // injection on the latency budget of every click. An evicted worker forgets
+    // the point and pays one full-length entrance glide.
+    const prior = cursorLastPoint.get(tabId) || null;
+    const durationMs = cursorGlideDurationMs(prior?.x, prior?.y, x, y);
+    cursorLastPoint.set(tabId, points ? points[points.length - 1] : { x, y });
+    // Started, not awaited. The overlay places the pointer at the target
+    // synchronously and animates the travel afterwards, so the animation
+    // overlaps the dispatch instead of preceding it. Awaiting it put 260 to
+    // 520 ms on the critical path of every click, fill, type and scroll, which
+    // came straight out of the shared browser_batch deadline: a 25-step batch
+    // spent up to 13 seconds animating against a 30 second budget and started
+    // reporting batch_timeout on work that used to finish.
+    const glide = kind === 'drag' && points
+      ? executeInTab(tabId, umbraCursorDrive, [{ op: 'dragPath', points, durationMs }])
+      : executeInTab(tabId, umbraCursorDrive, [{ op: 'glide', x, y, durationMs }]);
+    trackCursorAnimation(tabId, glide);
+  } catch {
+    // A page that refused the glide still gets the real action.
+  }
+
+  // Pre-action frame for a recording on this tab, taken while the cursor is in
+  // motion so the frame shows where the action is about to land. Fire and
+  // forget: the real dispatch below does not wait on a frame.
+  pumpGifActionFrame(tabId, {
+    kind: `${kind}_before`,
+    label: gifActionLabel(kind),
+    x,
+    y,
+    endX: points ? points[points.length - 1].x : undefined,
+    endY: points ? points[points.length - 1].y : undefined,
+  });
+
+  const result = await run();
+
+  try {
+    if (kind === 'type') {
+      trackCursorAnimation(tabId, executeInTab(tabId, umbraCursorDrive, [{ op: 'typing', x, y }]));
+    } else if (kind === 'scroll') {
+      trackCursorAnimation(tabId, executeInTab(tabId, umbraCursorDrive, [{
+        op: 'scrollHint',
+        x,
+        y,
+        direction: spec.direction || 'down',
+      }]));
+      // A hover gets the glide and nothing else. A ripple there would read as a
+      // click that never happened.
+    } else if (kind !== 'hover') {
+      trackCursorAnimation(tabId, executeInTab(tabId, umbraCursorDrive, [{
+        op: 'ripple',
+        variant: cursorRippleVariant(kind),
+        x: points ? points[points.length - 1].x : x,
+        y: points ? points[points.length - 1].y : y,
+      }]));
+    }
+  } catch {
+    // The indicator is fire and forget; the tool result is already decided.
+  }
+
+  // Post-action frame, taken right after the indicator fires so the frame shows
+  // the ripple and whatever the page did in response. A drag keeps its start
+  // point here, because the arrow the recorder draws needs both ends.
+  pumpGifActionFrame(tabId, {
+    kind: kind === 'drag' ? 'drag' : cursorRippleVariant(kind),
+    label: gifActionLabel(kind),
+    x: kind === 'drag' || !points ? x : points[points.length - 1].x,
+    y: kind === 'drag' || !points ? y : points[points.length - 1].y,
+    endX: points ? points[points.length - 1].x : undefined,
+    endY: points ? points[points.length - 1].y : undefined,
+  });
+
+  return result;
+}
+
 async function assertWindowOwnedExclusively(sessionId, windowId) {
   const tabs = await chrome.tabs.query({ windowId });
   const unowned = tabs.filter((tab) => sessionStore.findOwner(tab.id) !== sessionId);
@@ -1444,6 +2149,89 @@ function isTabsContextUrl(url, includeInternal) {
   return includeInternal === true && isBrowserInternalUrl(value);
 }
 
+const TABS_CONTEXT_DEFAULT_LIMIT = 200;
+const TABS_CONTEXT_MAX_LIMIT = 500;
+// 0 means no shortening. Every existing caller reads `url` as a URL it can
+// navigate back to, so the default has to hand back exactly what Chrome
+// reported; a caller who wants the compact rows passes a positive number.
+const TABS_CONTEXT_DEFAULT_URL_MAX_LENGTH = 0;
+
+// chrome.tabs reports -1 for an ungrouped tab. serializeTab keeps returning that
+// raw -1 because existing callers already read it; this is a new field with no
+// callers, so it reports null and stays readable.
+function normalizeTabGroupId(tab) {
+  const none = chrome.tabGroups?.TAB_GROUP_ID_NONE ?? -1;
+  const value = tab?.groupId;
+  return Number.isInteger(value) && value !== none ? value : null;
+}
+
+// A tab created moments ago reports an empty url until its navigation commits;
+// pendingUrl carries the destination during that window. Reading only url is
+// what hid the tab this tool had just created.
+function tabsContextUrlOf(tab) {
+  return String(tab?.url || tab?.pendingUrl || '');
+}
+
+function clampTabsContextLimit(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return TABS_CONTEXT_DEFAULT_LIMIT;
+  }
+  return Math.min(Math.max(Math.trunc(parsed), 1), TABS_CONTEXT_MAX_LIMIT);
+}
+
+// 0, the default, returns the URL exactly as Chrome reports it, so it cannot go
+// through the usual `Number(x) || default` idiom. Shortening is opt-in on
+// purpose: a collapsed query is a syntactically valid but wrong URL under the
+// same field name, so a caller round-tripping tabs_context url into
+// browser_navigate went somewhere else without an error to explain it.
+function clampTabsContextUrlMaxLength(value) {
+  if (value === undefined || value === null) {
+    return TABS_CONTEXT_DEFAULT_URL_MAX_LENGTH;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return TABS_CONTEXT_DEFAULT_URL_MAX_LENGTH;
+  }
+  if (parsed === 0) {
+    return 0;
+  }
+  return Math.min(Math.max(Math.trunc(parsed), 40), 4096);
+}
+
+function shortenTabsContextUrl(url, maxLength) {
+  const value = String(url || '');
+  if (maxLength === 0 || value.length === 0) {
+    return { url: value, truncated: false };
+  }
+  let short = value;
+  let truncated = false;
+  const cut = short.search(/[?#]/);
+  if (cut !== -1) {
+    short = `${short.slice(0, cut)}${short[cut] === '#' ? '#...' : '?...'}`;
+    truncated = true;
+  }
+  if (short.length > maxLength) {
+    short = `${short.slice(0, maxLength)}...`;
+    truncated = true;
+  }
+  return { url: short, truncated };
+}
+
+function buildTabsContextRow(tab, { owned, urlMaxLength }) {
+  const shortened = shortenTabsContextUrl(tabsContextUrlOf(tab), urlMaxLength);
+  return {
+    tabId: tab.id,
+    title: tab.title || '(untitled)',
+    url: shortened.url,
+    active: tab.active === true,
+    windowId: tab.windowId ?? null,
+    owned,
+    groupId: normalizeTabGroupId(tab),
+    ...(shortened.truncated ? { urlTruncated: true } : {}),
+  };
+}
+
 function requireAbsoluteFilePath(filePath) {
   const value = typeof filePath === 'string' ? filePath.trim() : '';
   if (!value) {
@@ -1453,6 +2241,39 @@ function requireAbsoluteFilePath(filePath) {
     throw new Error('filePath must be an absolute local path.');
   }
   return value;
+}
+
+// One reading of button, clickCount and modifiers for every click path, so the
+// coordinate, selector and ref branches cannot drift. Omitting all three gives
+// back exactly what a call made before they existed did: one left click with no
+// modifiers held.
+function normalizeClickOptions(params, doubleClick) {
+  const button = params.button === 'right' || params.button === 'middle' ? params.button : 'left';
+  const rawCount = Number(params.clickCount);
+  const clickCount = Number.isFinite(rawCount) && rawCount >= 1
+    ? Math.min(3, Math.floor(rawCount))
+    : (doubleClick === true ? 2 : 1);
+  const source = params.modifiers && typeof params.modifiers === 'object' ? params.modifiers : {};
+  return {
+    button,
+    clickCount,
+    modifiers: {
+      ctrl: source.ctrl === true,
+      shift: source.shift === true,
+      alt: source.alt === true,
+      meta: source.meta === true,
+    },
+  };
+}
+
+function clickFeedbackKind(clickOptions) {
+  if (clickOptions.button === 'right') {
+    return 'rightClick';
+  }
+  if (clickOptions.clickCount >= 3) {
+    return 'triple';
+  }
+  return clickOptions.clickCount === 2 ? 'double' : 'click';
 }
 
 const SHORTCUT_CATALOG = [
@@ -1641,15 +2462,295 @@ async function withOwnedTabDebugger(tabId, fn) {
   }
 }
 
+// withOwnedTabDebugger brackets one operation. A recording needs the attachment
+// held across hundreds of captures, so these two claim and release the same
+// refcounted entry without wrapping a function. Sharing the refcount is the
+// point: a browser_screenshot taken while a recording runs joins the existing
+// attachment instead of raising debugger_busy, and neither side can detach out
+// from under the other.
+//
+// Returns { target, handle }. The handle is the entry this call incremented, and
+// unpinTabDebugger refuses to decrement anything else. Without it a long-lived
+// holder could decrement an entry it never pinned: a user dismissing Chrome's
+// automation banner makes onDetach drop entry A while a log still believes it is
+// pinned, a recording then pins entry B, and the log's stop decremented B to
+// zero and detached the recording's attachment out from under it.
+async function pinTabDebugger(tabId) {
+  if (!chrome.debugger || typeof chrome.debugger.attach !== 'function') {
+    const error = new Error('Debugger API is missing.');
+    error.code = 'debugger_unavailable';
+    throw error;
+  }
+
+  const target = { tabId };
+  let entry = tabDebuggerAttachments.get(tabId);
+  if (!entry) {
+    entry = { refCount: 0, detached: false, attachPromise: claimTabDebugger(target) };
+    entry.attachPromise.catch(() => {});
+    tabDebuggerAttachments.set(tabId, entry);
+  }
+  entry.refCount += 1;
+
+  try {
+    await entry.attachPromise;
+  } catch (error) {
+    unpinTabDebugger(tabId, entry);
+    throw error;
+  }
+
+  return { target, handle: entry };
+}
+
+function unpinTabDebugger(tabId, handle = null) {
+  const entry = tabDebuggerAttachments.get(tabId);
+  if (!entry) {
+    return false;
+  }
+  // Identity, the same guard withOwnedTabDebugger's release() already applies.
+  // A handle from a superseded entry decrements nothing.
+  if (handle && entry !== handle) {
+    return false;
+  }
+  entry.refCount -= 1;
+  // Same last-one-out rule as withOwnedTabDebugger's finally: a concurrent call
+  // still holding the entry keeps the attachment, and an entry that was already
+  // replaced is not ours to detach.
+  if (entry.refCount > 0 || tabDebuggerAttachments.get(tabId) !== entry) {
+    return false;
+  }
+  tabDebuggerAttachments.delete(tabId);
+  void chrome.debugger.detach({ tabId }).catch(() => {});
+  return true;
+}
+
 chrome.debugger?.onDetach?.addListener((source) => {
   // A user dismissing the "being debugged" banner, a crashed tab, or Chrome
   // itself can end the attachment without running the release above. Drop the
   // cached entry so the next call attaches again instead of sending commands
-  // into a target nothing is attached to.
+  // into a target nothing is attached to. The entry is marked first so anything
+  // still holding it as a handle can tell it is dead rather than current.
   if (Number.isInteger(source?.tabId)) {
+    const entry = tabDebuggerAttachments.get(source.tabId);
+    if (entry) {
+      entry.detached = true;
+    }
     tabDebuggerAttachments.delete(source.tabId);
   }
 });
+
+// browser_javascript runs in the page's MAIN world through the debugger, a world
+// neither the content agent's isolated console wrap nor the lazily injected page
+// mirror can see. Runtime.consoleAPICalled is the only signal for it, and it
+// arrives only while this extension holds the attachment, which is exactly the
+// window Runtime.evaluate runs in.
+const CDP_CONSOLE_LEVELS = {
+  error: 'error',
+  assert: 'error',
+  warning: 'warning',
+  warn: 'warning',
+  debug: 'debug',
+  log: 'info',
+  info: 'info',
+};
+
+function formatCdpConsoleArg(arg) {
+  if (!arg || typeof arg !== 'object') {
+    return String(arg ?? '');
+  }
+  if (Object.prototype.hasOwnProperty.call(arg, 'value')) {
+    if (typeof arg.value === 'string') {
+      return arg.value;
+    }
+    try {
+      return JSON.stringify(arg.value);
+    } catch {
+      return String(arg.value);
+    }
+  }
+  return arg.description || arg.unserializableValue || arg.className || arg.type || '';
+}
+
+chrome.debugger?.onEvent?.addListener((source, method, event) => {
+  if (method !== 'Runtime.consoleAPICalled' || !Number.isInteger(source?.tabId)) {
+    return;
+  }
+  // Only events from an attachment this extension owns. tabDebuggerAttachments
+  // is the single record of that, and onDetach above clears it.
+  if (!tabDebuggerAttachments.has(source.tabId)) {
+    return;
+  }
+  pushConsoleMessage(source.tabId, {
+    level: CDP_CONSOLE_LEVELS[String(event?.type || 'log').toLowerCase()] || 'info',
+    text: (event?.args || []).map(formatCdpConsoleArg).join(' '),
+    ts: Number.isFinite(event?.timestamp) ? Math.round(event.timestamp) : Date.now(),
+    source: 'debugger',
+  });
+});
+
+// Request logging. Three CDP events carry everything the tool returns: one opens
+// a row, the other two close it. Bodies and headers are never read, so nothing a
+// page sent or received is held anywhere in the worker.
+const NETWORK_LOG_METHODS = new Set([
+  'Network.requestWillBeSent',
+  'Network.responseReceived',
+  'Network.loadingFailed',
+]);
+
+chrome.debugger?.onEvent?.addListener((source, method, event) => {
+  if (!Number.isInteger(source?.tabId) || !NETWORK_LOG_METHODS.has(method)) {
+    return;
+  }
+  const log = networkLogs.get(source.tabId);
+  // Only a tab a caller explicitly started logging on, and only while the
+  // attachment is ours. tabDebuggerAttachments is the record of that, and
+  // onDetach above clears it.
+  if (!log || log.pinned !== true || !tabDebuggerAttachments.has(source.tabId)) {
+    return;
+  }
+  const requestId = String(event?.requestId || '');
+  if (!requestId) {
+    return;
+  }
+  log.lastEventAt = Date.now();
+
+  if (method === 'Network.requestWillBeSent') {
+    const requestUrl = String(event?.request?.url || '');
+    if (isMainFrameDocumentRequest(log, event)) {
+      if (event?.redirectResponse) {
+        // A redirect hop belongs to the navigation already in flight. Adopt the
+        // host so the next navigation is measured against it, but keep the
+        // chain: the hops are the part a caller debugging a redirect reads for.
+        log.hostname = networkHostname(requestUrl) ?? log.hostname;
+      } else {
+        clearNetworkLogForNavigation(source.tabId, requestUrl);
+      }
+    }
+    pushNetworkEntry(source.tabId, {
+      requestId,
+      url: requestUrl.slice(0, NETWORK_LOG_URL_MAX),
+      method: String(event?.request?.method || 'GET').toUpperCase().slice(0, 12),
+      resourceType: normalizeNetworkResourceType(event?.type),
+      status: null,
+      mimeType: null,
+      startedAt: Date.now(),
+      durationMs: null,
+      failed: false,
+      errorText: null,
+    });
+    return;
+  }
+
+  const entry = log.index.get(requestId);
+  if (!entry) {
+    // The opening event landed before logging started, or the ring has already
+    // rolled past it. A row with no request line is worse than no row.
+    return;
+  }
+  entry.durationMs = Math.max(0, Date.now() - entry.startedAt);
+  if (method === 'Network.responseReceived') {
+    entry.status = Number.isFinite(Number(event?.response?.status)) ? Number(event.response.status) : null;
+    entry.mimeType = String(event?.response?.mimeType || '').slice(0, 120) || null;
+    // responseReceived carries the settled resource type, which is more accurate
+    // than the one guessed when the request went out.
+    entry.resourceType = normalizeNetworkResourceType(event?.type || entry.resourceType);
+    return;
+  }
+  entry.failed = true;
+  entry.errorText = String(event?.errorText || 'net::ERR_FAILED').slice(0, 120);
+});
+
+function clearNetworkLogWatchdog(log) {
+  if (log?.idleTimerId !== null && log?.idleTimerId !== undefined) {
+    clearTimeout(log.idleTimerId);
+    log.idleTimerId = null;
+  }
+}
+
+function armNetworkLogWatchdog(tabId) {
+  const log = networkLogs.get(tabId);
+  if (!log) {
+    return;
+  }
+  clearNetworkLogWatchdog(log);
+  // Reset on every read rather than on every event: a page that polls in the
+  // background would otherwise keep the banner up on a tab nobody is watching.
+  log.idleTimerId = setTimeout(() => {
+    void stopNetworkLog(tabId, 'idle');
+  }, NETWORK_LOG_IDLE_MS);
+}
+
+async function startNetworkLog(tabId, sessionId) {
+  const existing = networkLogs.get(tabId);
+  // The pin has to still be the entry this log took, not merely some entry on
+  // the tab: a recording that pinned after onDetach dropped ours is a different
+  // attachment, and reusing it would leave this log holding no refcount at all.
+  if (existing && existing.pinned === true && existing.pinHandle
+    && tabDebuggerAttachments.get(tabId) === existing.pinHandle) {
+    existing.sessionId = sessionId;
+    armNetworkLogWatchdog(tabId);
+    return { log: existing, started: false };
+  }
+
+  // A pin that is gone from tabDebuggerAttachments was dropped by onDetach, so
+  // there is no refcount left to release and re-pinning is the repair.
+  const { target, handle } = await pinTabDebugger(tabId);
+  try {
+    await chrome.debugger.sendCommand(target, 'Network.enable', {
+      // Umbra never reads a body, so Chrome should not hold one for it.
+      maxTotalBufferSize: 0,
+      maxResourceBufferSize: 0,
+    });
+  } catch (error) {
+    unpinTabDebugger(tabId, handle);
+    throw error;
+  }
+
+  const tab = await safeGetTab(tabId);
+  const log = existing || createNetworkLog(sessionId, networkHostname(tab?.url));
+  log.sessionId = sessionId;
+  log.hostname = networkHostname(tab?.url) ?? log.hostname;
+  log.pinned = true;
+  // The entry this log incremented, so its stop can only ever decrement that one.
+  log.pinHandle = handle;
+  log.startedAt = Date.now();
+  log.lastEventAt = Date.now();
+  networkLogs.set(tabId, log);
+  armNetworkLogWatchdog(tabId);
+  return { log, started: true };
+}
+
+// Ends capture and releases the attachment, which is what takes Chrome's
+// automation banner off the tab. The buffer goes with it: stop is the caller
+// saying they are done, and a stopped log that kept its entries would be a
+// second state to explain.
+async function stopNetworkLog(tabId, reason = 'stop') {
+  const log = networkLogs.get(tabId);
+  if (!log) {
+    return false;
+  }
+  clearNetworkLogWatchdog(log);
+  networkLogs.delete(tabId);
+  if (log.pinned !== true) {
+    return true;
+  }
+  log.pinned = false;
+  log.stopReason = reason;
+  const handle = log.pinHandle || null;
+  log.pinHandle = null;
+  if (handle && tabDebuggerAttachments.get(tabId) === handle) {
+    await chrome.debugger.sendCommand({ tabId }, 'Network.disable').catch(() => {});
+  }
+  unpinTabDebugger(tabId, handle);
+  return true;
+}
+
+async function stopSessionNetworkLogs(sessionId) {
+  for (const [tabId, log] of [...networkLogs.entries()]) {
+    if (log.sessionId === sessionId) {
+      await stopNetworkLog(tabId, 'session_disconnected');
+    }
+  }
+}
 
 async function resolveFileInputSelector(tabId, selector, ref) {
   if (ref) {
@@ -1708,6 +2809,199 @@ async function setOwnedTabFileInput(tabId, selector, filePath) {
       throw error;
     }
   });
+}
+
+// Chrome treats content-script element.click() and dispatched MouseEvents as
+// untrusted. A page that gates a download on a user gesture ignores those and
+// leaves the control looking clicked while no file lands. Debugger
+// Input.dispatchMouseEvent is a trusted gesture and does not activate the tab.
+async function dispatchTrustedMouseClick(tabId, x, y, options = {}) {
+  const fallbackX = Number(x);
+  const fallbackY = Number(y);
+  if (!Number.isFinite(fallbackX) || !Number.isFinite(fallbackY)) {
+    throw new Error('Trusted click requires finite x and y CSS pixels.');
+  }
+  const downloadPath = typeof options.downloadPath === 'string' ? options.downloadPath.trim() : '';
+
+  const tab = await chrome.tabs.get(tabId);
+  if (tab && tab.active !== true) {
+    await chrome.tabs.update(tabId, { active: true });
+  }
+
+  return await withOwnedTabDebugger(tabId, async (target) => {
+    await chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', {
+      enabled: true,
+    }).catch(() => {});
+    let downloadBehavior = { ok: false, protocol: null, error: null };
+    if (downloadPath.startsWith('/')) {
+      try {
+        await chrome.debugger.sendCommand(target, 'Page.setDownloadBehavior', {
+          behavior: 'allow',
+          downloadPath,
+        });
+        downloadBehavior = { ok: true, protocol: 'Page.setDownloadBehavior' };
+      } catch (pageError) {
+        try {
+          await chrome.debugger.sendCommand(target, 'Browser.setDownloadBehavior', {
+            behavior: 'allow',
+            downloadPath,
+            eventsEnabled: true,
+          });
+          downloadBehavior = { ok: true, protocol: 'Browser.setDownloadBehavior' };
+        } catch (browserError) {
+          downloadBehavior = {
+            ok: false,
+            protocol: null,
+            error: `${pageError?.message || pageError} | ${browserError?.message || browserError}`,
+          };
+        }
+      }
+    }
+    await chrome.debugger.sendCommand(target, 'Page.bringToFront').catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    let clickX = fallbackX;
+    let clickY = fallbackY;
+    let fromQuads = false;
+    try {
+      const documentResult = await chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: 0 });
+      const rootId = documentResult?.root?.nodeId;
+      if (rootId) {
+        const queryResult = await chrome.debugger.sendCommand(target, 'DOM.querySelector', {
+          nodeId: rootId,
+          selector: '[data-umbra-trusted-click="1"]',
+        });
+        if (queryResult?.nodeId) {
+          const quadsResult = await chrome.debugger.sendCommand(target, 'DOM.getContentQuads', {
+            nodeId: queryResult.nodeId,
+          });
+          const quad = quadsResult?.quads?.[0];
+          if (Array.isArray(quad) && quad.length >= 8) {
+            clickX = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
+            clickY = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
+            fromQuads = true;
+          }
+        }
+      }
+    } catch {
+      // Fall back to the rect the page action already measured.
+    }
+
+    const mouse = {
+      x: clickX,
+      y: clickY,
+      button: 'left',
+      pointerType: 'mouse',
+    };
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      ...mouse,
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...mouse,
+      buttons: 1,
+      clickCount: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...mouse,
+      buttons: 0,
+      clickCount: 1,
+    });
+
+    await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+      expression: `document.querySelectorAll('[data-umbra-trusted-click]').forEach((node) => node.removeAttribute('data-umbra-trusted-click'))`,
+      returnByValue: true,
+    }).catch(() => {});
+    await chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', {
+      enabled: false,
+    }).catch(() => {});
+    return {
+      trustedClick: true,
+      via: 'dispatchMouseEvent',
+      x: clickX,
+      y: clickY,
+      fromQuads,
+      downloadPath: downloadPath.startsWith('/') ? downloadPath : null,
+      downloadBehavior,
+    };
+  });
+}
+
+function trustedClickPointFromRect(rect) {
+  if (!rect || typeof rect !== 'object') {
+    return null;
+  }
+  const x = Number(rect.x);
+  const y = Number(rect.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  const width = Number(rect.width);
+  const height = Number(rect.height);
+  return {
+    x: x + (Number.isFinite(width) && width > 0 ? width / 2 : 0),
+    y: y + (Number.isFinite(height) && height > 0 ? height / 2 : 0),
+  };
+}
+
+function pendingTrustedClickInner(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const inner = payload.result && typeof payload.result === 'object' && !Array.isArray(payload.result)
+    ? payload.result
+    : payload;
+  if (inner.pendingTrustedClick !== true) {
+    return null;
+  }
+  return inner;
+}
+
+async function maybeDispatchPendingTrustedClick(tabId, payload) {
+  const inner = pendingTrustedClickInner(payload);
+  if (!inner) {
+    return payload;
+  }
+  const point = trustedClickPointFromRect(inner.submitRect || inner.rect);
+  if (!point) {
+    throw new Error('Page action requested a trusted click without a submit rect.');
+  }
+  const downloadPath = typeof inner.downloadPath === 'string' && inner.downloadPath.trim().startsWith('/')
+    ? inner.downloadPath.trim()
+    : (typeof inner.downloadDir === 'string' && inner.downloadDir.trim().startsWith('/') ? inner.downloadDir.trim() : '');
+  // No cursor animation on this path, deliberately. The point was measured off
+  // the page a moment ago and this click lands by viewport coordinate, so
+  // anything inserted between the two, including the overlay's own script
+  // injection, gives a modal, a lazy row or a sticky header time to shift the
+  // layout under it. A coordinate click that lands two pixels off is a silent
+  // no-op export rather than an error, which is the failure this path exists to
+  // avoid. The recorder still marks the click, because that costs one Map
+  // lookup and nothing on the dispatch path.
+  pumpGifActionFrame(tabId, { kind: 'click_before', label: 'Submit', x: point.x, y: point.y });
+  const trusted = await dispatchTrustedMouseClick(tabId, point.x, point.y, { downloadPath });
+  pumpGifActionFrame(tabId, { kind: 'click', label: 'Submit', x: point.x, y: point.y });
+  const waitAfter = Math.max(0, Math.min(Number(inner.waitMsAfterClick) || 150, 2_000));
+  if (waitAfter > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitAfter));
+  }
+  inner.pendingTrustedClick = false;
+  inner.clicked = true;
+  if (Object.prototype.hasOwnProperty.call(inner, 'submitted')) {
+    inner.submitted = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(inner, 'exported')) {
+    inner.exported = true;
+  }
+  inner.trustedClick = trusted;
+  if (inner.submitResult && typeof inner.submitResult === 'object') {
+    inner.submitResult.submitted = true;
+    inner.submitResult.pendingTrustedClick = false;
+    inner.submitResult.trustedClick = trusted;
+  }
+  return payload;
 }
 
 function normalizeScreenshotFormat(value) {
@@ -1852,6 +3146,52 @@ function waitForContentAgentReady(agent, timeoutMs = CONTENT_AGENT_READY_TIMEOUT
   });
 }
 
+// Tabs whose current document already holds a same-version overlay. Cleared by
+// the navigation and tab-removal listeners below, because a new document starts
+// with no overlay in it.
+const cursorOverlayReadyTabs = new Set();
+
+function invalidateCursorOverlay(tabId) {
+  cursorOverlayReadyTabs.delete(tabId);
+  cursorLastPoint.delete(tabId);
+  cursorPendingAnimations.delete(tabId);
+}
+
+// The lazy path, for a coordinate click on a page that never needed the content
+// agent. Fail open is the rule: false means the caller runs the real action with
+// no animation, never that the action fails.
+async function ensureCursorOverlay(tabId) {
+  // Memoized per document. Without this every click, fill, type and scroll paid
+  // a chrome.tabs.get plus a two-file chrome.scripting.executeScript before the
+  // real dispatch, on a path whose whole job is to stay fast.
+  if (cursorOverlayReadyTabs.has(tabId)) {
+    return true;
+  }
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const url = String(tab?.url || tab?.pendingUrl || '');
+    // A chrome://, chrome-extension://, about:, view-source: or Chrome Web Store
+    // URL cannot be scripted at all, so the attempt is skipped rather than
+    // thrown and swallowed.
+    const unscriptable = /^(?:chrome|chrome-extension|chrome-untrusted|devtools|about|view-source|edge|moz-extension|data|blob):/i;
+    const webStore = /^https?:\/\/(?:chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i;
+    if (!url || unscriptable.test(url) || webStore.test(url)) {
+      return false;
+    }
+    // ax-tree.js rides along because measure resolves refs through
+    // UmbraAxTree.resolveElementRef, and both scripts guard on their own version
+    // so a same-version copy already in the page is left untouched.
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [AX_TREE_SCRIPT, CURSOR_OVERLAY_SCRIPT],
+    });
+    cursorOverlayReadyTabs.add(tabId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureContentAgent(tabId) {
   const existing = contentAgents.get(tabId);
   if (existing && !existing.disconnected) {
@@ -1864,10 +3204,17 @@ async function ensureContentAgent(tabId) {
   }
 
   try {
+    // cursor-overlay.js sits between the two on purpose: it needs UmbraAxTree for
+    // measure, and its one host insertion has to land before content-agent.js
+    // starts the observer that would otherwise count it as a DOM change and bump
+    // domVersion under every outstanding element ref.
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: [AX_TREE_SCRIPT, CONTENT_AGENT_SCRIPT],
+      files: [AX_TREE_SCRIPT, CURSOR_OVERLAY_SCRIPT, CONTENT_AGENT_SCRIPT],
     });
+    // The overlay went in with the agent, so the lazy path has nothing left to
+    // do on this document.
+    cursorOverlayReadyTabs.add(tabId);
   } catch (error) {
     error.code = 'content_agent_injection_failed';
     throw error;
@@ -2029,6 +3376,23 @@ async function waitForSelectorViaAgent(tabId, selector, options) {
   }
 }
 
+// A submit that works navigates the frame, and Chrome can tear the frame down
+// before chrome.scripting returns the injected function's value. That rejection
+// is evidence the key did something, so it is reported rather than thrown, and
+// only when the caller asked for the default action.
+const KEY_NAVIGATION_TEARDOWN_RE = /frame (?:with id \d+ )?(?:was |is )?removed|no frame with id|execution context was destroyed|target closed|cannot access contents|the tab was closed/i;
+
+async function dispatchKeyInTab(tabId, key, modifiers = {}, options = {}) {
+  try {
+    return await executeInTab(tabId, pressKey, [key, modifiers, options]);
+  } catch (error) {
+    if (options.defaultAction === true && KEY_NAVIGATION_TEARDOWN_RE.test(error?.message || '')) {
+      return { key, modifiers, defaultAction: 'navigated', navigationTeardown: true };
+    }
+    throw error;
+  }
+}
+
 function requireJavascriptCode(code) {
   if (typeof code !== 'string' || !code.trim()) {
     throw new Error('browser_javascript requires code.');
@@ -2060,12 +3424,23 @@ function isDebuggerAccessFailure(error) {
 // error naming the fix rather than a raw Chrome message.
 async function executeJavascriptWithWorldFallback(tabId, code, timeoutMs) {
   try {
-    const evaluated = await withOwnedTabDebugger(tabId, async (target) => chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-      expression: `(async () => {\n${String(code || '')}\n})()`,
-      awaitPromise: true,
-      returnByValue: true,
-      timeout: timeoutMs,
-    }));
+    const evaluated = await withOwnedTabDebugger(tabId, async (target) => {
+      // Enabling Runtime is what makes the caller's own console output
+      // reachable. It replays nothing logged earlier, which is why the
+      // browser_javascript handler installs the page mirror up front as well.
+      await chrome.debugger.sendCommand(target, 'Runtime.enable').catch(() => {});
+      const result = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+        expression: `(async () => {\n${String(code || '')}\n})()`,
+        awaitPromise: true,
+        returnByValue: true,
+        timeout: timeoutMs,
+      });
+      // consoleAPICalled is delivered on its own task, and withOwnedTabDebugger
+      // detaches the moment this callback returns. A detach mid-flight drops the
+      // queued events, so give them one turn.
+      await new Promise((resolve) => setTimeout(resolve, CONSOLE_DRAIN_MS));
+      return result;
+    });
     if (evaluated?.exceptionDetails) {
       const thrown = new Error(evaluated.exceptionDetails.text || 'JavaScript threw.');
       thrown.code = 'javascript_error';
@@ -2166,17 +3541,21 @@ function findAxNodesInPage(options = {}) {
     return { __error: 'browser_find requires query.' };
   }
   const selector = String(options.selector || '').trim();
-  const root = selector ? document.querySelector(selector) : (document.body || document.documentElement);
-  if (!root) {
+  // Every element the selector matched is a root, not just the first. Walking
+  // only document.querySelector's answer meant `selector: "a"` searched inside
+  // the page's first anchor and reported zero matches on a page of links.
+  const roots = selector
+    ? [...document.querySelectorAll(selector)]
+    : [document.body || document.documentElement].filter(Boolean);
+  if (!roots.length) {
     return { __error: selector ? `Selector not found: ${selector}` : 'Page root was not found.' };
   }
   const domVersion = Number.isInteger(globalThis.__umbraContentAgent?.domVersion)
     ? globalThis.__umbraContentAgent.domVersion
     : 0;
-  const found = api.findAxNodes(root, {
+  const found = api.findAxNodes(roots, {
     query,
     limit: options.limit,
-    filter: 'all',
   }, {
     document,
     refStore: api.getSharedRefStore(),
@@ -2453,7 +3832,7 @@ function readPageContent(options = {}) {
   const config = typeof options === 'string' ? { format: options } : options || {};
   const format = config.format === 'html' ? 'html' : 'text';
   const selector = typeof config.selector === 'string' ? config.selector.trim() : '';
-  const modeCandidates = ['page', 'body', 'main', 'selector'];
+  const modeCandidates = ['page', 'body', 'main', 'selector', 'article'];
   const requestedMode = String(config.mode || '').trim();
   const mode = selector
     ? 'selector'
@@ -2503,6 +3882,15 @@ function readPageContent(options = {}) {
     }
     if (mode === 'main') {
       return document.querySelector('main, article, [role="main"]') || document.body || document.documentElement;
+    }
+    if (mode === 'article') {
+      // This is the one-shot fallback that runs only when the content agent is
+      // unreachable, and it picks a root without the density scoring the agent
+      // does, so the text still carries whatever boilerplate sits inside that
+      // node. The result says so through contentAgent.fallback.
+      return document.querySelector('[itemprop="articleBody"], article, main, [role="main"]')
+        || document.body
+        || document.documentElement;
     }
     return document.documentElement;
   };
@@ -2584,7 +3972,13 @@ function readPageContent(options = {}) {
 
   if (format === 'html') {
     const rawHtml = root === document.documentElement ? document.documentElement.outerHTML : root.outerHTML || '';
-    const html = truncate(rawHtml);
+    // Same strip the content agent applies. This one-shot injection is the
+    // fallback readPageContentViaAgent uses when the agent is unreachable, and
+    // that happens in real sessions, so without it the same call returned
+    // different markup depending on which path served it. The overlay's shadow
+    // content is never serialized, so the whole of it in raw HTML is this one
+    // deterministic empty tag pair.
+    const html = truncate(rawHtml.replace(/<umbra-cursor-layer\b[^>]*><\/umbra-cursor-layer>/g, ''));
     return {
       ...base,
       // The html branch never folds the image summary into content, so this is
@@ -3033,14 +4427,13 @@ async function runPageAction(action, params = {}, options = {}) {
 
       element.scrollIntoView({ block: params.block || 'center', inline: 'center', behavior: 'instant' });
       await wait(Number(params.waitMsBeforeClick) || 100);
+      element.setAttribute('data-umbra-trusted-click', '1');
       const rect = element.getBoundingClientRect();
-      element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
-      element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-      element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-      element.click();
-      await wait(Number(params.waitMsAfterClick) || 500);
       return {
-        clicked: true,
+        clicked: false,
+        pendingTrustedClick: true,
+        waitMsAfterClick: Number(params.waitMsAfterClick) || 500,
+        downloadPath: typeof params.downloadPath === 'string' ? params.downloadPath : (typeof params.downloadDir === 'string' ? params.downloadDir : ''),
         selector,
         domIndex,
         tagName: element.tagName.toLowerCase(),
@@ -3232,8 +4625,12 @@ function getTechnicalSnapshot(options = {}) {
   });
   // One serialization, whether or not the caller wants the markup back. The
   // previous shape serialized the whole document twice when includeHtml was set
-  // and once even when it was not, purely to read a length off it.
-  const html = document.documentElement.outerHTML;
+  // and once even when it was not, purely to read a length off it. The cursor
+  // overlay's empty host is stripped for the same reason the page-content reads
+  // strip it, and because htmlLength is a figure that ends up in SEO reporting:
+  // counting the agent's own furniture inflated it on every driven page.
+  const html = document.documentElement.outerHTML
+    .replace(/<umbra-cursor-layer\b[^>]*><\/umbra-cursor-layer>/g, '');
 
   return {
     url: location.href,
@@ -3351,29 +4748,116 @@ function getTechnicalSnapshot(options = {}) {
   };
 }
 
-function clickSelector(selector, doubleClick = false) {
+function clickSelector(selector, doubleClick = false, options = {}) {
   const element = document.querySelector(selector);
   if (!element) {
     return { __error: `Selector not found: ${selector}` };
   }
 
+  const button = options.button === 'right' ? 2 : options.button === 'middle' ? 1 : 0;
+  const held = button === 2 ? 2 : button === 1 ? 4 : 1;
+  const modifiers = options.modifiers || {};
+  const ctrlKey = modifiers.ctrl === true;
+  const shiftKey = modifiers.shift === true;
+  const altKey = modifiers.alt === true;
+  const metaKey = modifiers.meta === true;
+  const modified = ctrlKey || shiftKey || altKey || metaKey;
+  const rawCount = Number(options.clickCount);
+  const clickCount = Number.isFinite(rawCount) && rawCount >= 1
+    ? Math.min(3, Math.floor(rawCount))
+    : (doubleClick ? 2 : 1);
+
   element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const rect = element.getBoundingClientRect();
-  const fireClick = () => {
-    element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
-    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-    element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-    element.click();
+  const init = (detail, buttons) => ({
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    button,
+    buttons,
+    detail,
+    ctrlKey,
+    shiftKey,
+    altKey,
+    metaKey,
+  });
+  const fireClick = (detail) => {
+    element.dispatchEvent(new MouseEvent('mouseover', init(0, held)));
+    element.dispatchEvent(new MouseEvent('mousedown', init(detail, held)));
+    element.dispatchEvent(new MouseEvent('mouseup', init(detail, 0)));
+    if (button === 2) {
+      // A browser fires no click on a right press; the page gets contextmenu and
+      // decides for itself whether to render a menu.
+      element.dispatchEvent(new MouseEvent('contextmenu', init(detail, 0)));
+      return;
+    }
+    if (button === 0 && !modified) {
+      // Dispatch first, then element.click(), the same order clickAtPoint uses.
+      // Only the dispatched event carries `detail`, which is what a page
+      // implementing select-paragraph reads on clickCount 3; returning on
+      // element.click() alone left detail at 0 on every pass. element.click()
+      // still follows, because it is what runs activation behavior.
+      element.dispatchEvent(new MouseEvent('click', init(detail, 0)));
+      element.click();
+      return;
+    }
+    element.dispatchEvent(new MouseEvent('click', init(detail, 0)));
+    if (button === 1) {
+      element.dispatchEvent(new MouseEvent('auxclick', init(detail, 0)));
+    }
   };
-  fireClick();
-  if (doubleClick) {
-    fireClick();
-    element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window, detail: 2 }));
+  for (let pass = 1; pass <= clickCount; pass += 1) {
+    fireClick(pass);
+    if (pass === 2 && button !== 2) {
+      element.dispatchEvent(new MouseEvent('dblclick', init(2, 0)));
+    }
   }
-  return { clicked: true, doubleClick: Boolean(doubleClick), selector, x: rect.x, y: rect.y };
+  // Selecting the block under a triple click is a browser default action, and a
+  // dispatched event has none: the click reported clickCount 3 and
+  // getSelection() stayed empty. Rebuilt here, and only when the page made no
+  // selection of its own.
+  const selectTripleClicked = (node) => {
+    const selection = typeof document.getSelection === 'function' ? document.getSelection() : null;
+    if (!selection || String(selection).length > 0) {
+      return 0;
+    }
+    const tag = String(node.tagName || '').toUpperCase();
+    if ((tag === 'INPUT' || tag === 'TEXTAREA') && typeof node.select === 'function') {
+      node.select();
+      return String(node.value || '').length;
+    }
+    const BLOCK_SELECTOR = 'p, li, td, th, dd, dt, blockquote, h1, h2, h3, h4, h5, h6, pre, figcaption';
+    let block = typeof node.closest === 'function' ? node.closest(BLOCK_SELECTOR) : null;
+    for (let walk = node; !block && walk && walk !== document.body; walk = walk.parentElement) {
+      const display = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(walk).display : '';
+      if ((display === 'block' || display === 'list-item' || display === 'table-cell')
+        && (walk.textContent || '').trim().length > 0) {
+        block = walk;
+      }
+    }
+    if (!block || (block.textContent || '').trim().length === 0) {
+      return 0;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return String(selection).length;
+  };
+  const selectedTextLength = clickCount >= 3 && button === 0 ? selectTripleClicked(element) : 0;
+  return {
+    clicked: true,
+    doubleClick: clickCount === 2,
+    clickCount,
+    ...(selectedTextLength > 0 ? { selectedTextLength } : {}),
+    button: options.button === 'right' ? 'right' : options.button === 'middle' ? 'middle' : 'left',
+    selector,
+    x: rect.x,
+    y: rect.y,
+  };
 }
 
-function clickAtPoint(x, y, doubleClick = false) {
+function clickAtPoint(x, y, doubleClick = false, options = {}) {
   const pointX = Number(x);
   const pointY = Number(y);
   if (!Number.isFinite(pointX) || !Number.isFinite(pointY)) {
@@ -3419,6 +4903,19 @@ function clickAtPoint(x, y, doubleClick = false) {
     return false;
   };
 
+  const button = options.button === 'right' ? 2 : options.button === 'middle' ? 1 : 0;
+  const held = button === 2 ? 2 : button === 1 ? 4 : 1;
+  const modifiers = options.modifiers || {};
+  const ctrlKey = modifiers.ctrl === true;
+  const shiftKey = modifiers.shift === true;
+  const altKey = modifiers.alt === true;
+  const metaKey = modifiers.meta === true;
+  const modified = ctrlKey || shiftKey || altKey || metaKey;
+  const rawCount = Number(options.clickCount);
+  const clickCount = Number.isFinite(rawCount) && rawCount >= 1
+    ? Math.min(3, Math.floor(rawCount))
+    : (doubleClick ? 2 : 1);
+
   const mouseInit = {
     bubbles: true,
     cancelable: true,
@@ -3427,8 +4924,12 @@ function clickAtPoint(x, y, doubleClick = false) {
     clientY: pointY,
     screenX: pointX,
     screenY: pointY,
-    button: 0,
-    buttons: 1,
+    button,
+    buttons: held,
+    ctrlKey,
+    shiftKey,
+    altKey,
+    metaKey,
   };
   const pointerInit = {
     ...mouseInit,
@@ -3437,32 +4938,86 @@ function clickAtPoint(x, y, doubleClick = false) {
     isPrimary: true,
   };
 
-  const fireClick = () => {
+  // detail is what a page reads to tell a single click from a double or a
+  // select-paragraph triple, so every event in the sequence carries the pass
+  // number rather than the constructor default of zero.
+  const fireClick = (detail) => {
     element.dispatchEvent(new PointerEvent('pointerover', pointerInit));
     element.dispatchEvent(new MouseEvent('mouseover', mouseInit));
-    element.dispatchEvent(new PointerEvent('pointerdown', pointerInit));
-    element.dispatchEvent(new MouseEvent('mousedown', mouseInit));
-    element.dispatchEvent(new PointerEvent('pointerup', { ...pointerInit, buttons: 0 }));
-    element.dispatchEvent(new MouseEvent('mouseup', { ...mouseInit, buttons: 0 }));
-    element.dispatchEvent(new MouseEvent('click', { ...mouseInit, buttons: 0 }));
-    try {
-      element.click();
-    } catch {
-      // some custom elements reject a second click
+    element.dispatchEvent(new PointerEvent('pointerdown', { ...pointerInit, detail }));
+    element.dispatchEvent(new MouseEvent('mousedown', { ...mouseInit, detail }));
+    element.dispatchEvent(new PointerEvent('pointerup', { ...pointerInit, buttons: 0, detail }));
+    element.dispatchEvent(new MouseEvent('mouseup', { ...mouseInit, buttons: 0, detail }));
+    if (button === 2) {
+      // A browser fires no click on a right press. The page gets contextmenu and
+      // renders its own menu if it has one.
+      element.dispatchEvent(new MouseEvent('contextmenu', { ...mouseInit, buttons: 0, detail }));
+      return;
+    }
+    element.dispatchEvent(new MouseEvent('click', { ...mouseInit, buttons: 0, detail }));
+    if (button === 1) {
+      element.dispatchEvent(new MouseEvent('auxclick', { ...mouseInit, buttons: 0, detail }));
+    }
+    if (button === 0 && !modified) {
+      // element.click() carries no modifier flags, so it runs only on the plain
+      // path. The dispatched click above already runs activation behavior.
+      try {
+        element.click();
+      } catch {
+        // some custom elements reject a second click
+      }
     }
     fireReact(element, 'onClick');
   };
 
-  fireClick();
-  if (doubleClick) {
-    fireClick();
-    element.dispatchEvent(new MouseEvent('dblclick', { ...mouseInit, buttons: 0, detail: 2 }));
+  for (let pass = 1; pass <= clickCount; pass += 1) {
+    fireClick(pass);
+    if (pass === 2 && button !== 2) {
+      element.dispatchEvent(new MouseEvent('dblclick', { ...mouseInit, buttons: 0, detail: 2 }));
+    }
   }
+
+  // Selecting the block under a triple click is a browser default action, and a
+  // dispatched event has none: the click reported clickCount 3 and
+  // getSelection() stayed empty. Rebuilt here, and only when the page made no
+  // selection of its own.
+  const selectTripleClicked = (node) => {
+    const selection = typeof document.getSelection === 'function' ? document.getSelection() : null;
+    if (!selection || String(selection).length > 0) {
+      return 0;
+    }
+    const tag = String(node.tagName || '').toUpperCase();
+    if ((tag === 'INPUT' || tag === 'TEXTAREA') && typeof node.select === 'function') {
+      node.select();
+      return String(node.value || '').length;
+    }
+    const BLOCK_SELECTOR = 'p, li, td, th, dd, dt, blockquote, h1, h2, h3, h4, h5, h6, pre, figcaption';
+    let block = typeof node.closest === 'function' ? node.closest(BLOCK_SELECTOR) : null;
+    for (let walk = node; !block && walk && walk !== document.body; walk = walk.parentElement) {
+      const display = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(walk).display : '';
+      if ((display === 'block' || display === 'list-item' || display === 'table-cell')
+        && (walk.textContent || '').trim().length > 0) {
+        block = walk;
+      }
+    }
+    if (!block || (block.textContent || '').trim().length === 0) {
+      return 0;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return String(selection).length;
+  };
+  const selectedTextLength = clickCount >= 3 && button === 0 ? selectTripleClicked(element) : 0;
 
   const rect = element.getBoundingClientRect();
   return {
     clicked: true,
-    doubleClick: Boolean(doubleClick),
+    doubleClick: clickCount === 2,
+    clickCount,
+    ...(selectedTextLength > 0 ? { selectedTextLength } : {}),
+    button: options.button === 'right' ? 'right' : options.button === 'middle' ? 'middle' : 'left',
     x: pointX,
     y: pointY,
     tagName: element.tagName.toLowerCase(),
@@ -3473,6 +5028,182 @@ function clickAtPoint(x, y, doubleClick = false) {
       width: Math.round(rect.width),
       height: Math.round(rect.height),
     },
+  };
+}
+
+// Synthetic drag, dispatched in the page like every other Umbra input path, so
+// the tab is never activated and Chrome never shows an automation banner for it.
+// Two event families run: the pointer and mouse sequence a canvas, slider or
+// custom sortable listens to, and, when the source carries draggable="true", the
+// HTML5 drag family, which is the only thing a native drop target reacts to.
+async function dragAtPoints(startX, startY, endX, endY, options = {}) {
+  const resolvePoint = (rawX, rawY, ref, selector) => {
+    const refValue = String(ref || '').trim();
+    const selectorValue = String(selector || '').trim();
+    if (refValue) {
+      const api = globalThis.UmbraAxTree;
+      if (!api?.resolveElementRef) {
+        return { __error: 'Element refs need the page helpers. Pass coordinates or a selector instead.' };
+      }
+      const store = api.getSharedRefStore();
+      const domVersion = Number.isInteger(globalThis.__umbraContentAgent?.domVersion)
+        ? globalThis.__umbraContentAgent.domVersion
+        : store.domVersion;
+      const resolved = api.resolveElementRef(store, refValue, domVersion);
+      if (resolved.__error) {
+        return resolved;
+      }
+      const box = resolved.element.getBoundingClientRect();
+      return { x: box.x + (box.width / 2), y: box.y + (box.height / 2), element: resolved.element };
+    }
+    if (selectorValue) {
+      const element = document.querySelector(selectorValue);
+      if (!element) {
+        return { __error: `Selector not found: ${selectorValue}` };
+      }
+      const box = element.getBoundingClientRect();
+      return { x: box.x + (box.width / 2), y: box.y + (box.height / 2), element };
+    }
+    // Number(null) is 0, which would turn an omitted end point into a drag to
+    // the top-left corner, so a missing value is rejected before it is parsed.
+    const pointX = rawX === null || rawX === undefined ? NaN : Number(rawX);
+    const pointY = rawY === null || rawY === undefined ? NaN : Number(rawY);
+    if (!Number.isFinite(pointX) || !Number.isFinite(pointY)) {
+      return { __error: 'browser_drag requires a start point and an end point, as coordinates, refs, or selectors.' };
+    }
+    return { x: pointX, y: pointY, element: document.elementFromPoint(pointX, pointY) };
+  };
+
+  const from = resolvePoint(startX, startY, options.startRef, options.startSelector);
+  if (from.__error) {
+    return from;
+  }
+  const to = resolvePoint(endX, endY, options.ref, options.selector);
+  if (to.__error) {
+    return to;
+  }
+  const source = from.element || document.elementFromPoint(from.x, from.y);
+  if (!source) {
+    return { __error: `No element at viewport point ${from.x},${from.y}.` };
+  }
+
+  const rawSteps = Number(options.steps);
+  const steps = Number.isFinite(rawSteps) && rawSteps >= 2
+    ? Math.min(40, Math.floor(rawSteps))
+    : 12;
+  const gapMs = 12;
+  const mouseInit = (point, buttons) => ({
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    view: window,
+    clientX: point.x,
+    clientY: point.y,
+    screenX: point.x,
+    screenY: point.y,
+    button: 0,
+    buttons,
+  });
+  const pointerInit = (point, buttons) => ({
+    ...mouseInit(point, buttons),
+    pointerId: 1,
+    pointerType: 'mouse',
+    isPrimary: true,
+  });
+  // A raw mouse sequence is invisible to a native drop target: the HTML5 model
+  // only moves data through drag events sharing one DataTransfer.
+  const html5 = typeof source.getAttribute === 'function' && source.getAttribute('draggable') === 'true';
+  const transfer = html5 && typeof DataTransfer === 'function' ? new DataTransfer() : null;
+  const dragEvent = (type, point, buttons) => new DragEvent(type, { ...mouseInit(point, buttons), dataTransfer: transfer });
+
+  // Moving the thumb of a native range input is a browser default action, and a
+  // dispatched pointer sequence carries none: the drag reported success while
+  // the slider sat at its start value. The value is read here so the emulation
+  // below only runs when the page itself did nothing with the sequence.
+  const rangeInput = typeof source.closest === 'function'
+    ? (source.matches?.('input[type="range"]') ? source : source.closest('input[type="range"]'))
+    : null;
+  const rangeValueBefore = rangeInput ? String(rangeInput.value) : null;
+
+  source.dispatchEvent(new PointerEvent('pointerdown', pointerInit(from, 1)));
+  source.dispatchEvent(new MouseEvent('mousedown', mouseInit(from, 1)));
+  if (transfer) {
+    source.dispatchEvent(dragEvent('dragstart', from, 1));
+  }
+
+  let over = source;
+  for (let step = 1; step <= steps; step += 1) {
+    const ratio = step / steps;
+    const point = {
+      x: from.x + ((to.x - from.x) * ratio),
+      y: from.y + ((to.y - from.y) * ratio),
+    };
+    const under = document.elementFromPoint(point.x, point.y) || over;
+    under.dispatchEvent(new PointerEvent('pointermove', pointerInit(point, 1)));
+    under.dispatchEvent(new MouseEvent('mousemove', mouseInit(point, 1)));
+    if (transfer) {
+      if (under !== over) {
+        over.dispatchEvent(dragEvent('dragleave', point, 1));
+        under.dispatchEvent(dragEvent('dragenter', point, 1));
+      }
+      under.dispatchEvent(dragEvent('dragover', point, 1));
+    }
+    over = under;
+    await new Promise((resolve) => setTimeout(resolve, gapMs));
+  }
+
+  const target = document.elementFromPoint(to.x, to.y) || over;
+  let dropAccepted = null;
+  if (transfer) {
+    // A drop handler that calls preventDefault is the page saying it took the
+    // payload, which is the one signal available without reading the page.
+    dropAccepted = target.dispatchEvent(dragEvent('drop', to, 0)) === false;
+  }
+  target.dispatchEvent(new PointerEvent('pointerup', pointerInit(to, 0)));
+  target.dispatchEvent(new MouseEvent('mouseup', mouseInit(to, 0)));
+  if (transfer) {
+    source.dispatchEvent(dragEvent('dragend', to, 0));
+  }
+
+  // The end point decides the value the same way the browser does: where the
+  // pointer let go along the track, snapped to the input's own step.
+  let emulatedRange = false;
+  let rangeValue = null;
+  if (rangeInput && String(rangeInput.value) === rangeValueBefore) {
+    const box = rangeInput.getBoundingClientRect();
+    const min = Number(rangeInput.min === '' ? 0 : rangeInput.min);
+    const max = Number(rangeInput.max === '' ? 100 : rangeInput.max);
+    const rawStep = rangeInput.step === '' || rangeInput.step === 'any' ? 1 : Number(rangeInput.step);
+    const step = Number.isFinite(rawStep) && rawStep > 0 ? rawStep : 1;
+    if (Number.isFinite(min) && Number.isFinite(max) && max > min && box.width > 0) {
+      const ratio = Math.min(1, Math.max(0, (to.x - box.x) / box.width));
+      const stepped = min + (Math.round(((max - min) * ratio) / step) * step);
+      const clamped = Math.min(max, Math.max(min, stepped));
+      // Snapping in floats leaves values like 2.7000000000000002 on a 0.1 step
+      // and the input would carry that string, so it is rounded to the step's
+      // own precision before it is written.
+      const decimals = (String(step).split('.')[1] || '').length;
+      const next = decimals > 0 ? clamped.toFixed(decimals) : String(clamped);
+      if (next !== rangeValueBefore) {
+        rangeInput.value = next;
+        rangeInput.dispatchEvent(new Event('input', { bubbles: true }));
+        rangeInput.dispatchEvent(new Event('change', { bubbles: true }));
+        emulatedRange = true;
+        rangeValue = String(rangeInput.value);
+      }
+    }
+  }
+
+  return {
+    dragged: true,
+    steps,
+    html5Drag: Boolean(transfer),
+    ...(emulatedRange ? { emulatedRange: true, rangeValue } : {}),
+    ...(dropAccepted === null ? {} : { dropAccepted }),
+    start: { x: Math.round(from.x), y: Math.round(from.y) },
+    end: { x: Math.round(to.x), y: Math.round(to.y) },
+    sourceTagName: source.tagName ? source.tagName.toLowerCase() : '',
+    targetTagName: target.tagName ? target.tagName.toLowerCase() : '',
   };
 }
 
@@ -3670,36 +5401,200 @@ function fillInteractiveRef(ref, value, selector = '') {
   return { filled: true, ref, contentEditable: element.isContentEditable };
 }
 
-function pressKey(key, modifiers = {}) {
-  const target = document.activeElement || document.body || document.documentElement;
+// Synthetic KeyboardEvents are untrusted. The DOM dispatch algorithm runs
+// activation behavior for a click whatever its isTrusted value, which is why
+// clickSelector's element.click() submits a form. A key event has no activation
+// behavior: implicit form submission on Enter is a default action Chrome
+// performs only for a trusted key event, so a dispatched Enter reaches page
+// listeners and stops there. pressKey therefore emulates the one default action
+// agents actually need, and only when the page did not claim the key.
+function pressKey(key, modifiers = {}, options = {}) {
+  const LEGACY_KEY_CODES = {
+    Enter: 13, Tab: 9, Escape: 27, ' ': 32, Backspace: 8, Delete: 46,
+    ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
+    Home: 36, End: 35, PageUp: 33, PageDown: 34,
+  };
+  // Fields whose presence blocks implicit submission, per HTML's implicit
+  // submission rules. A form with no submit button submits on Enter only when
+  // exactly one of these is present; with two or more a real Enter does nothing,
+  // and neither does this.
+  const IMPLICIT_SUBMIT_BLOCKERS = ['text', 'search', 'url', 'tel', 'email',
+    'password', 'date', 'month', 'week', 'time', 'datetime-local', 'number'];
+
   const meta = modifiers.meta === true;
   const ctrl = modifiers.ctrl === true;
   const alt = modifiers.alt === true;
   const shift = modifiers.shift === true;
+  const selector = typeof options.selector === 'string' ? options.selector.trim() : '';
+  const wantDefaultAction = options.defaultAction === true;
+
+  let explicit = null;
+  if (selector) {
+    explicit = document.querySelector(selector);
+    if (!explicit) {
+      return { __error: `Selector not found: ${selector}` };
+    }
+    if (explicit !== document.activeElement && typeof explicit.focus === 'function') {
+      explicit.focus();
+    }
+  }
+  const target = explicit || document.activeElement || document.body || document.documentElement;
+
+  const keyName = String(key);
+  const legacy = Object.prototype.hasOwnProperty.call(LEGACY_KEY_CODES, keyName)
+    ? LEGACY_KEY_CODES[keyName]
+    : (keyName.length === 1 ? keyName.toUpperCase().charCodeAt(0) : 0);
+  const code = keyName === ' ' ? 'Space'
+    : keyName.length === 1
+      ? (/[a-z]/i.test(keyName) ? `Key${keyName.toUpperCase()}`
+        : /[0-9]/.test(keyName) ? `Digit${keyName}` : '')
+      : keyName;
   const init = {
-    key,
+    key: keyName,
+    code,
+    keyCode: legacy,
+    which: legacy,
+    charCode: 0,
     bubbles: true,
     cancelable: true,
+    composed: true,
+    view: window,
     metaKey: meta,
     ctrlKey: ctrl,
     altKey: alt,
     shiftKey: shift,
   };
-  if (meta && String(key).toLowerCase() === 'a') {
+  if (meta && keyName.toLowerCase() === 'a') {
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
       target.select();
     } else {
       document.execCommand('selectAll');
     }
-  } else if (meta && String(key).toLowerCase() === 'c') {
+  } else if (meta && keyName.toLowerCase() === 'c') {
     document.execCommand('copy');
-  } else if (meta && String(key).toLowerCase() === 'v') {
+  } else if (meta && keyName.toLowerCase() === 'v') {
     document.execCommand('paste');
   }
-  target.dispatchEvent(new KeyboardEvent('keydown', init));
-  target.dispatchEvent(new KeyboardEvent('keypress', init));
+
+  const enterCandidate = wantDefaultAction && keyName === 'Enter' && !meta && !ctrl && !alt;
+  const form = enterCandidate ? resolveForm(target) : null;
+  const hrefBefore = location.href;
+  let pageSubmitted = false;
+  let submitPrevented = false;
+  // Installed BEFORE dispatch. A page handler that submits the form itself
+  // without calling preventDefault would otherwise be followed by our emulation
+  // and the form would go twice.
+  const onSubmitCapture = () => { pageSubmitted = true; };
+  const onSubmitBubble = (event) => { submitPrevented = event.defaultPrevented; };
+  if (form) {
+    form.addEventListener('submit', onSubmitCapture, { capture: true });
+    form.addEventListener('submit', onSubmitBubble, { capture: false });
+  }
+
+  const notPrevented = target.dispatchEvent(new KeyboardEvent('keydown', init));
+  target.dispatchEvent(new KeyboardEvent('keypress', { ...init, charCode: legacy }));
   target.dispatchEvent(new KeyboardEvent('keyup', init));
-  return { key, modifiers: { meta, ctrl, alt, shift } };
+
+  const base = {
+    key: keyName,
+    modifiers: { meta, ctrl, alt, shift },
+    defaultPrevented: !notPrevented,
+  };
+  const cleanup = () => {
+    if (!form) {
+      return;
+    }
+    form.removeEventListener('submit', onSubmitCapture, { capture: true });
+    form.removeEventListener('submit', onSubmitBubble, { capture: false });
+  };
+
+  if (!enterCandidate) {
+    cleanup();
+    return base;
+  }
+  if (!notPrevented) {
+    cleanup();
+    return { ...base, defaultAction: 'none', reason: 'page_prevented_default' };
+  }
+  if (pageSubmitted) {
+    cleanup();
+    return { ...base, defaultAction: 'none', reason: 'page_submitted', submitPrevented };
+  }
+  if (location.href !== hrefBefore) {
+    cleanup();
+    return { ...base, defaultAction: 'none', reason: 'page_navigated' };
+  }
+
+  const emulated = emulateEnter(target, form);
+  cleanup();
+  return { ...base, ...emulated, submitEventFired: pageSubmitted, submitPrevented };
+
+  function resolveForm(el) {
+    if (!el || el.isContentEditable) {
+      return null;
+    }
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    if (tag === 'textarea') {
+      return null;
+    }
+    if (el.form instanceof HTMLFormElement) {
+      return el.form;
+    }
+    return typeof el.closest === 'function' ? el.closest('form') : null;
+  }
+
+  function emulateEnter(el, ownerForm) {
+    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+    const inputType = tag === 'input' ? String(el.type || 'text').toLowerCase() : '';
+    if (tag === 'textarea' || el.isContentEditable) {
+      return { defaultAction: 'none', reason: 'enter_inserts_newline' };
+    }
+    // Enter on a button or a link is an activation, and activation behavior does
+    // run for a synthetic click, so element.click() reproduces it exactly.
+    if (tag === 'button' || tag === 'a' || el.getAttribute?.('role') === 'button'
+        || ['submit', 'button', 'reset', 'image'].includes(inputType)) {
+      el.click();
+      return { defaultAction: 'activate', activatedTag: tag };
+    }
+    if (!(ownerForm instanceof HTMLFormElement)) {
+      return { defaultAction: 'none', reason: 'no_form' };
+    }
+    // The default button is the first submit button in tree order owned by the
+    // form. A real Enter clicks it, so its own click handlers run and its
+    // name/value reach the submitted payload; requestSubmit() with no submitter
+    // would drop both.
+    const defaultButton = [...ownerForm.elements].find((node) => {
+      if (!node || node.disabled) {
+        return false;
+      }
+      const nodeTag = String(node.tagName || '').toLowerCase();
+      if (nodeTag === 'button') {
+        return String(node.type || 'submit').toLowerCase() === 'submit';
+      }
+      if (nodeTag === 'input') {
+        return ['submit', 'image'].includes(String(node.type || '').toLowerCase());
+      }
+      return false;
+    });
+    if (defaultButton) {
+      defaultButton.click();
+      return { defaultAction: 'default_button_click' };
+    }
+    const blockers = [...ownerForm.elements].filter((node) => (
+      String(node.tagName || '').toLowerCase() === 'input'
+      && !node.disabled
+      && IMPLICIT_SUBMIT_BLOCKERS.includes(String(node.type || 'text').toLowerCase())
+    ));
+    if (blockers.length > 1) {
+      return { defaultAction: 'none', reason: 'multiple_fields_block_implicit_submission' };
+    }
+    if (typeof ownerForm.requestSubmit === 'function') {
+      ownerForm.requestSubmit();
+      return { defaultAction: 'request_submit' };
+    }
+    ownerForm.submit();
+    return { defaultAction: 'form_submit', note: 'requestSubmit was unavailable, so the submit event and form validation were skipped' };
+  }
 }
 
 function prepareFileInputBySelector(selector) {
@@ -3721,7 +5616,68 @@ function prepareFileInputBySelector(selector) {
   return { selector: `input[type="file"][data-cic-file-target="${marker}"]` };
 }
 
-function scrollPage(selector, x = 0, y = 0) {
+// Coordinate-mode image upload: the drop zone case, which most modern uploaders
+// use instead of a visible input[type=file]. The bytes arrive base64-encoded in
+// params because nothing in the page can read a local path, and a File built
+// here from a DataTransfer is indistinguishable to the page from one a person
+// dragged in.
+function dropFileAtPoint(x, y, file) {
+  const pointX = Number(x);
+  const pointY = Number(y);
+  if (!Number.isFinite(pointX) || !Number.isFinite(pointY)) {
+    return { __error: 'browser_upload_image requires both x and y as CSS pixels for a drop.' };
+  }
+  const element = document.elementFromPoint(pointX, pointY);
+  if (!element) {
+    return { __error: `No element at viewport point ${pointX},${pointY}.` };
+  }
+  if (typeof DataTransfer !== 'function') {
+    return { __error: 'This page cannot build a drop payload. Use ref or selector against a file input instead.' };
+  }
+
+  let bytes;
+  try {
+    const binary = atob(String(file?.data || ''));
+    bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+  } catch {
+    return { __error: 'The file payload did not decode. Retry the upload.' };
+  }
+
+  const mimeType = String(file?.mimeType || 'application/octet-stream');
+  const dropped = new File([bytes], String(file?.name || 'upload'), { type: mimeType });
+  const transfer = new DataTransfer();
+  transfer.items.add(dropped);
+  const dragEvent = (type) => new DragEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    view: window,
+    clientX: pointX,
+    clientY: pointY,
+    dataTransfer: transfer,
+  });
+
+  element.dispatchEvent(dragEvent('dragenter'));
+  element.dispatchEvent(dragEvent('dragover'));
+  // A drop handler that calls preventDefault is the page saying it took the
+  // file. dispatchEvent returning false is that signal.
+  const accepted = element.dispatchEvent(dragEvent('drop')) === false;
+  return {
+    dropped: true,
+    accepted,
+    x: pointX,
+    y: pointY,
+    fileName: dropped.name,
+    bytes: dropped.size,
+    mimeType,
+    targetTagName: element.tagName.toLowerCase(),
+  };
+}
+
+function scrollPage(selector, x = 0, y = 0, options = {}) {
   if (selector) {
     const element = document.querySelector(selector);
     if (!element) {
@@ -3731,8 +5687,60 @@ function scrollPage(selector, x = 0, y = 0) {
     return { selector, scrolled: true };
   }
 
-  window.scrollBy(x, y);
-  return { x, y, scrolled: true };
+  // A scroll click is about 100 CSS pixels, the same notch a wheel reports.
+  const direction = String(options.direction || '');
+  const rawAmount = Number(options.amount);
+  const amount = Number.isFinite(rawAmount) && rawAmount >= 1 ? Math.min(30, Math.floor(rawAmount)) : 3;
+  let deltaX = Number(x) || 0;
+  let deltaY = Number(y) || 0;
+  if (direction === 'down' || direction === 'up') {
+    deltaX = 0;
+    deltaY = amount * (direction === 'up' ? -100 : 100);
+  } else if (direction === 'left' || direction === 'right') {
+    deltaY = 0;
+    deltaX = amount * (direction === 'left' ? -100 : 100);
+  }
+
+  const atX = Number(options.atX);
+  const atY = Number(options.atY);
+  if (Number.isFinite(atX) && Number.isFinite(atY)) {
+    // A page whose content lives in an inner pane ignores window.scrollBy, so
+    // walk up from the point the caller named to the first ancestor that can
+    // actually scroll on the axis being moved.
+    let node = document.elementFromPoint(atX, atY);
+    while (node && node !== document.body && node !== document.documentElement) {
+      const style = window.getComputedStyle(node);
+      const canScrollY = node.scrollHeight > node.clientHeight && /auto|scroll/.test(style.overflowY);
+      const canScrollX = node.scrollWidth > node.clientWidth && /auto|scroll/.test(style.overflowX);
+      if ((deltaY !== 0 && canScrollY) || (deltaX !== 0 && canScrollX)) {
+        const beforeTop = node.scrollTop;
+        const beforeLeft = node.scrollLeft;
+        node.scrollBy(deltaX, deltaY);
+        return {
+          x: deltaX,
+          y: deltaY,
+          scrolled: true,
+          target: 'element',
+          targetTagName: node.tagName.toLowerCase(),
+          moved: node.scrollTop !== beforeTop || node.scrollLeft !== beforeLeft,
+        };
+      }
+      node = node.parentElement;
+    }
+  }
+
+  window.scrollBy(deltaX, deltaY);
+  return { x: deltaX, y: deltaY, scrolled: true };
+}
+
+function historyGo(delta) {
+  const before = location.href;
+  const length = history.length;
+  if (length <= 1) {
+    return { moved: false, before, length, attempted: false };
+  }
+  history.go(delta);
+  return { before, length, attempted: true };
 }
 
 function scrollInteractiveRef(ref, selector = '') {
@@ -3753,6 +5761,62 @@ function scrollInteractiveRef(ref, selector = '') {
       height: Math.round(rect.height),
     },
   };
+}
+
+// Stringified into the page by executeInTab, so its free identifiers resolve in
+// the injected world. It touches nothing but globalThis.UmbraCursor, and every
+// path returns a plain object instead of throwing, because a cosmetic miss must
+// never become a tool error.
+function umbraCursorDrive(spec) {
+  const api = globalThis.UmbraCursor;
+  if (!api) {
+    return { ok: false, reason: 'cursor_overlay_missing' };
+  }
+  const op = String(spec?.op || '');
+  try {
+    if (op === 'glide') {
+      return api.glideTo({ x: spec.x, y: spec.y, durationMs: spec.durationMs })
+        .then(() => ({ ok: true, op }))
+        .catch(() => ({ ok: false, op, reason: 'cursor_overlay_failed' }));
+    }
+    if (op === 'dragPath') {
+      return api.dragPath({ points: spec.points, durationMs: spec.durationMs })
+        .then(() => ({ ok: true, op }))
+        .catch(() => ({ ok: false, op, reason: 'cursor_overlay_failed' }));
+    }
+    if (op === 'ripple') {
+      return { ok: api.ripple({ x: spec.x, y: spec.y, variant: spec.variant }), op };
+    }
+    if (op === 'typing') {
+      return { ok: api.typing({ x: spec.x, y: spec.y }), op };
+    }
+    if (op === 'scrollHint') {
+      return { ok: api.scrollHint({ x: spec.x, y: spec.y, direction: spec.direction }), op };
+    }
+    if (op === 'hide') {
+      return { ok: api.hide(), op };
+    }
+    if (op === 'state') {
+      return { ok: true, op, state: api.state() };
+    }
+    return { ok: false, op, reason: 'cursor_overlay_unknown_op' };
+  } catch {
+    return { ok: false, op, reason: 'cursor_overlay_failed' };
+  }
+}
+
+// Also stringified into the page. Returns viewport CSS pixels or null, and null
+// means the caller skips the animation and runs the real action.
+function umbraCursorMeasure(target) {
+  const api = globalThis.UmbraCursor;
+  if (!api || typeof api.measure !== 'function') {
+    return null;
+  }
+  try {
+    return api.measure(target || {}) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function hoverSelector(selector) {
@@ -3841,7 +5905,18 @@ async function typeSelector(selector, text, slowly = false) {
     element.textContent = '';
   }
   for (const char of value) {
-    const init = { key: char, bubbles: true, cancelable: true };
+    // keyCode, which and code were all zero or empty here, so a page handler
+    // that branches on event.keyCode ignored every character Umbra typed.
+    const legacy = char.toUpperCase().charCodeAt(0) || 0;
+    const init = {
+      key: char,
+      code: /[a-z]/i.test(char) ? `Key${char.toUpperCase()}` : (/[0-9]/.test(char) ? `Digit${char}` : ''),
+      keyCode: legacy,
+      which: legacy,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    };
     element.dispatchEvent(new KeyboardEvent('keydown', init));
     element.dispatchEvent(new KeyboardEvent('keypress', init));
     if (isField) {
@@ -4247,6 +6322,358 @@ async function captureSilentScreenshot(tab, { format, fullPage }) {
   }
 }
 
+// --- GIF recorder ----------------------------------------------------------
+// The worker captures frames and forwards them; it never holds them. Everything
+// below is either a capture, a message to the offscreen document that does hold
+// them, or teardown.
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function clampInteger(value, min, max, fallback) {
+  return Math.round(clampNumber(value, min, max, fallback));
+}
+
+// A label a person can read off a frame. The recorder never invents one from
+// page text, so a label carries only what the tool call already said it was
+// doing.
+const GIF_ACTION_LABELS = {
+  click: 'Click',
+  rightClick: 'Right click',
+  double: 'Double click',
+  triple: 'Triple click',
+  hover: 'Hover',
+  type: 'Type',
+  scroll: 'Scroll',
+  drag: 'Drag',
+  select: 'Select',
+  upload: 'Upload',
+};
+
+function gifActionLabel(kind) {
+  return GIF_ACTION_LABELS[String(kind || '')] || 'Action';
+}
+
+async function sendOffscreenMessage(message) {
+  let response;
+  try {
+    response = await chrome.runtime.sendMessage(message);
+  } catch {
+    // No listener means the document that holds the frames is not running, which
+    // is what disabling the bridge or clearing the shared key does. Chrome's own
+    // message for that says only that a connection could not be established.
+    const error = new Error(
+      'The recorder is not running. Recording needs the bridge enabled and a shared key set on the options page.',
+    );
+    error.code = 'gif_offscreen_unavailable';
+    throw error;
+  }
+  if (response?.__error) {
+    const error = new Error(response.__error.message || 'Offscreen call failed.');
+    error.code = response.__error.code || 'offscreen_call_failed';
+    throw error;
+  }
+  if (!response || response.ok !== true) {
+    const error = new Error(response?.error || 'The recorder document did not answer.');
+    error.code = response?.code || 'gif_offscreen_unavailable';
+    throw error;
+  }
+  return response;
+}
+
+async function pushGifFrame(tabId, dataUrl, meta = {}) {
+  const state = gifRecordings.get(tabId);
+  if (!state) {
+    return false;
+  }
+  const response = await sendOffscreenMessage({
+    type: 'gif_frame',
+    tabId,
+    dataUrl,
+    maxWidth: state.maxWidth,
+    maxFrames: state.maxFrames,
+    meta: {
+      ts: Date.now(),
+      kind: 'tick',
+      dpr: state.dpr,
+      ...meta,
+      tabId,
+    },
+  });
+  // The two counts mean different things and are kept apart on purpose. The
+  // buffer lives in the offscreen document, so it is the only thing that knows
+  // how many frames it evicted to stay under maxFrames; this worker is the only
+  // thing that knows how many captures failed outright.
+  const reportedCount = Number(response.frameCount);
+  state.frameCount = Number.isFinite(reportedCount) ? reportedCount : state.frameCount;
+  const reportedDrops = Number(response.droppedFrames);
+  state.droppedFrames = Number.isFinite(reportedDrops) ? reportedDrops : state.droppedFrames;
+  state.truncatedFrames = response.truncatedFrames === true;
+  return true;
+}
+
+// One frame, best effort. Every caller except the opening capture in the
+// browser_gif start branch uses this, and every one of them is on a path whose
+// real job is something else, so a failed frame is dropped rather than raised.
+async function captureGifFrame(tabId, meta = {}) {
+  const state = gifRecordings.get(tabId);
+  if (!state || state.recording !== true) {
+    return false;
+  }
+  if (Date.now() - state.startedAt > MAX_RECORDING_MS) {
+    // The worker may have been evicted and resurrected since the watchdog timer
+    // was set, in which case this check is the only one left standing.
+    await stopGifRecording(tabId, 'watchdog');
+    return false;
+  }
+  if (state.capturing === true) {
+    // A slow page at ten frames a second would otherwise queue captures faster
+    // than they complete. Skipping the tick keeps the buffer honest about when
+    // each frame was taken instead of backdating a pile of them.
+    state.skippedFrames += 1;
+    // The frame is dropped; its metadata is not. Action frames are the only ones
+    // carrying a click variant, a label or drag endpoints, and they are exactly
+    // the ones a slow capture swallows, so a click that landed during a tick used
+    // to produce an export with no click marker at all. The metadata rides the
+    // next frame that does land instead.
+    if (isGifActionMeta(meta)) {
+      state.pendingActionMeta = { ...meta };
+    }
+    return false;
+  }
+  state.capturing = true;
+  const captureStartedAt = Date.now();
+  const carried = state.pendingActionMeta || null;
+  state.pendingActionMeta = null;
+  const frameMeta = carried && !isGifActionMeta(meta) ? { ...carried, ...meta, kind: carried.kind } : meta;
+  try {
+    const capture = await captureSilentScreenshot({ id: tabId }, { format: 'png', fullPage: false });
+    return await pushGifFrame(tabId, capture.dataUrl, frameMeta);
+  } catch {
+    state.failedCaptures += 1;
+    // The capture failed, so nothing carried the metadata. Put it back rather
+    // than losing the marker to a single bad frame.
+    if (carried && !state.pendingActionMeta) {
+      state.pendingActionMeta = carried;
+    }
+    return false;
+  } finally {
+    state.capturing = false;
+    // What the next tick is paced against. A tab whose capture takes 700ms
+    // cannot hold four frames a second, and asking it to only produced skipped
+    // ticks.
+    state.lastCaptureMs = Date.now() - captureStartedAt;
+  }
+}
+
+// Interval capture, paced to what the tab can actually deliver. A fixed
+// setInterval at the requested rate queued ticks faster than a capture
+// completed and captureGifFrame dropped every one of them: a recording at four
+// frames a second reported 92 skipped frames against 24 exported. Each tick
+// schedules the next one, never sooner than the last capture took, so the frame
+// rate degrades to what the page can hold instead of shredding.
+function scheduleGifTick(tabId) {
+  const state = gifRecordings.get(tabId);
+  if (!state || state.recording !== true) {
+    return;
+  }
+  const delay = Math.max(state.frameIntervalMs || 0, Math.round(state.lastCaptureMs || 0));
+  state.intervalId = setTimeout(() => {
+    void captureGifFrame(tabId, { kind: 'tick' })
+      .catch(() => false)
+      .then(() => scheduleGifTick(tabId));
+  }, delay);
+}
+
+// A frame worth drawing a marker on: anything the cursor path pumped, as opposed
+// to an interval tick.
+function isGifActionMeta(meta) {
+  const kind = String(meta?.kind || '');
+  return kind !== '' && kind !== 'tick' && kind !== 'start';
+}
+
+// Called from the cursor driver on paths whose result is already decided. A tab
+// with no recording pays one Map lookup and nothing else.
+function pumpGifActionFrame(tabId, meta) {
+  if (!gifRecordings.has(tabId)) {
+    return;
+  }
+  void captureGifFrame(tabId, meta).catch(() => {});
+}
+
+// The control record for a recording lives in this worker's memory, which MV3
+// tears down after about thirty seconds idle, while the frames live in the
+// offscreen document, which does not get evicted. A resurrected worker used to
+// see an empty map: browser_gif stop threw "No recording on this tab" with every
+// frame still buffered, status reported frameCount 0 next to a non-zero buffered
+// count, and nothing was left to release the debugger pin. These three keep a
+// compact copy in chrome.storage.session so a new worker can pick the recording
+// back up.
+const GIF_RECORDING_STORAGE_KEY = 'gifRecordingsByTab';
+
+async function persistGifRecordings() {
+  const snapshot = {};
+  for (const [tabId, state] of gifRecordings.entries()) {
+    snapshot[String(tabId)] = {
+      sessionId: state.sessionId,
+      startedAt: state.startedAt,
+      stoppedAt: state.stoppedAt,
+      stopReason: state.stopReason,
+      recording: state.recording === true,
+      fps: state.fps,
+      maxFrames: state.maxFrames,
+      maxWidth: state.maxWidth,
+      dpr: state.dpr,
+      frameCount: state.frameCount,
+      droppedFrames: state.droppedFrames,
+      failedCaptures: state.failedCaptures,
+      skippedFrames: state.skippedFrames,
+      truncatedFrames: state.truncatedFrames === true,
+    };
+  }
+  try {
+    await chrome.storage.session.set({ [GIF_RECORDING_STORAGE_KEY]: snapshot });
+  } catch {
+    // Session storage is a convenience here. A write that fails costs recovery
+    // after an eviction, never the recording that is running now.
+  }
+}
+
+// Rehydrated recordings come back stopped, not running. The interval and the
+// watchdog died with the worker, so the capture genuinely ended at the eviction;
+// reporting it as live would promise frames that were never taken. What this
+// buys is an honest stop, status and export against the frames the offscreen
+// document still holds.
+async function rehydrateGifRecordings() {
+  let stored = null;
+  try {
+    const read = await chrome.storage.session.get(GIF_RECORDING_STORAGE_KEY);
+    stored = read?.[GIF_RECORDING_STORAGE_KEY] || null;
+  } catch {
+    return;
+  }
+  if (!stored || typeof stored !== 'object') {
+    return;
+  }
+  for (const [key, record] of Object.entries(stored)) {
+    const tabId = Number(key);
+    if (!Number.isInteger(tabId) || gifRecordings.has(tabId) || !record) {
+      continue;
+    }
+    gifRecordings.set(tabId, {
+      sessionId: record.sessionId || '',
+      startedAt: Number(record.startedAt) || Date.now(),
+      stoppedAt: Number(record.stoppedAt) || Date.now(),
+      stopReason: record.recording === true ? 'worker_evicted' : (record.stopReason || 'stop'),
+      recording: false,
+      pinned: false,
+      pinHandle: null,
+      fps: Number(record.fps) || GIF_DEFAULT_FPS,
+      maxFrames: Number(record.maxFrames) || GIF_DEFAULT_MAX_FRAMES,
+      maxWidth: Number(record.maxWidth) || GIF_DEFAULT_MAX_WIDTH,
+      dpr: Number(record.dpr) || 1,
+      intervalId: null,
+      watchdogId: null,
+      frameIntervalMs: Math.round(1000 / (Number(record.fps) || GIF_DEFAULT_FPS)),
+      lastCaptureMs: 0,
+      capturing: false,
+      pendingActionMeta: null,
+      frameCount: Number(record.frameCount) || 0,
+      droppedFrames: Number(record.droppedFrames) || 0,
+      failedCaptures: Number(record.failedCaptures) || 0,
+      skippedFrames: Number(record.skippedFrames) || 0,
+      truncatedFrames: record.truncatedFrames === true,
+    });
+  }
+  await persistGifRecordings();
+}
+
+// A fresh worker holds no pins by definition, so any tab this extension is still
+// attached to is an orphan from the worker that died, and Chrome is showing that
+// tab an automation banner nothing can take down. Walking the target list and
+// detaching those is what makes the "no log or recording leaves a tab attached
+// indefinitely" promise true across an eviction.
+async function releaseOrphanedTabDebuggers() {
+  if (!chrome.debugger || typeof chrome.debugger.getTargets !== 'function') {
+    return;
+  }
+  let targets = [];
+  try {
+    targets = await chrome.debugger.getTargets();
+  } catch {
+    return;
+  }
+  for (const target of targets || []) {
+    const tabId = Number(target?.tabId);
+    if (!Number.isInteger(tabId) || target?.attached !== true) {
+      continue;
+    }
+    // Re-read on every iteration: a command served while this walk was in
+    // flight may have pinned the tab, and that pin is live.
+    if (tabDebuggerAttachments.has(tabId)) {
+      continue;
+    }
+    // Detach only ever ends this extension's own attachment. A target held by
+    // DevTools or another client rejects, which is the same as leaving it alone.
+    await chrome.debugger.detach({ tabId }).catch(() => {});
+  }
+}
+
+async function stopGifRecording(tabId, reason = 'stop') {
+  const state = gifRecordings.get(tabId);
+  if (!state) {
+    return null;
+  }
+  if (state.intervalId !== null) {
+    // A self-rescheduling timeout rather than an interval, so the pacing can
+    // follow how long a capture on this tab actually takes.
+    clearTimeout(state.intervalId);
+    state.intervalId = null;
+  }
+  if (state.watchdogId !== null) {
+    clearTimeout(state.watchdogId);
+    state.watchdogId = null;
+  }
+  if (state.recording === true) {
+    state.recording = false;
+    state.stoppedAt = Date.now();
+    state.stopReason = reason;
+    if (state.pinned === true) {
+      state.pinned = false;
+      unpinTabDebugger(tabId, state.pinHandle || null);
+      state.pinHandle = null;
+    }
+  }
+  await persistGifRecordings();
+  return state;
+}
+
+// Stop and throw the frames away. Separate from stop because stop keeps the
+// buffer: the usual sequence is stop, then export, then clear.
+async function discardGifRecording(tabId) {
+  await stopGifRecording(tabId, 'clear');
+  gifRecordings.delete(tabId);
+  await persistGifRecordings();
+  try {
+    await sendOffscreenMessage({ type: 'gif_clear', tabId });
+  } catch {
+    // A closed offscreen document has already lost the frames it held.
+  }
+}
+
+async function discardSessionGifRecordings(sessionId) {
+  for (const [tabId, state] of [...gifRecordings.entries()]) {
+    if (state.sessionId === sessionId) {
+      await discardGifRecording(tabId);
+    }
+  }
+}
+
 // Accepts either a full data URL, which is what the visible-tab capture API
 // returns, or the bare base64 payload that Page.captureScreenshot already hands
 // back. Taking both means the debugger path never wraps a prefix on just to
@@ -4362,9 +6789,12 @@ async function resolveScreenshotRefRect(tabId, ref, selector = '') {
   return result;
 }
 
-async function buildScreenshotPreflight(tab) {
+// `recommendation` is a repair hint, so it belongs only on a result that needs
+// repairing. Attaching it to every capture made a clean screenshot read like a
+// failed one.
+async function buildScreenshotPreflight(tab, { degraded = '' } = {}) {
   const window = await safeGetWindow(tab.windowId);
-  return {
+  const preflight = {
     tabId: tab.id,
     url: tab.url || '',
     title: tab.title || '',
@@ -4374,8 +6804,13 @@ async function buildScreenshotPreflight(tab) {
     windowFocused: window?.focused === true,
     width: tab.width ?? null,
     height: tab.height ?? null,
-    recommendation: 'Retry after the tab finishes loading, or capture without crop if the failure came from image readback.',
   };
+  if (degraded === 'capture_failed') {
+    preflight.recommendation = 'Retry after the tab finishes loading, or capture without crop if the failure came from image readback.';
+  } else if (degraded === 'truncated') {
+    preflight.recommendation = `Full page capture stopped at ${FULL_PAGE_SCREENSHOT_MAX_HEIGHT_PX}px. Capture the rest with region crops, or scroll and capture again.`;
+  }
+  return preflight;
 }
 
 async function buildSessionStatus(sessionId) {
@@ -4476,19 +6911,25 @@ async function handleBridgeCommand(message) {
   if (tool === 'browser_tabs_context') {
     const includeInternal = params.includeInternal === true;
     const createIfEmpty = params.createIfEmpty === true;
+    const ownedOnly = params.ownedOnly === true;
+    const limit = clampTabsContextLimit(params.limit);
+    const urlMaxLength = clampTabsContextUrlMaxLength(params.urlMaxLength);
     let releasedMissingTab = false;
     let created = false;
-    let ownedCount = 0;
+    let createdTabId = null;
+
+    const liveOwnedTabs = new Map();
     for (const tabId of sessionStore.listTabIds(sessionId)) {
       const tab = await safeGetTab(tabId);
       if (tab) {
-        ownedCount += 1;
+        liveOwnedTabs.set(tab.id, tab);
       } else {
         sessionStore.releaseTab(tabId);
         releasedMissingTab = true;
       }
     }
-    if (createIfEmpty && ownedCount === 0) {
+
+    if (createIfEmpty && liveOwnedTabs.size === 0) {
       const createdTab = await getOrCreateSessionTab(sessionId, {
         createIfMissing: true,
         newTab: true,
@@ -4497,28 +6938,48 @@ async function handleBridgeCommand(message) {
       });
       await ensureSessionGroup(sessionId, createdTab.id, { groupCollapsed: true });
       created = true;
+      createdTabId = createdTab.id;
+      // Re-read after grouping: the create result predates the group assignment
+      // and can still carry an empty url.
+      liveOwnedTabs.set(createdTab.id, (await safeGetTab(createdTab.id)) || createdTab);
     } else if (releasedMissingTab) {
       await sessionStore.persist();
     }
 
-    const ownedIds = new Set(sessionStore.listTabIds(sessionId));
-    const chromeTabs = await chrome.tabs.query({});
-    const tabs = [];
-    for (const tab of chromeTabs) {
-      const url = tab.url || '';
-      if (!isTabsContextUrl(url, includeInternal)) {
-        continue;
-      }
-      tabs.push({
-        tabId: tab.id,
-        title: tab.title || '(untitled)',
-        url,
-        active: tab.active === true,
-        windowId: tab.windowId ?? null,
-        owned: ownedIds.has(tab.id),
-      });
+    // Owned tabs come from the session store, never from the query snapshot, and
+    // are never filtered by URL. A tab this session owns is always listed.
+    const ownedRows = [];
+    for (const tab of liveOwnedTabs.values()) {
+      ownedRows.push(buildTabsContextRow(tab, { owned: true, urlMaxLength }));
     }
-    return { sessionId, created, tabs };
+
+    const unownedRows = [];
+    if (!ownedOnly) {
+      const chromeTabs = await chrome.tabs.query({});
+      for (const tab of chromeTabs) {
+        if (liveOwnedTabs.has(tab.id)) {
+          continue;
+        }
+        if (!isTabsContextUrl(tabsContextUrlOf(tab), includeInternal)) {
+          continue;
+        }
+        unownedRows.push(buildTabsContextRow(tab, { owned: false, urlMaxLength }));
+      }
+    }
+
+    const matchedCount = ownedRows.length + unownedRows.length;
+    const tabs = [...ownedRows, ...unownedRows].slice(0, limit);
+    return {
+      sessionId,
+      created,
+      createdTabId,
+      group: await serializeSessionGroup(sessionId),
+      ownedCount: ownedRows.length,
+      matchedCount,
+      returnedCount: tabs.length,
+      truncatedByLimit: tabs.length < matchedCount,
+      tabs,
+    };
   }
 
   if (tool === 'browser_find_tabs') {
@@ -4662,6 +7123,14 @@ async function handleBridgeCommand(message) {
     if (!fullPage && region) {
       region = applyScreenshotZoom(region, zoom);
     }
+    // An evidence screenshot never carries a stray pointer or a ripple. The GIF
+    // recorder calls captureSilentScreenshot directly and deliberately keeps the
+    // cursor, which is why this lives in the tool block and not in the capture
+    // helper. The settle first: the glide and the post-action indicator are
+    // started rather than awaited, so a screenshot issued right after a click
+    // could otherwise hide, then have the ripple injection land on top of it.
+    await settleCursorAnimations(tab.id);
+    await executeInTab(tab.id, umbraCursorDrive, [{ op: 'hide' }]).catch(() => {});
     let dataUrl;
     let truncated = false;
     try {
@@ -4717,7 +7186,7 @@ async function handleBridgeCommand(message) {
         dataUrl = await cropScreenshotDataUrl(fullDataUrl, region, devicePixelRatio, format);
       }
     } catch (error) {
-      error.preflight = await buildScreenshotPreflight(tab);
+      error.preflight = await buildScreenshotPreflight(tab, { degraded: 'capture_failed' });
       throw error;
     }
     return {
@@ -4731,7 +7200,7 @@ async function handleBridgeCommand(message) {
       fullPage,
       format,
       ...(truncated ? { truncated: true } : {}),
-      preflight: await buildScreenshotPreflight(tab),
+      preflight: await buildScreenshotPreflight(tab, truncated ? { degraded: 'truncated' } : {}),
       data: stripScreenshotDataUrl(dataUrl),
     };
   }
@@ -4830,16 +7299,23 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    const result = await formInputViaAgent(tab.id, {
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'type',
       selector,
       ref,
-      value: params.value,
-      checked: params.checked,
+    }, async () => {
+      const result = await formInputViaAgent(tab.id, {
+        selector,
+        ref,
+        value: params.value,
+        checked: params.checked,
+      });
+      return {
+        tabId: tab.id,
+        ...result,
+      };
     });
-    return {
-      tabId: tab.id,
-      ...result,
-    };
   }
 
   if (tool === 'browser_get_bridge_pressure') {
@@ -4870,11 +7346,12 @@ async function handleBridgeCommand(message) {
     // different fixes, and the reason was being computed and then discarded, so
     // both reported "not installed in this build".
     const recipe = await ensurePageRecipe(tab.id, params.action);
-    return await executeInTabWithRetry(tab.id, runPageAction, [
+    const result = await executeInTabWithRetry(tab.id, runPageAction, [
       params.action,
       params.params && typeof params.params === 'object' ? params.params : {},
       { timeoutMs: params.timeoutMs, recipeFailure: recipe.installed ? '' : (recipe.reason || '') },
     ]);
+    return await maybeDispatchPendingTrustedClick(tab.id, result);
   }
 
   if (tool === 'browser_javascript') {
@@ -4885,6 +7362,16 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
+    // No console mirror is installed from here. Priming it on every tab this
+    // tool touched left a permanent MAIN-world monkey-patch on console.error,
+    // warn, info, log and debug, plus a globalThis.__umbraPageConsole buffer the
+    // page itself could read, on any page the agent ran JS against. That is
+    // resident state the extension does not otherwise leave behind, and a
+    // console.log whose toString is no longer native is a one-line fingerprint.
+    // The mirror stays where it was before: installed by
+    // browser_console_messages, which is the tool whose job is reading console
+    // output, at the cost of the first read on a tab missing whatever the page
+    // logged before it.
     return await executeJavascriptViaAgent(tab.id, code, { timeoutMs: params.timeoutMs });
   }
 
@@ -4902,25 +7389,83 @@ async function handleBridgeCommand(message) {
     if (!hasRef && !hasSelector && !hasCoords) {
       throw new Error('browser_click requires selector, ref, or both x and y.');
     }
-    if (hasCoords) {
-      return await executeInTab(tab.id, clickAtPoint, [Number(params.x), Number(params.y), doubleClick]);
-    }
-    if (hasRef) {
-      const result = await sendContentAgentCommand(tab.id, 'click_interactive_ref', {
-        ref: params.ref,
-        options: {
-          ...(params.selector ? { selector: params.selector } : {}),
-          doubleClick,
-        },
-      });
-      if (result?.__error) {
-        const error = new Error(result.__error);
-        error.code = result.__errorCode || result.code;
-        throw error;
+    // doubleClick predates clickCount and still works: it is normalized here so
+    // every path below reads one number.
+    const clickOptions = normalizeClickOptions(params, doubleClick);
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: clickFeedbackKind(clickOptions),
+      ...(hasCoords ? { x: Number(params.x), y: Number(params.y) } : {}),
+      selector: hasSelector ? params.selector : '',
+      ref: hasRef ? params.ref : '',
+    }, async () => {
+      if (hasCoords) {
+        return await executeInTab(tab.id, clickAtPoint, [Number(params.x), Number(params.y), doubleClick, clickOptions]);
       }
-      return result;
+      if (hasRef) {
+        const result = await sendContentAgentCommand(tab.id, 'click_interactive_ref', {
+          ref: params.ref,
+          options: {
+            ...(params.selector ? { selector: params.selector } : {}),
+            doubleClick,
+            button: clickOptions.button,
+            clickCount: clickOptions.clickCount,
+            modifiers: clickOptions.modifiers,
+          },
+        });
+        if (result?.__error) {
+          const error = new Error(result.__error);
+          error.code = result.__errorCode || result.code;
+          throw error;
+        }
+        return result;
+      }
+      return await executeInTab(tab.id, clickSelector, [params.selector, doubleClick, clickOptions]);
+    });
+  }
+
+  if (tool === 'browser_drag') {
+    const tab = await getOrCreateSessionTab(sessionId, {
+      tabId: params.tabId ?? null,
+      createIfMissing: false,
+      activate: params.activate === true,
+    });
+    invalidateTabReadCache(tab.id);
+    const startRef = typeof params.startRef === 'string' ? params.startRef.trim() : '';
+    const startSelector = typeof params.startSelector === 'string' ? params.startSelector.trim() : '';
+    const endRef = typeof params.ref === 'string' ? params.ref.trim() : '';
+    const endSelector = typeof params.selector === 'string' ? params.selector.trim() : '';
+    const hasStartCoords = Number.isFinite(Number(params.startX)) && Number.isFinite(Number(params.startY));
+    const hasEndCoords = Number.isFinite(Number(params.x)) && Number.isFinite(Number(params.y));
+    if (!hasStartCoords && !startRef && !startSelector) {
+      throw new Error('browser_drag requires a start point: startX and startY, startRef, or startSelector.');
     }
-    return await executeInTab(tab.id, clickSelector, [params.selector, doubleClick]);
+    if (!hasEndCoords && !endRef && !endSelector) {
+      throw new Error('browser_drag requires an end point: x and y, ref, or selector.');
+    }
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'drag',
+      ...(hasStartCoords ? { x: Number(params.startX), y: Number(params.startY) } : {}),
+      selector: startSelector,
+      ref: startRef,
+      // The overlay draws the path only when it knows both ends up front. An end
+      // named by ref or selector is resolved in the page, so those drags get the
+      // glide to the start and no arrow.
+      ...(hasEndCoords ? { endX: Number(params.x), endY: Number(params.y) } : {}),
+    }, async () => await executeInTab(tab.id, dragAtPoints, [
+      hasStartCoords ? Number(params.startX) : null,
+      hasStartCoords ? Number(params.startY) : null,
+      hasEndCoords ? Number(params.x) : null,
+      hasEndCoords ? Number(params.y) : null,
+      {
+        startRef,
+        startSelector,
+        ref: endRef,
+        selector: endSelector,
+        ...(Number.isFinite(Number(params.steps)) ? { steps: Number(params.steps) } : {}),
+      },
+    ]));
   }
 
   if (tool === 'browser_click_text') {
@@ -4930,11 +7475,17 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    return await executeInTab(tab.id, clickVisibleText, [params.text, {
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'click',
+      // clickVisibleText reports the rect origin of whatever it matched, which
+      // is the only point available for a text lookup.
+      pointFromResult: (result) => (result && result.clicked === true ? { x: result.x, y: result.y } : null),
+    }, async () => await executeInTab(tab.id, clickVisibleText, [params.text, {
       exact: params.exact !== false,
       selector: params.selector || '',
       index: Number.isInteger(params.index) ? params.index : 0,
-    }]);
+    }]));
   }
 
   if (tool === 'browser_fill') {
@@ -4944,20 +7495,27 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    if (typeof params.ref === 'string' && params.ref.trim()) {
-      const result = await sendContentAgentCommand(tab.id, 'fill_interactive_ref', {
-        ref: params.ref,
-        value: params.value,
-        options: params.selector ? { selector: params.selector } : {},
-      });
-      if (result?.__error) {
-        const error = new Error(result.__error);
-        error.code = result.__errorCode || result.code;
-        throw error;
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'type',
+      selector: typeof params.selector === 'string' ? params.selector : '',
+      ref: typeof params.ref === 'string' ? params.ref : '',
+    }, async () => {
+      if (typeof params.ref === 'string' && params.ref.trim()) {
+        const result = await sendContentAgentCommand(tab.id, 'fill_interactive_ref', {
+          ref: params.ref,
+          value: params.value,
+          options: params.selector ? { selector: params.selector } : {},
+        });
+        if (result?.__error) {
+          const error = new Error(result.__error);
+          error.code = result.__errorCode || result.code;
+          throw error;
+        }
+        return result;
       }
-      return result;
-    }
-    return await executeInTab(tab.id, fillSelector, [params.selector, params.value]);
+      return await executeInTab(tab.id, fillSelector, [params.selector, params.value]);
+    });
   }
 
   if (tool === 'browser_file_upload') {
@@ -4969,9 +7527,57 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    const targetSelector = await resolveFileInputSelector(tab.id, selector, ref);
-    await setOwnedTabFileInput(tab.id, targetSelector, filePath);
-    return { tabId: tab.id, uploaded: true, filePath };
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'upload',
+      selector,
+      ref,
+    }, async () => {
+      const targetSelector = await resolveFileInputSelector(tab.id, selector, ref);
+      await setOwnedTabFileInput(tab.id, targetSelector, filePath);
+      return { tabId: tab.id, uploaded: true, filePath };
+    });
+  }
+
+  if (tool === 'browser_upload_image') {
+    const selector = typeof params.selector === 'string' ? params.selector.trim() : '';
+    const ref = typeof params.ref === 'string' ? params.ref.trim() : '';
+    const hasCoords = Number.isFinite(Number(params.x)) && Number.isFinite(Number(params.y));
+    if (!selector && !ref && !hasCoords) {
+      throw new Error('browser_upload_image requires ref, selector, or both x and y.');
+    }
+    const tab = await getOrCreateSessionTab(sessionId, {
+      tabId: params.tabId ?? null,
+      createIfMissing: false,
+      activate: params.activate === true,
+    });
+    invalidateTabReadCache(tab.id);
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'upload',
+      ...(hasCoords && !selector && !ref ? { x: Number(params.x), y: Number(params.y) } : {}),
+      selector,
+      ref,
+    }, async () => {
+      if (selector || ref) {
+        // File-input mode is the existing upload mechanism unchanged: the path
+        // is handed to Chrome and never becomes bytes on the wire, so this mode
+        // has no size limit.
+        const filePath = requireAbsoluteFilePath(params.filePath);
+        const targetSelector = await resolveFileInputSelector(tab.id, selector, ref);
+        await setOwnedTabFileInput(tab.id, targetSelector, filePath);
+        return { tabId: tab.id, uploaded: true, mode: 'fileInput', filePath };
+      }
+      if (typeof params.fileData !== 'string' || !params.fileData) {
+        throw new Error('browser_upload_image drop mode needs the file contents, which the MCP server attaches before the call leaves it. Retry, or name a file input with ref or selector.');
+      }
+      const result = await executeInTab(tab.id, dropFileAtPoint, [Number(params.x), Number(params.y), {
+        name: params.fileName || '',
+        mimeType: params.mimeType || '',
+        data: params.fileData,
+      }]);
+      return { tabId: tab.id, uploaded: true, mode: 'drop', ...result };
+    });
   }
 
   if (tool === 'browser_press_key') {
@@ -4981,8 +7587,55 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    const chord = parseShortcutChord(String(params.key || ''), null);
-    return await executeInTab(tab.id, pressKey, [chord.key, chord.modifiers]);
+    // A space-separated key is a sequence: "Tab Tab Enter" is three chords, and
+    // a single token is one chord, which is what every call before this made.
+    const chords = String(params.key || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((token) => parseShortcutChord(token, null));
+    if (chords.length === 0) {
+      throw new Error('browser_press_key requires key.');
+    }
+    const repeat = clampInteger(params.repeat, 1, 100, 1);
+    const dispatchCount = chords.length * repeat;
+    if (dispatchCount > KEY_SEQUENCE_MAX_DISPATCHES) {
+      throw new Error(`browser_press_key would dispatch ${dispatchCount} keys, above the ${KEY_SEQUENCE_MAX_DISPATCHES} cap. Shorten the sequence or lower repeat.`);
+    }
+    const keySelector = typeof params.selector === 'string' ? params.selector.trim() : '';
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'type',
+      // With no selector the keystroke lands wherever the page has the caret, so
+      // that is where the indicator belongs. A page with nothing focused matches
+      // nothing and the animation is skipped.
+      selector: keySelector || ':focus',
+    }, async () => {
+      const keyOptions = {
+        defaultAction: params.defaultAction !== false,
+        selector: keySelector,
+      };
+      if (chords.length === 1 && repeat === 1) {
+        return await dispatchKeyInTab(tab.id, chords[0].key, chords[0].modifiers, keyOptions);
+      }
+      const dispatched = [];
+      let last = null;
+      for (let pass = 0; pass < repeat; pass += 1) {
+        for (const chord of chords) {
+          if (dispatched.length) {
+            await new Promise((resolve) => setTimeout(resolve, KEY_SEQUENCE_GAP_MS));
+          }
+          last = await dispatchKeyInTab(tab.id, chord.key, chord.modifiers, keyOptions);
+          dispatched.push(chord.name);
+          if (last?.navigationTeardown === true) {
+            // The frame the rest of the sequence would target is gone, so
+            // stopping here is the honest answer rather than a run of errors.
+            return { ...last, keys: dispatched, repeat, dispatchCount: dispatched.length, stoppedOnNavigation: true };
+          }
+        }
+      }
+      return { ...last, keys: dispatched, repeat, dispatchCount: dispatched.length };
+    });
   }
 
   if (tool === 'browser_shortcut') {
@@ -4996,8 +7649,16 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    const result = await executeInTab(tab.id, pressKey, [chord.key, chord.modifiers]);
-    return { tabId: tab.id, dispatched: true, name: chord.name, ...result };
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'type',
+      selector: ':focus',
+    }, async () => {
+      const result = await dispatchKeyInTab(tab.id, chord.key, chord.modifiers, {
+        defaultAction: params.defaultAction !== false,
+      });
+      return { tabId: tab.id, dispatched: true, name: chord.name, ...result };
+    });
   }
 
   if (tool === 'browser_scroll') {
@@ -5007,22 +7668,60 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    if (typeof params.ref === 'string' && params.ref.trim()) {
-      const result = await sendContentAgentCommand(tab.id, 'scroll_interactive_ref', {
-        ref: params.ref,
-        options: params.selector ? { selector: params.selector } : {},
-      });
-      if (result?.__error) {
-        const error = new Error(result.__error);
-        error.code = result.__errorCode || result.code;
-        throw error;
+    const scrollRef = typeof params.ref === 'string' ? params.ref.trim() : '';
+    const scrollSelector = typeof params.selector === 'string' ? params.selector.trim() : '';
+    const scrollDirection = ['up', 'down', 'left', 'right'].includes(params.direction) ? params.direction : '';
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'scroll',
+      selector: scrollRef ? '' : scrollSelector,
+      ref: scrollRef,
+      // A plain window scroll names no element, and the chevron still needs a
+      // place to draw. This is the one caller that opts into the viewport
+      // centre; every other one wants null so it can aim from its own result.
+      fallback: 'viewport',
+      ...(Number.isFinite(Number(params.atX)) && Number.isFinite(Number(params.atY))
+        ? { x: Number(params.atX), y: Number(params.atY) }
+        : {}),
+      direction: scrollDirection || (Number(params.y || 0) < 0 ? 'up' : 'down'),
+    }, async () => {
+      if (scrollRef) {
+        const result = await sendContentAgentCommand(tab.id, 'scroll_interactive_ref', {
+          ref: params.ref,
+          options: params.selector ? { selector: params.selector } : {},
+        });
+        if (result?.__error) {
+          const error = new Error(result.__error);
+          error.code = result.__errorCode || result.code;
+          throw error;
+        }
+        return result;
       }
-      return result;
-    }
-    return await executeInTab(tab.id, scrollPage, [params.selector || '', params.x || 0, params.y || 0]);
+      return await executeInTab(tab.id, scrollPage, [params.selector || '', params.x || 0, params.y || 0, {
+        direction: scrollDirection,
+        ...(Number.isFinite(Number(params.amount)) ? { amount: Number(params.amount) } : {}),
+        ...(Number.isFinite(Number(params.atX)) ? { atX: Number(params.atX) } : {}),
+        ...(Number.isFinite(Number(params.atY)) ? { atY: Number(params.atY) } : {}),
+      }]);
+    });
   }
 
   if (tool === 'browser_wait') {
+    const selector = typeof params.selector === 'string' ? params.selector.trim() : '';
+    const urlContains = typeof params.urlContains === 'string' ? params.urlContains.trim() : '';
+    const urlChanged = params.urlChanged === true;
+    const rawDurationMs = Number(params.durationMs);
+    // Clamped up to the schema minimum rather than dropped to zero. Batch
+    // children get no schema validation, so durationMs: 10 used to fall through
+    // to the no-predicate branch and fail with "browser_wait requires selector,
+    // urlContains, urlChanged, or durationMs" on a call that plainly gave one,
+    // which sent the caller looking for a parameter they had already supplied.
+    const durationMs = Number.isFinite(rawDurationMs) && rawDurationMs > 0
+      ? Math.min(30_000, Math.max(50, Math.floor(rawDurationMs)))
+      : 0;
+    if (!selector && !urlContains && !urlChanged && !durationMs) {
+      throw new Error('browser_wait requires selector, urlContains, urlChanged, or durationMs.');
+    }
     const tab = await getOrCreateSessionTab(sessionId, {
       tabId: params.tabId ?? null,
       createIfMissing: false,
@@ -5030,10 +7729,37 @@ async function handleBridgeCommand(message) {
       updateActive: false,
       persist: false,
     });
-    return await waitForSelectorViaAgent(tab.id, params.selector, {
-      timeoutMs: params.timeoutMs,
+    const budgetMs = clampTimeoutMs(params.timeoutMs, 10_000, 120_000);
+    const startedAt = Date.now();
+    if (durationMs) {
+      // A plain sleep, for the animation or transition that settles with no DOM
+      // signal to wait on. The page is never touched.
+      await new Promise((resolve) => setTimeout(resolve, durationMs));
+      if (!selector && !urlContains && !urlChanged) {
+        return { tabId: tab.id, waited: durationMs };
+      }
+    }
+    const waited = durationMs ? { waited: durationMs } : {};
+    let navigation = null;
+    if (urlContains || urlChanged) {
+      navigation = await waitForTabUrl(tab.id, {
+        urlContains,
+        urlChanged,
+        fromUrl: typeof params.fromUrl === 'string' ? params.fromUrl : '',
+        timeoutMs: Math.max(500, budgetMs - (Date.now() - startedAt)),
+      });
+    }
+    if (!selector) {
+      return { tabId: tab.id, ...waited, ...navigation };
+    }
+    const remainingMs = Math.max(500, budgetMs - (Date.now() - startedAt));
+    const found = await waitForSelectorViaAgent(tab.id, selector, {
+      timeoutMs: remainingMs,
       visible: params.visible === true,
     });
+    return navigation
+      ? { ...found, tabId: tab.id, ...waited, navigation }
+      : { ...found, ...waited };
   }
 
   if (tool === 'browser_resize') {
@@ -5067,14 +7793,8 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    try {
-      await chrome.tabs.goBack(tab.id);
-    } catch {
-      return { tabId: tab.id, moved: false, reason: 'no-history' };
-    }
-    await waitForTabComplete(tab.id, clampTimeoutMs(params.timeoutMs));
-    const updated = await safeGetTab(tab.id);
-    return { tabId: tab.id, moved: true, url: updated?.url || tab.url || '' };
+    const result = await moveTabHistory(tab.id, 'back', clampTimeoutMs(params.timeoutMs));
+    return { tabId: tab.id, ...result };
   }
 
   if (tool === 'browser_navigate_forward') {
@@ -5084,14 +7804,8 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    try {
-      await chrome.tabs.goForward(tab.id);
-    } catch {
-      return { tabId: tab.id, moved: false, reason: 'no-history' };
-    }
-    await waitForTabComplete(tab.id, clampTimeoutMs(params.timeoutMs));
-    const updated = await safeGetTab(tab.id);
-    return { tabId: tab.id, moved: true, url: updated?.url || tab.url || '' };
+    const result = await moveTabHistory(tab.id, 'forward', clampTimeoutMs(params.timeoutMs));
+    return { tabId: tab.id, ...result };
   }
 
   if (tool === 'browser_hover') {
@@ -5102,20 +7816,27 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    if (ref) {
-      const result = await sendContentAgentCommand(tab.id, 'hover_interactive_ref', {
-        ref,
-        options: selector ? { selector } : {},
-      });
-      if (result?.__error) {
-        const error = new Error(result.__error);
-        error.code = result.__errorCode || result.code;
-        throw error;
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'hover',
+      selector,
+      ref,
+    }, async () => {
+      if (ref) {
+        const result = await sendContentAgentCommand(tab.id, 'hover_interactive_ref', {
+          ref,
+          options: selector ? { selector } : {},
+        });
+        if (result?.__error) {
+          const error = new Error(result.__error);
+          error.code = result.__errorCode || result.code;
+          throw error;
+        }
+        return { tabId: tab.id, hovered: true };
       }
+      await executeInTab(tab.id, hoverSelector, [selector]);
       return { tabId: tab.id, hovered: true };
-    }
-    await executeInTab(tab.id, hoverSelector, [selector]);
-    return { tabId: tab.id, hovered: true };
+    });
   }
 
   if (tool === 'browser_select_option') {
@@ -5130,21 +7851,28 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    if (ref) {
-      const result = await sendContentAgentCommand(tab.id, 'select_interactive_ref', {
-        ref,
-        values,
-        options: selector ? { selector } : {},
-      });
-      if (result?.__error) {
-        const error = new Error(result.__error);
-        error.code = result.__errorCode || result.code;
-        throw error;
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'select',
+      selector,
+      ref,
+    }, async () => {
+      if (ref) {
+        const result = await sendContentAgentCommand(tab.id, 'select_interactive_ref', {
+          ref,
+          values,
+          options: selector ? { selector } : {},
+        });
+        if (result?.__error) {
+          const error = new Error(result.__error);
+          error.code = result.__errorCode || result.code;
+          throw error;
+        }
+        return { tabId: tab.id, selected: result.selected || [] };
       }
-      return { tabId: tab.id, selected: result.selected || [] };
-    }
-    const result = await executeInTab(tab.id, selectOptionsBySelector, [selector, values]);
-    return { tabId: tab.id, selected: result?.selected || [] };
+      const result = await executeInTab(tab.id, selectOptionsBySelector, [selector, values]);
+      return { tabId: tab.id, selected: result?.selected || [] };
+    });
   }
 
   if (tool === 'browser_type') {
@@ -5162,44 +7890,55 @@ async function handleBridgeCommand(message) {
       activate: params.activate === true,
     });
     invalidateTabReadCache(tab.id);
-    if (!slowly) {
-      if (ref) {
-        const result = await sendContentAgentCommand(tab.id, 'fill_interactive_ref', {
+    return await withCursorFeedback(tab.id, {
+      sessionId,
+      kind: 'type',
+      selector: ref ? '' : (selector || ':focus'),
+      ref,
+    }, async () => {
+      if (!slowly) {
+        if (ref) {
+          const result = await sendContentAgentCommand(tab.id, 'fill_interactive_ref', {
+            ref,
+            value: text,
+            options: selector ? { selector } : {},
+          });
+          if (result?.__error) {
+            const error = new Error(result.__error);
+            error.code = result.__errorCode || result.code;
+            throw error;
+          }
+        } else if (selector) {
+          await executeInTab(tab.id, fillSelector, [selector, text]);
+        } else {
+          await executeInTab(tab.id, typeSelector, ['', text, false]);
+        }
+      } else if (ref) {
+        const result = await sendContentAgentCommand(tab.id, 'type_interactive_ref', {
           ref,
-          value: text,
-          options: selector ? { selector } : {},
+          text,
+          options: {
+            ...(selector ? { selector } : {}),
+            slowly: true,
+          },
         });
         if (result?.__error) {
           const error = new Error(result.__error);
           error.code = result.__errorCode || result.code;
           throw error;
         }
-      } else if (selector) {
-        await executeInTab(tab.id, fillSelector, [selector, text]);
       } else {
-        await executeInTab(tab.id, typeSelector, ['', text, false]);
+        await executeInTab(tab.id, typeSelector, [selector || '', text, true]);
       }
-    } else if (ref) {
-      const result = await sendContentAgentCommand(tab.id, 'type_interactive_ref', {
-        ref,
-        text,
-        options: {
-          ...(selector ? { selector } : {}),
-          slowly: true,
-        },
-      });
-      if (result?.__error) {
-        const error = new Error(result.__error);
-        error.code = result.__errorCode || result.code;
-        throw error;
+      if (submit) {
+        const pressed = await dispatchKeyInTab(tab.id, 'Enter', {}, {
+          defaultAction: params.defaultAction !== false,
+          selector: ref ? '' : selector,
+        });
+        return { tabId: tab.id, typed: true, length: text.length, submit: pressed };
       }
-    } else {
-      await executeInTab(tab.id, typeSelector, [selector || '', text, true]);
-    }
-    if (submit) {
-      await executeInTab(tab.id, pressKey, ['Enter']);
-    }
-    return { tabId: tab.id, typed: true, length: text.length };
+      return { tabId: tab.id, typed: true, length: text.length };
+    });
   }
 
   if (tool === 'browser_console_messages') {
@@ -5215,7 +7954,7 @@ async function handleBridgeCommand(message) {
     try {
       const agentResult = await sendContentAgentCommand(tab.id, 'read_console_messages', {});
       for (const message of agentResult?.messages || []) {
-        pushConsoleMessage(tab.id, message);
+        pushConsoleMessage(tab.id, { ...message, source: 'agent' });
       }
     } catch (error) {
       if (!useOneShotContentFallback(error)) {
@@ -5224,8 +7963,9 @@ async function handleBridgeCommand(message) {
     }
     try {
       const pageResult = await executeInTab(tab.id, installAndReadPageConsole, [], { world: 'MAIN' });
+      pageConsoleMirrors.add(tab.id);
       for (const message of pageResult?.messages || []) {
-        pushConsoleMessage(tab.id, message);
+        pushConsoleMessage(tab.id, { ...message, source: 'page' });
       }
     } catch {
       // MAIN-world console wrap is best effort if the page blocks it.
@@ -5248,6 +7988,249 @@ async function handleBridgeCommand(message) {
     return { ok: true, reloading: true };
   }
 
+  if (tool === 'browser_cursor') {
+    const installDefault = await (async () => {
+      try {
+        const config = await loadBridgeConfig();
+        return config.cursorOverlay !== false;
+      } catch {
+        return true;
+      }
+    })();
+    if (typeof params.enabled === 'boolean') {
+      cursorSessionOverrides.set(sessionId, params.enabled === true);
+    }
+    const hasOverride = cursorSessionOverrides.has(sessionId);
+    let tabId = null;
+    if (params.tabId !== undefined && params.tabId !== null) {
+      const tab = await getOrCreateSessionTab(sessionId, {
+        tabId: params.tabId,
+        createIfMissing: false,
+        activate: params.activate === true,
+        updateActive: false,
+        persist: false,
+      });
+      tabId = tab.id;
+      if (hasOverride && cursorSessionOverrides.get(sessionId) !== true) {
+        await executeInTab(tab.id, umbraCursorDrive, [{ op: 'hide' }]).catch(() => {});
+      }
+    }
+    return {
+      sessionId,
+      enabled: hasOverride ? cursorSessionOverrides.get(sessionId) === true : installDefault,
+      source: hasOverride ? 'session' : 'install',
+      installDefault,
+      ...(tabId === null ? {} : { tabId }),
+    };
+  }
+
+  if (tool === 'browser_gif') {
+    const action = String(params.action || '').trim();
+    if (!['start', 'stop', 'export', 'clear', 'status'].includes(action)) {
+      throw new Error('browser_gif action must be start, stop, export, clear or status.');
+    }
+    const tab = await getOrCreateSessionTab(sessionId, {
+      tabId: params.tabId ?? null,
+      createIfMissing: false,
+      activate: params.activate === true,
+    });
+
+    const describe = (state) => {
+      const durationMs = state ? (state.stoppedAt || Date.now()) - state.startedAt : 0;
+      return {
+        tabId: tab.id,
+        recording: state?.recording === true,
+        frameCount: state?.frameCount || 0,
+        droppedFrames: state?.droppedFrames || 0,
+        failedCaptures: state?.failedCaptures || 0,
+        skippedFrames: state?.skippedFrames || 0,
+        truncatedFrames: state?.truncatedFrames === true,
+        fps: state?.fps ?? null,
+        // Frames a second the tab actually delivered. A slow page cannot hold
+        // the requested rate, and the pacing lets it fall rather than queue
+        // captures that get dropped, so this is the number the export has.
+        effectiveFps: state && durationMs > 0
+          ? Math.round(((state.frameCount || 0) / (durationMs / 1000)) * 100) / 100
+          : null,
+        maxFrames: state?.maxFrames ?? null,
+        maxWidth: state?.maxWidth ?? null,
+        durationMs,
+      };
+    };
+
+    if (action === 'start') {
+      if (gifRecordings.get(tab.id)?.recording === true) {
+        throw new Error('A recording is already running on this tab. Stop it before starting another.');
+      }
+      await discardGifRecording(tab.id);
+
+      const fps = clampNumber(params.fps, GIF_MIN_FPS, GIF_MAX_FPS, GIF_DEFAULT_FPS);
+      const maxFrames = clampInteger(params.maxFrames, GIF_MIN_MAX_FRAMES, GIF_MAX_MAX_FRAMES, GIF_DEFAULT_MAX_FRAMES);
+      const maxWidth = clampInteger(params.maxWidth, GIF_MIN_MAX_WIDTH, GIF_MAX_MAX_WIDTH, GIF_DEFAULT_MAX_WIDTH);
+      // Frame metadata arrives in CSS pixels while the capture is in device
+      // pixels, so the ratio is read once per recording rather than once per
+      // frame. An unreadable page keeps 1, which only costs overlay precision.
+      const dpr = await executeInTab(tab.id, () => window.devicePixelRatio || 1).catch(() => 1);
+
+      // Hold the attachment for the whole recording instead of letting each
+      // capture attach and detach at the frame rate.
+      const { handle: pinHandle } = await pinTabDebugger(tab.id);
+
+      const state = {
+        sessionId,
+        startedAt: Date.now(),
+        stoppedAt: null,
+        stopReason: null,
+        recording: true,
+        pinned: true,
+        pinHandle,
+        fps,
+        maxFrames,
+        maxWidth,
+        dpr: Number.isFinite(Number(dpr)) ? Number(dpr) : 1,
+        intervalId: null,
+        watchdogId: null,
+        frameIntervalMs: Math.round(1000 / fps),
+        lastCaptureMs: 0,
+        capturing: false,
+        pendingActionMeta: null,
+        frameCount: 0,
+        droppedFrames: 0,
+        failedCaptures: 0,
+        skippedFrames: 0,
+        truncatedFrames: false,
+      };
+      gifRecordings.set(tab.id, state);
+      await persistGifRecordings();
+
+      try {
+        // The opening frame is captured here rather than through the pump
+        // because this is the one capture whose failure should reach the
+        // caller: a tab that cannot be captured at all should fail start rather
+        // than record nothing and fail at export. captureSilentScreenshot is
+        // the capture path for every frame, chosen over the visible-tab capture
+        // API because it leaves the tab in the background and Chrome does not
+        // throttle it to roughly two calls a second.
+        const opening = await captureSilentScreenshot(tab, { format: 'png', fullPage: false });
+        await pushGifFrame(tab.id, opening.dataUrl, { kind: 'start', label: 'Recording started' });
+      } catch (error) {
+        await discardGifRecording(tab.id);
+        throw error;
+      }
+
+      scheduleGifTick(tab.id);
+      state.watchdogId = setTimeout(() => {
+        void stopGifRecording(tab.id, 'watchdog');
+      }, MAX_RECORDING_MS);
+
+      return { ...describe(state), started: true, maxRecordingMs: MAX_RECORDING_MS };
+    }
+
+    if (action === 'stop') {
+      const state = await stopGifRecording(tab.id, 'stop');
+      if (!state) {
+        throw new Error('No recording on this tab. Start one before stopping it.');
+      }
+      return { ...describe(state), stopped: true };
+    }
+
+    if (action === 'clear') {
+      const had = gifRecordings.has(tab.id);
+      await discardGifRecording(tab.id);
+      return { tabId: tab.id, cleared: true, hadRecording: had };
+    }
+
+    if (action === 'status') {
+      const state = gifRecordings.get(tab.id) || null;
+      let buffered = null;
+      try {
+        const response = await sendOffscreenMessage({ type: 'gif_status', tabId: tab.id });
+        buffered = {
+          frameCount: response.frameCount,
+          droppedFrames: response.droppedFrames,
+          truncatedFrames: response.truncatedFrames === true,
+        };
+      } catch {
+        // The buffer lives elsewhere; a document that is gone reports nothing
+        // rather than turning a status read into an error.
+      }
+      return { ...describe(state), buffered };
+    }
+
+    // export
+    const state = await stopGifRecording(tab.id, 'export');
+    const response = await sendOffscreenMessage({
+      type: 'gif_export',
+      tabId: tab.id,
+      quality: clampInteger(params.quality, GIF_MIN_QUALITY, GIF_MAX_QUALITY, GIF_DEFAULT_QUALITY),
+      overlays: params.overlays !== false,
+      watermark: typeof params.watermark === 'string' ? params.watermark.slice(0, 40) : GIF_DEFAULT_WATERMARK,
+      fps: state?.fps ?? GIF_DEFAULT_FPS,
+    });
+    return {
+      tabId: tab.id,
+      data: response.data,
+      mimeType: 'image/gif',
+      bytes: response.bytes,
+      frameCount: response.frameCount,
+      droppedFrames: response.droppedFrames ?? (state?.droppedFrames || 0),
+      failedCaptures: state?.failedCaptures || 0,
+      truncatedFrames: response.truncatedFrames === true,
+      durationMs: response.durationMs ?? 0,
+      fps: state?.fps ?? GIF_DEFAULT_FPS,
+      width: response.width ?? null,
+      height: response.height ?? null,
+    };
+  }
+
+  if (tool === 'browser_read_network_requests') {
+    const tab = await getOrCreateSessionTab(sessionId, {
+      tabId: params.tabId ?? null,
+      createIfMissing: false,
+      activate: params.activate === true,
+      updateActive: false,
+      persist: false,
+    });
+    const filter = {
+      urlPattern: typeof params.urlPattern === 'string' ? params.urlPattern.slice(0, 300) : '',
+      types: Array.isArray(params.types) ? params.types : null,
+      limit: clampInteger(params.limit, 1, 300, 50),
+    };
+
+    if (params.stop === true) {
+      // The final read: hand back what the buffer holds, then release the
+      // attachment so the tab loses its automation banner.
+      const requests = filterNetworkEntries(tab.id, filter);
+      const stopped = await stopNetworkLog(tab.id, 'stop');
+      return {
+        tabId: tab.id,
+        capturing: false,
+        stopped,
+        requests,
+        count: requests.length,
+      };
+    }
+
+    const { log, started } = await startNetworkLog(tab.id, sessionId);
+    const requests = filterNetworkEntries(tab.id, filter);
+    const cleared = params.clear === true ? clearNetworkLog(tab.id) : 0;
+    return {
+      tabId: tab.id,
+      capturing: true,
+      startedCapture: started,
+      requests,
+      count: requests.length,
+      buffered: log.entries.length,
+      droppedEntries: log.droppedEntries,
+      ...(params.clear === true ? { cleared } : {}),
+      ...(started
+        ? {
+          note: 'Logging started with this call, so the log is usually empty. Act on the page and read again.',
+        }
+        : {}),
+    };
+  }
+
   throw new Error(`Unsupported tool: ${tool}`);
 }
 
@@ -5261,6 +8244,29 @@ function isTrustedExtensionSender(sender) {
   const extensionOrigin = `chrome-extension://${extensionId}`;
   return origin === extensionOrigin || url.startsWith(`${extensionOrigin}/`);
 }
+
+// Toolbar icon color-scheme switching. Stable Chrome has no declarative
+// icon_variants, so the offscreen document reports prefers-color-scheme and
+// the worker swaps between the dark-glyph set (light toolbars) and the
+// white-glyph set (dark toolbars). Reapplied from storage on worker boot
+// because setIcon does not survive a service worker restart.
+const TOOLBAR_ICON_PATHS = {
+  light: { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' },
+  dark: { 16: 'icons/icon16-dark.png', 32: 'icons/icon32-dark.png', 48: 'icons/icon48-dark.png', 128: 'icons/icon128-dark.png' },
+};
+let toolbarIconIsDark = null;
+
+async function applyToolbarIconScheme(dark) {
+  if (toolbarIconIsDark === dark) {
+    return;
+  }
+  toolbarIconIsDark = dark;
+  await chrome.action.setIcon({ path: dark ? TOOLBAR_ICON_PATHS.dark : TOOLBAR_ICON_PATHS.light });
+}
+
+void chrome.storage.local.get('toolbarColorScheme')
+  .then(({ toolbarColorScheme }) => (toolbarColorScheme ? applyToolbarIconScheme(toolbarColorScheme === 'dark') : undefined))
+  .catch(() => {});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isTrustedExtensionSender(sender)) {
@@ -5282,6 +8288,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { ok: true };
       case 'bridge_session_disconnected': {
         invalidateSessionContentAgents(message.sessionId, 'session_disconnected');
+        cursorSessionOverrides.delete(message.sessionId);
+        await discardSessionGifRecordings(message.sessionId);
+        await stopSessionNetworkLogs(message.sessionId);
         sessionStore.markDisconnected(message.sessionId);
         await sessionStore.persist();
         return { ok: true };
@@ -5307,6 +8316,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'bridge_status_update':
         await chrome.storage.local.set({ bridgeStatus: message.status });
         return { ok: true };
+      case 'bridge_color_scheme': {
+        const dark = message.dark === true;
+        await chrome.storage.local.set({ toolbarColorScheme: dark ? 'dark' : 'light' });
+        await applyToolbarIconScheme(dark);
+        return { ok: true };
+      }
       default:
         return { ok: false };
     }
@@ -5319,6 +8334,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   consoleBuffers.delete(tabId);
+  pageConsoleMirrors.delete(tabId);
+  invalidateCursorOverlay(tabId);
+  // A recording on a closed tab has nothing left to capture, and its pin would
+  // otherwise hold a debugger attachment on a target that no longer exists.
+  await stopGifRecording(tabId, 'tab_removed');
+  await discardGifRecording(tabId);
+  // Same reason as the recording above: a request log on a closed tab has
+  // nothing left to observe and its pin would hold an attachment on a target
+  // that no longer exists.
+  await stopNetworkLog(tabId, 'tab_removed');
   invalidateContentAgent(tabId, 'tab_removed');
   if (sessionStore.releaseTab(tabId)) {
     await sessionStore.persist();
@@ -5328,9 +8353,19 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo?.url) {
     markConsoleNavigation(tabId);
+    // The mirror lives on a MAIN-world global that the new document does not
+    // carry, so a stale flag would suppress reinstallation for the rest of the
+    // tab's life.
+    pageConsoleMirrors.delete(tabId);
+    // The request log is not touched here. A move to a different hostname still
+    // drops it, but off the new document's own Network.requestWillBeSent, which
+    // arrives before this event and before the row that document produced.
   }
   if (changeInfo?.url || changeInfo?.status === 'loading') {
     invalidateContentAgent(tabId, 'navigation');
+    // A new document carries no overlay, so the memo has to go with it or the
+    // next action would skip the injection and animate nothing.
+    invalidateCursorOverlay(tabId);
   }
 });
 
@@ -5369,6 +8404,13 @@ async function initialize(reason = 'initialize') {
       });
       await ensureInstallId();
       await sessionStoreReady;
+      // Once per worker lifetime, before any command is served. The recordings
+      // come back from session storage so stop, status and export answer against
+      // the frames the offscreen document still holds, and any debugger
+      // attachment left behind by the worker that died is detached, which is
+      // what takes Chrome's automation banner back off the tab.
+      await rehydrateGifRecordings();
+      await releaseOrphanedTabDebuggers();
       bootstrapped = true;
     }
     await ensureBridgeWakeAlarm();
@@ -5387,7 +8429,21 @@ chrome.alarms?.onAlarm.addListener((alarm) => {
     return;
   }
 
-  initialize('alarm').catch((error) => console.error('[bridge] alarm init failed', error));
+  // A worker evicted mid-recording loses its interval and its watchdog timer, so
+  // this minute alarm is the last thing that can notice an overrun recording and
+  // release its debugger attachment. It reads the live map, which initialize()
+  // has already refilled from chrome.storage.session on a resurrected worker;
+  // before that rehydration existed this loop ran over an empty map and could
+  // never fire.
+  initialize('alarm')
+    .then(() => {
+      for (const [tabId, state] of [...gifRecordings.entries()]) {
+        if (state.recording === true && Date.now() - state.startedAt > MAX_RECORDING_MS) {
+          void stopGifRecording(tabId, 'watchdog');
+        }
+      }
+    })
+    .catch((error) => console.error('[bridge] alarm init failed', error));
 });
 
 chrome.runtime.onInstalled.addListener((details) => {

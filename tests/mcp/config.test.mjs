@@ -6,7 +6,9 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  RETIRED_BROKER_SOCKET_PATH,
   describeSocketPathProblem,
+  ensureBrokerSocketAlias,
   resolveBrokerSocketPath,
   resolveDownloadDir,
   resolveLaunchdLabel,
@@ -96,13 +98,50 @@ describe('mcp-server/config.js', () => {
     });
   });
 
+  it('treats the retired /tmp socket as unset instead of binding a second broker', () => {
+    withEnv({ UMBRA_BROKER_SOCKET: RETIRED_BROKER_SOCKET_PATH }, () => {
+      assert.equal(
+        resolveBrokerSocketPath(),
+        path.join(os.homedir(), '.umbra', 'run', 'broker.sock'),
+      );
+    });
+    withEnv({ UMBRA_BROKER_SOCKET: '  /tmp/umbra-rust-broker.sock  ' }, () => {
+      assert.equal(
+        resolveBrokerSocketPath(),
+        path.join(os.homedir(), '.umbra', 'run', 'broker.sock'),
+      );
+    });
+  });
+
+  it('replaces a leftover retired path with a symlink to the live socket', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'umbra-alias-'));
+    const live = path.join(dir, 'run', 'broker.sock');
+    const retired = path.join(dir, 'retired.sock');
+    fs.mkdirSync(path.dirname(live), { recursive: true });
+    fs.writeFileSync(live, '');
+    fs.writeFileSync(retired, 'stale');
+    try {
+      const result = ensureBrokerSocketAlias(retired, live);
+      assert.equal(result.ok, true);
+      assert.equal(result.kind, 'alias');
+      assert.equal(fs.readlinkSync(retired), live);
+      const again = ensureBrokerSocketAlias(retired, live);
+      assert.equal(again.ok, true);
+      assert.equal(fs.readlinkSync(retired), live);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // Personal-identity scanning is repo-wide and lives in the release check.
   // This case covers only the hardcoded absolute paths these two modules exist
-  // to replace.
-  it('ships no hardcoded home path and no world-writable socket path', () => {
+  // to replace. The retired socket is named so leftover shims can be aliased;
+  // the live default still cannot resolve under /tmp.
+  it('ships no hardcoded home path and no world-writable live socket path', () => {
     assert.doesNotMatch(configSource, /\/Users\//);
-    assert.doesNotMatch(configSource, /\/tmp\/umbra/);
+    assert.match(configSource, /RETIRED_BROKER_SOCKET_PATH/);
     assert.doesNotMatch(timeoutsSource, /\/Users\//);
+    assert.doesNotMatch(timeoutsSource, /\/tmp\/umbra/);
   });
 });
 

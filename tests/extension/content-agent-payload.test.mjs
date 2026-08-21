@@ -69,6 +69,7 @@ function loadAgent({
   images = [],
   interactive = [],
   axTree = null,
+  documentOverrides = null,
 } = {}) {
   const sent = [];
   let commandListener = null;
@@ -82,6 +83,9 @@ function loadAgent({
     querySelector: () => null,
     querySelectorAll: (selector) => (selector === 'img' ? images : interactive),
   };
+  if (documentOverrides) {
+    Object.assign(documentStub, documentOverrides);
+  }
 
   const sandbox = {
     chrome: {
@@ -238,6 +242,282 @@ describe('content agent payload contract', () => {
     } finally {
       agent.dispose();
     }
+  });
+
+  it('picks the densest body block in article mode and leaves the furniture out', async () => {
+    const CANDIDATES = 'p, div, section, article, td';
+    const STRIP = 'script, style, nav, aside, footer, header, form, noscript, [aria-hidden="true"]';
+    const body = 'The article body runs for several sentences. '.repeat(12);
+    const shareBar = 'Share this article';
+    const navText = 'Home About Contact Subscribe';
+
+    const share = {
+      tagName: 'FOOTER',
+      nodeType: 1,
+      id: '',
+      className: 'share',
+      innerText: shareBar,
+      textContent: shareBar,
+      matches: (selector) => selector === STRIP,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      childNodes: [],
+    };
+    const article = {
+      tagName: 'ARTICLE',
+      nodeType: 1,
+      id: 'story',
+      className: 'story-body',
+      innerText: `${body}\n${shareBar}`,
+      textContent: `${body}\n${shareBar}`,
+      getAttribute: () => null,
+      matches: () => false,
+      // The share bar is a stripped descendant, which is what sends the reader
+      // down the child-by-child path instead of taking innerText wholesale.
+      querySelector: (selector) => (selector === STRIP ? share : null),
+      querySelectorAll: () => [],
+      childNodes: [{ nodeType: 3, textContent: body }, share],
+    };
+    const wrapper = {
+      tagName: 'DIV',
+      nodeType: 1,
+      id: '',
+      className: 'page',
+      innerText: `${navText}\n${body}\n${shareBar}`,
+      textContent: `${navText}\n${body}\n${shareBar}`,
+      getAttribute: () => null,
+      matches: () => false,
+      querySelector: (selector) => (selector === STRIP ? share : null),
+      querySelectorAll: (selector) => (selector === 'a'
+        ? [{ innerText: navText, textContent: navText }]
+        : []),
+      childNodes: [],
+    };
+    article.parentElement = wrapper;
+    wrapper.parentElement = null;
+
+    const agent = loadAgent({
+      documentOverrides: {
+        querySelector: (selector) => (selector === 'h1'
+          ? { innerText: 'A headline', textContent: 'A headline' }
+          : null),
+        body: {
+          tagName: 'BODY',
+          nodeType: 1,
+          id: '',
+          className: '',
+          innerText: `${navText}\n${body}`,
+          textContent: `${navText}\n${body}`,
+          getAttribute: () => null,
+          matches: () => false,
+          querySelector: () => null,
+          querySelectorAll: (selector) => (selector === CANDIDATES ? [wrapper, article] : []),
+          childNodes: [],
+          parentElement: null,
+        },
+      },
+    });
+    try {
+      const response = await agent.dispatch('read_page_content', { options: { mode: 'article' } });
+      assert.equal(response.ok, true);
+      const result = response.result;
+      assert.equal(result.mode, 'article');
+      // The wrapper carries the same body plus the navigation, and scores lower
+      // for it, so the article element is the one that comes back.
+      assert.equal(result.articleRootSelector, 'article#story');
+      assert.equal(result.articleTitle, 'A headline');
+      assert.equal(result.content.includes('Home About Contact'), false, 'navigation should not survive an article read');
+      assert.equal(result.content.includes(shareBar), false, 'a stripped subtree should not survive an article read');
+      assert.ok(result.content.startsWith('The article body runs'));
+    } finally {
+      agent.dispose();
+    }
+  });
+
+  it('stops the ancestor walk at a page shell that carries far more text', async () => {
+    // Wikipedia's div.mw-page-container wears no boilerplate class name, so the
+    // noise penalty misses it and its link density is low enough to clear the
+    // 90 percent score rule. Article mode returned the whole Vector shell. The
+    // text ratio is what separates a wrapper around a byline from a page shell.
+    const CANDIDATES = 'p, div, section, article, td';
+    const STRIP = 'script, style, nav, aside, footer, header, form, noscript, [aria-hidden="true"]';
+    const body = 'The article body runs on for a while. '.repeat(26);
+    const chrome = 'Article Talk Read Edit View history Tools Appearance '.repeat(14);
+
+    const makeNode = (overrides) => ({
+      nodeType: 1,
+      id: '',
+      className: '',
+      getAttribute: () => null,
+      matches: () => false,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      childNodes: [],
+      parentElement: null,
+      ...overrides,
+    });
+
+    const article = makeNode({
+      tagName: 'DIV',
+      className: 'mw-parser-output',
+      innerText: body,
+      textContent: body,
+      childNodes: [{ nodeType: 3, textContent: body }],
+    });
+    const shell = makeNode({
+      tagName: 'DIV',
+      className: 'mw-page-container',
+      innerText: `${chrome}\n${body}`,
+      textContent: `${chrome}\n${body}`,
+      // Every character of the shell's own text is link text, which is what
+      // keeps its score just under the body's while its length runs past it.
+      querySelectorAll: (selector) => (selector === 'a' ? [{ textContent: chrome }] : []),
+    });
+    article.parentElement = shell;
+
+    const agent = loadAgent({
+      documentOverrides: {
+        querySelector: () => null,
+        body: makeNode({
+          tagName: 'BODY',
+          innerText: `${chrome}\n${body}`,
+          textContent: `${chrome}\n${body}`,
+          querySelectorAll: (selector) => (selector === CANDIDATES ? [shell, article] : []),
+        }),
+      },
+    });
+    try {
+      const response = await agent.dispatch('read_page_content', { options: { mode: 'article' } });
+      assert.equal(response.result.articleRootSelector, 'div.mw-parser-output');
+      assert.equal(response.result.content.includes('View history'), false, 'the page shell should not survive');
+      assert.equal(STRIP.length > 0, true);
+    } finally {
+      agent.dispose();
+    }
+  });
+
+  it('prefers markup that names an article body over a denser wrapper', async () => {
+    const CANDIDATES = 'p, div, section, article, td';
+    const BODY_SELECTOR = '[itemprop="articleBody"], .mw-parser-output, #mw-content-text, #bodyContent, article, main article';
+    const body = 'Prose that names nothing in particular. '.repeat(20);
+    // Enough extra prose to outscore the body on density alone, and not enough
+    // to clear 90 percent of it once the body's own markup is credited.
+    const extra = 'Extra prose in the column. '.repeat(3);
+
+    const makeNode = (overrides) => ({
+      nodeType: 1,
+      id: '',
+      className: '',
+      getAttribute: () => null,
+      matches: () => false,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      childNodes: [],
+      parentElement: null,
+      ...overrides,
+    });
+
+    const article = makeNode({
+      tagName: 'DIV',
+      className: 'mw-parser-output',
+      innerText: body,
+      textContent: body,
+      matches: (selector) => selector === BODY_SELECTOR,
+      childNodes: [{ nodeType: 3, textContent: body }],
+    });
+    const wrapper = makeNode({
+      tagName: 'DIV',
+      className: 'column',
+      innerText: `${body}\n${extra}`,
+      textContent: `${body}\n${extra}`,
+    });
+    article.parentElement = wrapper;
+
+    const agent = loadAgent({
+      documentOverrides: {
+        querySelector: () => null,
+        body: makeNode({
+          tagName: 'BODY',
+          innerText: body,
+          textContent: body,
+          querySelectorAll: (selector) => (selector === CANDIDATES ? [wrapper, article] : []),
+        }),
+      },
+    });
+    try {
+      const response = await agent.dispatch('read_page_content', { options: { mode: 'article' } });
+      // Without the bonus the wrapper's extra text outscores the body it wraps.
+      assert.equal(response.result.articleRootSelector, 'div.mw-parser-output');
+    } finally {
+      agent.dispose();
+    }
+  });
+
+  it('selects the block under a triple click, which no synthetic event does', async () => {
+    const text = 'Rhythm Watch is a Japanese watchmaker founded in 1950.';
+    const selection = {
+      ranges: [],
+      removeAllRanges() {
+        this.ranges = [];
+      },
+      addRange(range) {
+        this.ranges.push(range);
+      },
+      toString() {
+        return this.ranges.length > 0 ? this.ranges[0].contents : '';
+      },
+    };
+    const paragraph = { tagName: 'P', textContent: text };
+    const target = makeElement({
+      tagName: 'P',
+      innerText: text,
+      textContent: text,
+      // The disabled check asks first and has to come back empty.
+      closest: (selector) => (selector.startsWith('p, li') ? paragraph : null),
+    });
+
+    const agent = loadAgent({
+      interactive: [target],
+      documentOverrides: {
+        getSelection: () => selection,
+        createRange: () => ({
+          contents: '',
+          selectNodeContents(node) {
+            this.contents = node.textContent;
+          },
+        }),
+      },
+      axTree: {
+        getSharedRefStore: () => ({}),
+        expireRefStore: () => {},
+        resolveElementRef: () => ({ __error: 'Stale element ref.', code: 'stale_interactive_ref' }),
+      },
+    });
+    try {
+      const response = await agent.dispatch('click_interactive_ref', { ref: 'cic:0:0', options: { clickCount: 3 } });
+      assert.equal(response.result.clickCount, 3);
+      assert.equal(response.result.selectedTextLength, text.length);
+      assert.equal(selection.toString(), text);
+
+      const single = await agent.dispatch('click_interactive_ref', { ref: 'cic:0:0', options: {} });
+      assert.equal(Object.hasOwn(single.result, 'selectedTextLength'), false);
+    } finally {
+      agent.dispose();
+    }
+  });
+
+  it('scores article candidates on link density and names the stripped subtrees', () => {
+    const start = agentSource.indexOf('function extractArticleText');
+    assert.ok(start >= 0, 'extractArticleText should exist');
+    const block = agentSource.slice(start, agentSource.indexOf('\n  function readPageContent', start));
+    assert.match(block, /linkTextLength/);
+    assert.match(block, /linkDensity/);
+    assert.match(block, /ARTICLE_STRIP_SELECTOR/);
+    assert.match(agentSource, /aria-hidden="true"\]';/);
+    assert.match(agentSource, /ARTICLE_NOISE_RE = \/nav\|menu\|sidebar\|footer\|header\|comment\|share\|promo\|related\|breadcrumb\/i/);
+    // Scoring reads the live DOM. Nothing here removes or hides a node, because
+    // a read must never change the page it is reading.
+    assert.doesNotMatch(block, /\.remove\(\)|removeChild|style\.display/);
   });
 
   it('resolves maxChars to a finite default and still honours a caller value', async () => {

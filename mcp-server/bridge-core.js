@@ -3,7 +3,7 @@ import { WebSocketServer } from 'ws';
 import { createNonce, validateBindProof, validateHelloQuery } from './auth.js';
 import { SessionRegistry } from './session-registry.js';
 import { TabOwnershipStore } from './tab-ownership.js';
-import { MAX_BROWSER_BATCH_CALLS, assertDevOnlyToolAllowed, assertLocalUploadFile, getToolDefinition, isMcpLocalTool } from './tools.js';
+import { MAX_BROWSER_BATCH_CALLS, assertDevOnlyToolAllowed, assertLocalUploadFile, batchChildRejectionReason, getToolDefinition, isMcpLocalTool, prepareUploadImageParams } from './tools.js';
 import { copyResolvedParams, resolveBatchParams } from './batch-refs.js';
 import { resolveDownloadWait } from './download-ledger.mjs';
 import {
@@ -438,6 +438,12 @@ export class LocalBridgeServer {
     if (tool === 'browser_file_upload') {
       params = { ...params, filePath: assertLocalUploadFile(params.filePath) };
     }
+    // The same hook lives in rust-broker-client.js. Both lanes need it, because
+    // launch-mcp.sh falls back to this one when the Rust broker is not ready and
+    // a hook in only one file is a bug that appears only under fallback.
+    if (tool === 'browser_upload_image') {
+      params = prepareUploadImageParams(params);
+    }
     if (!this.registry.isConnected()) {
       throw new Error(
         `Chrome extension is not connected for session ${this.sessionId}. Open the extension and configure the shared key first.`,
@@ -559,6 +565,28 @@ export class LocalBridgeServer {
         continue;
       }
 
+      const rejection = batchChildRejectionReason(toolName, call.params);
+      if (rejection) {
+        results.push({
+          ...entry,
+          ok: false,
+          durationMs: Date.now() - childStartedAt,
+          error: { code: 'invalid_batch_tool', message: rejection },
+        });
+        if (stopOnError) {
+          return {
+            ok: false,
+            stopped: true,
+            stopIndex: index,
+            callCount: calls.length,
+            timeoutMs,
+            durationMs: Date.now() - startedAt,
+            results,
+          };
+        }
+        continue;
+      }
+
       try {
         const rawChildParams =
           call.params && typeof call.params === 'object' && !Array.isArray(call.params)
@@ -622,6 +650,10 @@ export class LocalBridgeServer {
 
   async sendWaitClickRead(params = {}) {
     const totalMs = this.compositeBudgetMs(params.timeoutMs);
+    // Threaded rather than hardcoded. A recipe that cannot be told to foreground
+    // forces the caller back to three separate calls when they actually want the
+    // tab in front.
+    const activate = params.activate === true;
     const calls = [
       {
         tool: 'browser_wait',
@@ -640,7 +672,7 @@ export class LocalBridgeServer {
           tabId: params.tabId,
           selector: params.clickSelector,
           ref: params.ref,
-          activate: false,
+          activate,
         },
       },
       {
@@ -654,11 +686,16 @@ export class LocalBridgeServer {
         },
       },
     ];
-    return await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
+    const batch = await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
+    // `active` inside a child result is Chrome's "active tab of its own window"
+    // and is true for any tab alone in a background window. This is the field
+    // that answers "did the recipe foreground anything".
+    return { ...batch, activated: activate };
   }
 
   async sendNavigateWaitRead(params = {}) {
     const totalMs = this.compositeBudgetMs(params.timeoutMs);
+    const activate = params.activate === true;
     const calls = [
       {
         tool: 'browser_navigate',
@@ -666,7 +703,7 @@ export class LocalBridgeServer {
         params: {
           tabId: params.tabId,
           url: params.url,
-          activate: false,
+          activate,
           timeoutMs: compositeSlice(totalMs, COMPOSITE_NAVIGATE_SHARE),
         },
       },
@@ -691,11 +728,13 @@ export class LocalBridgeServer {
         },
       },
     ];
-    return await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
+    const batch = await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
+    return { ...batch, activated: activate };
   }
 
   async sendClickWaitSelectorRead(params = {}) {
     const totalMs = this.compositeBudgetMs(params.timeoutMs);
+    const activate = params.activate === true;
     const calls = [
       {
         tool: 'browser_click',
@@ -704,7 +743,7 @@ export class LocalBridgeServer {
           tabId: params.tabId,
           selector: params.clickSelector,
           ref: params.ref,
-          activate: false,
+          activate,
         },
       },
       {
@@ -728,7 +767,8 @@ export class LocalBridgeServer {
         },
       },
     ];
-    return await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
+    const batch = await this.sendBatch({ calls, timeoutMs: totalMs, stopOnError: true });
+    return { ...batch, activated: activate };
   }
 
   async waitForDownload(params = {}) {

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -70,8 +71,64 @@ export function resolveDownloadDir() {
 // Per-user socket path. The old default sat in world-writable /tmp, where
 // another local account can pre-create the path and block broker startup. The
 // full path stays well under the 104-byte AF_UNIX limit on macOS.
+//
+// MCP processes started before that move still dial the retired path. Binding a
+// second broker there splits sessions. resolveBrokerSocketPath remaps it, and
+// ensureBrokerSocketAlias keeps a symlink so those leftover shims reach the
+// same broker without anyone listening on /tmp.
+export const RETIRED_BROKER_SOCKET_PATH = '/tmp/umbra-rust-broker.sock';
+
+export function isRetiredBrokerSocketPath(socketPath) {
+  return path.resolve(String(socketPath || '')) === RETIRED_BROKER_SOCKET_PATH;
+}
+
 export function resolveBrokerSocketPath() {
-  return resolvedEnvPath('UMBRA_BROKER_SOCKET') || path.join(umbraHome(), 'run', 'broker.sock');
+  const fromEnv = resolvedEnvPath('UMBRA_BROKER_SOCKET');
+  if (fromEnv && !isRetiredBrokerSocketPath(fromEnv)) {
+    return fromEnv;
+  }
+  const resolved = path.join(umbraHome(), 'run', 'broker.sock');
+  if (fromEnv) {
+    // Say so rather than swallowing it. An operator who deliberately set that
+    // env value was getting a different socket with nothing in the logs to
+    // explain why their broker and their client disagreed.
+    console.error(`[umbra] UMBRA_BROKER_SOCKET names the retired path ${fromEnv}; using ${resolved} instead.`);
+  }
+  return resolved;
+}
+
+export function ensureBrokerSocketAlias(
+  retiredPath = RETIRED_BROKER_SOCKET_PATH,
+  livePath = resolveBrokerSocketPath(),
+) {
+  const retired = path.resolve(String(retiredPath || ''));
+  const live = path.resolve(String(livePath || ''));
+  if (!retired || !live || retired === live) {
+    return { ok: true, path: live, kind: 'live' };
+  }
+
+  try {
+    const current = fs.lstatSync(retired);
+    if (current.isSymbolicLink()) {
+      const dest = fs.readlinkSync(retired);
+      const resolvedDest = path.isAbsolute(dest) ? dest : path.resolve(path.dirname(retired), dest);
+      if (resolvedDest === live) {
+        return { ok: true, path: retired, kind: 'alias' };
+      }
+    }
+    fs.unlinkSync(retired);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      return { ok: false, path: retired, kind: 'blocked' };
+    }
+  }
+
+  try {
+    fs.symlinkSync(live, retired);
+    return { ok: true, path: retired, kind: 'alias' };
+  } catch {
+    return { ok: false, path: retired, kind: 'blocked' };
+  }
 }
 
 // Reverse-DNS label for the optional launchd job that keeps the Rust broker
