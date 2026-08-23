@@ -7,7 +7,7 @@
   // truthiness guard would pin the old code until the page navigated, and a
   // missing guard would stack a second host on the first after the content
   // agent's 45 second idle disconnect re-injects.
-  const CURSOR_OVERLAY_VERSION = '0.6.0';
+  const CURSOR_OVERLAY_VERSION = '0.6.2';
   if (globalThis.UmbraCursor?.version === CURSOR_OVERLAY_VERSION) {
     return globalThis.UmbraCursor;
   }
@@ -70,16 +70,17 @@
       opacity: 0;
       transform: translate3d(-200px, -200px, 0);
       transition: opacity 160ms linear;
-      /* The outline lives here, not on .arrow: clip-path is applied after
+      /* Outline and glow live here, not on .arrow: clip-path is applied after
          filter on the same element, so a drop shadow on the clipped node is
-         clipped away with it. From the parent it traces the child's alpha, which
-         is what puts a dark edge on a light arrow over a light page. */
+         clipped away with it. From the parent it traces the child's alpha. */
       filter:
-        drop-shadow(0.8px 0 0 rgba(16, 14, 28, 0.92))
-        drop-shadow(-0.8px 0 0 rgba(16, 14, 28, 0.92))
-        drop-shadow(0 0.8px 0 rgba(16, 14, 28, 0.92))
-        drop-shadow(0 -0.8px 0 rgba(16, 14, 28, 0.92))
-        drop-shadow(1px 2px 3px rgba(16, 14, 28, 0.35));
+        drop-shadow(1px 0 0 rgba(16, 14, 28, 0.95))
+        drop-shadow(-1px 0 0 rgba(16, 14, 28, 0.95))
+        drop-shadow(0 1px 0 rgba(16, 14, 28, 0.95))
+        drop-shadow(0 -1px 0 rgba(16, 14, 28, 0.95))
+        drop-shadow(0 0 1.5px rgba(236, 233, 246, 0.9))
+        drop-shadow(0 0 10px rgba(108, 73, 240, 0.7))
+        drop-shadow(0 0 18px rgba(138, 108, 255, 0.45));
     }
     .arrow {
       position: absolute;
@@ -87,7 +88,7 @@
       left: 0;
       width: 22px;
       height: 30px;
-      background: #f8f7ff;
+      background: #8a6cff;
       /* A pointer drawn as one clipped rectangle, tip at 0 0 so the point of the
          arrow sits exactly on the target. No image, because manifest.json
          declares no web_accessible_resources and an extension asset URL is
@@ -102,8 +103,8 @@
       height: 34px;
       margin: -17px 0 0 -17px;
       border-radius: 50%;
-      border: 2px solid rgba(124, 92, 255, 0.92);
-      background: rgba(124, 92, 255, 0.18);
+      border: 2px solid rgba(138, 108, 255, 0.92);
+      background: rgba(138, 108, 255, 0.18);
       opacity: 0;
     }
     .ripple.warm {
@@ -117,8 +118,8 @@
       width: 2px;
       height: 22px;
       margin: -11px 0 0 -1px;
-      background: rgba(124, 92, 255, 0.95);
-      box-shadow: 0 0 6px rgba(124, 92, 255, 0.75);
+      background: rgba(138, 108, 255, 0.95);
+      box-shadow: 0 0 6px rgba(108, 73, 240, 0.75);
       opacity: 0;
     }
     .hint {
@@ -130,7 +131,7 @@
       margin: -9px 0 0 -9px;
       border-style: solid;
       border-width: 0 9px 13px 9px;
-      border-color: transparent transparent rgba(124, 92, 255, 0.9) transparent;
+      border-color: transparent transparent rgba(138, 108, 255, 0.9) transparent;
       opacity: 0;
       filter: drop-shadow(0 1px 2px rgba(16, 14, 28, 0.4));
     }
@@ -144,7 +145,7 @@
     }
     .trail-line {
       fill: none;
-      stroke: rgba(124, 92, 255, 0.85);
+      stroke: rgba(138, 108, 255, 0.85);
       stroke-width: 2.5;
       stroke-linecap: round;
       stroke-linejoin: round;

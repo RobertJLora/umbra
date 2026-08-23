@@ -37,6 +37,18 @@ describe('cursor overlay', () => {
     assert.match(overlay, /UmbraCursor\?\.version === CURSOR_OVERLAY_VERSION/);
   });
 
+  it('paints a violet pointer with the glow on the unclipped parent', () => {
+    assert.match(overlay, /CURSOR_OVERLAY_VERSION = '0\.6\.2'/);
+    assert.match(overlay, /\.arrow \{[\s\S]*?background: #8a6cff;/);
+    assert.doesNotMatch(overlay, /#f8f7ff/);
+    assert.match(overlay, /drop-shadow\(1px 0 0 rgba\(16, 14, 28, 0\.95\)\)/);
+    assert.match(overlay, /drop-shadow\(0 0 1\.5px rgba\(236, 233, 246, 0\.9\)\)/);
+    assert.match(overlay, /drop-shadow\(0 0 10px rgba\(108, 73, 240, 0\.7\)\)/);
+    assert.match(overlay, /drop-shadow\(0 0 18px rgba\(138, 108, 255, 0\.45\)\)/);
+    assert.match(overlay, /rgba\(138, 108, 255, 0\.92\)/);
+    assert.match(overlay, /\.ripple\.warm \{[\s\S]*?rgba\(255, 158, 87/);
+  });
+
   it('never touches the page it draws over', () => {
     // The overlay paints and nothing else. A stray event or a moved focus would
     // double-fire handlers the real input helpers already drive.

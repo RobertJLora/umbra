@@ -147,6 +147,12 @@
         height: 60px;
         display: block;
         mix-blend-mode: lighten;
+        /* The mark's glow runs to the edge of its square substrate, so the
+           lighten composite leaves that cut edge visible as a straight seam
+           inside the disc. Fading the outermost eighth lands the glow on the
+           disc colour instead. The ribbon sits inside the fade, untouched. */
+        -webkit-mask: radial-gradient(closest-side circle, #000 88%, transparent 100%);
+        mask: radial-gradient(closest-side circle, #000 88%, transparent 100%);
       }
 
       /* The lit rim, sitting on the disc edge. This is the popup's status
@@ -523,7 +529,7 @@
   </head>
   <body>
     <header class="topbar">
-      <img src="icons/icon128.png" alt="" />
+      <img src="icons/mark-light.png" alt="" />
       <span class="wordmark">Umbra</span>
     </header>
 
@@ -541,7 +547,7 @@
 
     <section class="eclipse">
       <div class="orb">
-        <span class="orb-disc"><img src="icons/icon128.png" alt="Umbra" /></span>
+        <span class="orb-disc"><img src="icons/mark-light.png" alt="Umbra" /></span>
         <span id="status-dot" class="orb-ring" aria-hidden="true"></span>
       </div>
       <p id="status-text" class="muted">Loading status...</p>

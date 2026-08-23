@@ -558,8 +558,8 @@ const GIF_MAX_FRAME_DELAY_MS = 2_000;
 // How many frames after a click keep drawing its marker, at falling opacity, so
 // a click is visible in the exported animation rather than gone in one frame.
 const GIF_CLICK_TRAIL_FRAMES = 2;
-const GIF_CLICK_COLOR = '#ff8a3d';
-const GIF_DRAG_COLOR = '#e5484d';
+const GIF_CLICK_COLOR = '#8a6cff';
+const GIF_DRAG_COLOR = '#6b46f0';
 
 // tabId -> { frames: [], droppedFrames, truncatedFrames }
 const gifFrameStores = new Map();

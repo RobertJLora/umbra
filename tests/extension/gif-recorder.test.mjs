@@ -139,4 +139,10 @@ describe('gif recorder', () => {
     assert.ok(EXTENSION_FILES.includes('vendor/gifenc.js'));
     assert.ok(EXTENSION_FILES.includes('cursor-overlay.js'));
   });
+
+  it('draws click and drag overlays in Umbra violet', () => {
+    assert.match(offscreen, /GIF_CLICK_COLOR = '#8a6cff'/);
+    assert.match(offscreen, /GIF_DRAG_COLOR = '#6b46f0'/);
+    assert.doesNotMatch(offscreen, /#ff8a3d|#e5484d/);
+  });
 });

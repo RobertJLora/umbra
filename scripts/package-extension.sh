@@ -169,7 +169,7 @@ for icon in "$EXTENSION_DIR"/icons/*.png; do
   [ -f "$icon" ] || continue
   base="$(basename "$icon")"
   case "$base" in
-    icon[0-9]*.png)
+    icon[0-9]*.png|mark-light.png)
       cp "$icon" "$STAGE_DIR/icons/$base"
       printf 'icons/%s\n' "$base" >> "$STAGED_LIST"
       ;;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Umbra - Browser Control for AI Agents",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Give a local agent scripted control of tabs it owns in your signed-in Chrome. No focus theft. Requires a local companion server.",
   "homepage_url": "https://robertjohnlora.com/umbra",
   "permissions": [
