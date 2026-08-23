@@ -28,7 +28,7 @@ WHAT YOU GET
 - Many sessions in one browser. Each agent session gets its own tab group and its own view of the browser, and several can run at once in the same profile.
 - Tab adoption. Open a page by hand, sign in, then hand that exact tab to the agent instead of making it navigate there itself.
 - A dedicated window. Umbra remembers a window for its tabs and routes new session tabs there, and it refuses to reuse that window while you are working in it.
-- Ownership-based cleanup. One call closes the session whole tab group, and it closes a window only when every tab in it belongs to that session.
+- Ownership-based cleanup. One call closes the session's whole tab group, and it closes a window only when every tab in it belongs to that session.
 
 HOW IT TALKS TO THE COMPANION SERVER
 
@@ -39,7 +39,7 @@ WHAT IT WILL NOT DO
 - no cookie dump and no cookie sync
 - no token extraction
 - no storage read or write tools
-- no background fetching on a page behalf
+- no background fetching on a page's behalf
 - no CAPTCHA solving
 - no access to bookmarks, history, or the clipboard
 - no native messaging
