@@ -110,7 +110,7 @@ Two transports exist. The pure-Node bridge is what you get after a normal instal
 - One Chrome profile hosts many sessions at once.
 - Each session gets one session id, one named cyan Chrome tab group, and its own view of the browser.
 - Opening, navigating, and DOM interaction default to inactive tabs, so routine work never pulls Chrome to the foreground. `browser_switch_tab` only retargets the session by default. Pass `activate: true` to select a tab in its window without OS focus; pass `allowForeground: true` with it only when Robert explicitly allows Chrome to come forward (FOREGROUND RULE).
-- Umbra remembers a dedicated Chrome window for its tabs and routes new session tabs there. It refuses to reuse that window while it is focused, so it never adds tabs to the window you are working in.
+- Umbra routes new session tabs into an existing Chrome window as inactive tabs. It prefers an unfocused window. It will not call chrome.windows.create unless allowForeground is true, because creating a window steals OS focus on macOS. If the only window is the one in use, it attaches an inactive tab there rather than opening a second window.
 - Navigation is scheme-limited at the extension boundary: `http:`, `https:`, `file:`, and `about:blank` are allowed, and risky schemes such as `javascript:` and `data:` are rejected before Chrome sees them.
 - At task completion the agent should call `browser_close_session_tabs`, which closes the whole owned group. It closes a whole window only when every tab in that window belongs to the session, so unowned blank tabs survive.
 - Clean server shutdown runs the same cleanup by default. Set `UMBRA_KEEP_TABS_OPEN=1` or `UMBRA_CLOSE_ON_SHUTDOWN=0` when a run should leave tabs open for inspection.
@@ -168,3 +168,7 @@ Two transports exist. The pure-Node bridge is what you get after a normal instal
 - `rust-broker/LEGACY_FALLBACK.md` - rollback triggers and the cutover shape
 
 Read `THREAT_MODEL.md` and `SECURITY_REVIEW.md` before pointing this at a browser that holds anything you care about.
+
+## Release / Chrome Web Store
+
+Same-cycle CWS when main ships a version: see `store/RELEASE_PROCESS.md`. Ash packages; Rex submits.

@@ -39,13 +39,14 @@ export const TOOL_DEFINITIONS = [
         tabId: { type: 'integer', minimum: 1, description: 'Optional owned tab to reuse.' },
         newTab: { type: 'boolean', description: 'When true, create a fresh session-owned tab.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' },
+        allowForeground: { type: 'boolean', description: 'When true, Chrome may come to the foreground. Defaults to false. Required with newWindow. Requires an explicit foreground allow (FOREGROUND RULE).' },
         groupTitle: { type: 'string', description: 'Optional Chrome tab group title to set or update for this session.' },
         groupColor: {
           ...GROUP_COLOR_SCHEMA,
           description: 'Optional Chrome tab group color to set or update for this session.'
         },
         groupCollapsed: { type: 'boolean', description: 'Whether the session tab group should be collapsed.' },
-        newWindow: { type: 'boolean', description: 'When true, open a dedicated unfocused Chrome window owned by this session. Use for KPI screenshot framing.' },
+        newWindow: { type: 'boolean', description: 'When true, request a dedicated Chrome window. Refused unless allowForeground is also true, because creating a window steals OS focus on macOS. Attach an inactive tab to an existing window instead.' },
         timeoutMs: { type: 'number', description: 'How long to wait for the tab to finish loading. Defaults to 45000. A timeout returns loadTimedOut instead of failing.' }
       },
       required: ['url']
@@ -89,7 +90,8 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        createIfEmpty: { type: 'boolean', description: 'When true and this session owns no tabs, create an about:blank owned tab in a collapsed group without activating it, and return it in the tabs array. Defaults to false.' },
+        createIfEmpty: { type: 'boolean', description: 'When true and this session owns no tabs, create an about:blank owned tab in a collapsed group without activating it, and return it in the tabs array. Defaults to false. Refuses to create a Chrome window unless allowForeground is true.' },
+        allowForeground: { type: 'boolean', description: 'When true with createIfEmpty, Chrome may come to the foreground if a window must be created. Defaults to false. Requires an explicit foreground allow (FOREGROUND RULE).' },
         includeInternal: { type: 'boolean', description: 'When true, include chrome and extension internal pages. Applies to unowned tabs only, since owned tabs are always listed. Defaults to false.' },
         ownedOnly: { type: 'boolean', description: 'When true, list only the tabs this session owns and skip the rest of the browser. Defaults to false.' },
         limit: { type: 'integer', minimum: 1, description: 'Maximum rows to return, owned tabs first. Defaults to 200, max 500. truncatedByLimit reports when rows were dropped.' },
@@ -171,14 +173,14 @@ export const TOOL_DEFINITIONS = [
       properties: {
         url: { type: 'string', description: 'Optional URL to open. Defaults to about:blank.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' },
-        allowForeground: { type: 'boolean', description: 'When true with activate:true, Chrome may come to the foreground. Defaults to false. Requires an explicit Robert allow (FOREGROUND RULE).' },
+        allowForeground: { type: 'boolean', description: 'When true, Chrome may come to the foreground. Required with newWindow. Defaults to false. Requires an explicit foreground allow (FOREGROUND RULE).' },
         groupTitle: { type: 'string', description: 'Optional Chrome tab group title to set or update for this session.' },
         groupColor: {
           ...GROUP_COLOR_SCHEMA,
           description: 'Optional Chrome tab group color to set or update for this session.'
         },
         groupCollapsed: { type: 'boolean', description: 'Whether the session tab group should be collapsed.' },
-        newWindow: { type: 'boolean', description: 'When true, open a dedicated unfocused Chrome window owned by this session. Use for KPI screenshot framing.' },
+        newWindow: { type: 'boolean', description: 'When true, request a dedicated Chrome window. Refused unless allowForeground is also true, because creating a window steals OS focus on macOS. Attach an inactive tab to an existing window instead.' },
         timeoutMs: { type: 'number', description: 'How long to wait for the tab to finish loading. Defaults to 45000. A timeout returns loadTimedOut instead of failing.' }
       }
     }
@@ -220,7 +222,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_resize',
-    description: 'Resize the Chrome window that holds a session-owned tab. Refuses windows that also contain unowned tabs.',
+    description: 'Resize the Chrome window that holds a session-owned tab. Refuses windows that also contain unowned tabs. Never focuses the window.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -287,7 +289,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_screenshot',
-    description: 'Capture a screenshot of a session-owned tab, optionally saving the image to a local path. Defaults to silent background capture (no Chrome focus). Set silent:false or activate:true only when a visible capture is required.',
+    description: 'Capture a screenshot of a session-owned tab, optionally saving the image to a local path. Defaults to silent background capture. Visible capture requires silent:false plus activate or allowForeground.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -306,8 +308,9 @@ export const TOOL_DEFINITIONS = [
           description: 'Image format. Defaults to png.'
         },
         zoom: { type: 'number', description: 'Optional zoom factor applied to a region or ref crop. Defaults to 1. Values above 1 return a tighter crop of that rect.' },
-        silent: { type: 'boolean', description: 'When true (default), capture without activating the tab via debugger Page.captureScreenshot. Set false only for a visible captureVisibleTab path. Fails if background capture is unavailable.' },
-        activate: { type: 'boolean', description: 'Whether to activate the tab before capture. Defaults to false. Forces a non-silent path when true.' }
+        silent: { type: 'boolean', description: 'When true (default), capture without activating the tab via Page.captureScreenshot. Set false only with activate or allowForeground for a visible captureVisibleTab path. Fails if background capture is unavailable.' },
+        activate: { type: 'boolean', description: 'Whether to select the tab inside its window. Defaults to false. Does not by itself switch off silent capture.' },
+        allowForeground: { type: 'boolean', description: 'When true with silent:false, Chrome may come to the foreground for a visible capture. Defaults to false. Requires an explicit foreground allow (FOREGROUND RULE).' }
       }
     }
   },

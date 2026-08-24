@@ -1424,14 +1424,10 @@ async function getOwnedTab(sessionId, tabId) {
   return tab;
 }
 
-// Returns the window new session tabs go into, or null when a fresh unfocused
-// window has to be created instead.
-//
-// A focused window is never reused, including the stored dedicated one. That is
-// the behaviour README, docs/architecture.md and the store description all
-// describe, and it was the one part not implemented: the stored window was
-// returned whenever it still existed, so tabs landed in whatever window the
-// person was working in.
+// Returns an unfocused normal window for new session tabs, or null when none
+// exists. A focused window is never returned here, including the stored
+// dedicated one. createSessionTab may still attach an inactive tab to a focused
+// window rather than call chrome.windows.create, which steals OS focus on macOS.
 async function findBackgroundWindowId() {
   const storedId = await getStoredDedicatedWindowId();
   const stored = await getNormalWindow(storedId);
@@ -1445,12 +1441,22 @@ async function findBackgroundWindowId() {
   const windows = await listNormalWindows();
   const unfocused = windows.find((window) => window.focused !== true);
   if (!unfocused) {
-    // Every candidate is focused, so there is nothing to reuse without adding
-    // tabs to the window in use. The caller creates a fresh unfocused one.
+    // Every candidate is focused. The caller may attach an inactive tab to an
+    // existing window, but it must not call chrome.windows.create unless
+    // allowForeground is true: creating a window steals OS focus on macOS.
     return null;
   }
   await rememberDedicatedWindowId(unfocused.id);
   return unfocused.id;
+}
+
+async function findAttachableWindowId() {
+  const backgroundId = await findBackgroundWindowId();
+  if (backgroundId !== null) {
+    return backgroundId;
+  }
+  const windows = await listNormalWindows();
+  return Number.isInteger(windows[0]?.id) ? windows[0].id : null;
 }
 
 
@@ -1473,9 +1479,22 @@ async function activateOwnedTab(tabOrId, { allowForeground = false } = {}) {
   return await safeGetTab(tab.id);
 }
 
+const MACOS_NEW_WINDOW_FOCUS_STEAL =
+  'newWindow would steal OS focus on macOS. Attach an inactive tab to an existing window, or pass allowForeground only when foreground was explicitly allowed.';
+const MACOS_WINDOW_CREATE_FOCUS_STEAL =
+  'Creating a Chrome window would steal OS focus on macOS. Attach an inactive tab to an existing window, or pass allowForeground only when foreground was explicitly allowed.';
+
+function assertChromeWindowCreateAllowed({ newWindow = false, allowForeground = false } = {}) {
+  if (allowForeground === true) {
+    return;
+  }
+  throw new Error(newWindow === true ? MACOS_NEW_WINDOW_FOCUS_STEAL : MACOS_WINDOW_CREATE_FOCUS_STEAL);
+}
+
 async function createDedicatedWindowWithTab({ url = 'about:blank', activate = false, allowForeground = false } = {}) {
-  // Always create unfocused. activate only selects the tab inside the window;
+  // chrome.windows.create activates Chrome on macOS even with focused: false.
   // allowForeground is the only path that may steal OS focus.
+  assertChromeWindowCreateAllowed({ newWindow: false, allowForeground });
   const createdWindow = await chrome.windows.create({
     url,
     focused: false,
@@ -1505,23 +1524,33 @@ async function createDedicatedWindowWithTab({ url = 'about:blank', activate = fa
 
 async function createSessionTab(_sessionId, { url = 'about:blank', activate = false, newWindow = false, allowForeground = false } = {}) {
   if (newWindow === true) {
+    assertChromeWindowCreateAllowed({ newWindow: true, allowForeground });
     return await createDedicatedWindowWithTab({ url, activate, allowForeground });
   }
-  const windowId = await findBackgroundWindowId();
+  const windowId = await findAttachableWindowId();
   if (windowId !== null) {
+    const before = await getNormalWindow(windowId);
+    const wasFocused = before?.focused === true;
     const tab = await chrome.tabs.create({ url, active: Boolean(activate), windowId });
     if (!(await getNormalWindow(tab.windowId))) {
       await chrome.tabs.remove(tab.id).catch(() => {});
+      const remaining = (await listNormalWindows()).find((window) => window.id !== tab.windowId);
+      if (remaining?.id != null) {
+        return await chrome.tabs.create({ url, active: Boolean(activate), windowId: remaining.id });
+      }
+      assertChromeWindowCreateAllowed({ newWindow: false, allowForeground });
       return await createDedicatedWindowWithTab({ url, activate, allowForeground });
     }
-    if (activate) {
+    if (activate && !allowForeground && !wasFocused) {
       // activate on create means "selected in its window"; never steal OS focus
-      // at the session-create edge. allowForeground is a tool-level opt-in only.
+      // at the session-create edge. Do not unfocus a window that was already
+      // focused: that backgrounds Chrome while it is already in use.
       await chrome.windows.update(windowId, { focused: false }).catch(() => {});
     }
     return tab;
   }
 
+  assertChromeWindowCreateAllowed({ newWindow: false, allowForeground });
   return await createDedicatedWindowWithTab({ url, activate, allowForeground });
 }
 
@@ -6964,6 +6993,7 @@ async function handleBridgeCommand(message) {
         createIfMissing: true,
         newTab: true,
         activate: false,
+        allowForeground: params.allowForeground === true,
         url: 'about:blank',
       });
       await ensureSessionGroup(sessionId, createdTab.id, { groupCollapsed: true });
@@ -7138,14 +7168,17 @@ async function handleBridgeCommand(message) {
   }
 
   if (tool === 'browser_screenshot') {
-    // Background-first: silent capture is the default. Opt into a visible
-    // capture with silent:false or activate:true (FOREGROUND RULE).
+    // Background-first: silent capture is the default. Visible capture requires
+    // silent:false plus activate or allowForeground (FOREGROUND RULE).
+    const allowForeground = params.allowForeground === true;
     const activateRequested = params.activate === true;
-    const silent = activateRequested ? false : params.silent !== false;
+    const visibleCapture = params.silent === false && (activateRequested || allowForeground);
+    const silent = !visibleCapture;
     const tab = await getOrCreateSessionTab(sessionId, {
       tabId: params.tabId ?? null,
       createIfMissing: false,
-      activate: activateRequested,
+      activate: visibleCapture && activateRequested,
+      allowForeground: visibleCapture && allowForeground,
     });
     const format = normalizeScreenshotFormat(params.format);
     const fullPage = params.fullPage === true;
@@ -7816,7 +7849,7 @@ async function handleBridgeCommand(message) {
     const tab = await getOrCreateSessionTab(sessionId, {
       tabId: params.tabId ?? null,
       createIfMissing: false,
-      activate: params.activate === true,
+      activate: false,
     });
     await assertWindowOwnedExclusively(sessionId, tab.windowId);
     const updated = await chrome.windows.update(tab.windowId, {

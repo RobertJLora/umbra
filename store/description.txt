@@ -27,7 +27,7 @@ WHAT YOU GET
 - Background operation. Opening, navigating, and DOM interaction default to inactive tabs, so routine agent work never pulls Chrome to the foreground. Ask for focus explicitly when a task genuinely needs it.
 - Many sessions in one browser. Each agent session gets its own tab group and its own view of the browser, and several can run at once in the same profile.
 - Tab adoption. Open a page by hand, sign in, then hand that exact tab to the agent instead of making it navigate there itself.
-- A dedicated window. Umbra remembers a window for its tabs and routes new session tabs there, and it refuses to reuse that window while you are working in it.
+- Background window create is refused. Umbra attaches an inactive tab to an existing window. Opening a new Chrome window is blocked unless you explicitly allow foreground, because that steals focus on macOS.
 - Ownership-based cleanup. One call closes the session's whole tab group, and it closes a window only when every tab in it belongs to that session.
 
 HOW IT TALKS TO THE COMPANION SERVER
