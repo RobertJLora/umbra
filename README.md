@@ -109,7 +109,7 @@ Two transports exist. The pure-Node bridge is what you get after a normal instal
 
 - One Chrome profile hosts many sessions at once.
 - Each session gets one session id, one named cyan Chrome tab group, and its own view of the browser.
-- Opening, navigating, and DOM interaction default to inactive tabs, so routine work never pulls Chrome to the foreground. Pass `activate: true` when you actually need focus.
+- Opening, navigating, and DOM interaction default to inactive tabs, so routine work never pulls Chrome to the foreground. `browser_switch_tab` only retargets the session by default. Pass `activate: true` to select a tab in its window without OS focus; pass `allowForeground: true` with it only when Robert explicitly allows Chrome to come forward (FOREGROUND RULE).
 - Umbra remembers a dedicated Chrome window for its tabs and routes new session tabs there. It refuses to reuse that window while it is focused, so it never adds tabs to the window you are working in.
 - Navigation is scheme-limited at the extension boundary: `http:`, `https:`, `file:`, and `about:blank` are allowed, and risky schemes such as `javascript:` and `data:` are rejected before Chrome sees them.
 - At task completion the agent should call `browser_close_session_tabs`, which closes the whole owned group. It closes a whole window only when every tab in that window belongs to the session, so unowned blank tabs survive.
@@ -129,7 +129,7 @@ Two transports exist. The pure-Node bridge is what you get after a normal instal
 
 ## Known limitations
 
-- Default screenshots activate the session-owned tab before capture. `silent: true` avoids that by attaching `chrome.debugger` to the owned tab for one `Page.captureScreenshot`, which makes Chrome show its automation banner.
+- Screenshots default to silent background capture (`Page.captureScreenshot` via debugger). Pass `silent: false` or `activate: true` only when a visible capture is required. Silent capture may show Chrome’s automation banner on the owned tab; it does not steal OS focus.
 - Site access is an optional permission, requested from the Grant Site Access button on the options page rather than at install. Until it is granted, page reads, clicks, and screenshots fail with a message naming that button. `docs/permissions.md` justifies every permission the extension declares.
 - Download completion is detected by watching the filesystem, because the extension does not request Chrome's `downloads` permission. Point `UMBRA_DOWNLOAD_DIR` at your browser's download folder if you moved it.
 - A recording is cancelled when the bridge is disabled or the shared key is cleared. Both close the offscreen document, and that document is where the frames are held, so an in-flight recording dies with it. Chrome allows one offscreen document per extension, so there is no second place to hold them.

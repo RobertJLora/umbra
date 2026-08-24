@@ -171,6 +171,7 @@ export const TOOL_DEFINITIONS = [
       properties: {
         url: { type: 'string', description: 'Optional URL to open. Defaults to about:blank.' },
         activate: { type: 'boolean', description: 'Whether to activate the tab. Defaults to false so the session can work in the background.' },
+        allowForeground: { type: 'boolean', description: 'When true with activate:true, Chrome may come to the foreground. Defaults to false. Requires an explicit Robert allow (FOREGROUND RULE).' },
         groupTitle: { type: 'string', description: 'Optional Chrome tab group title to set or update for this session.' },
         groupColor: {
           ...GROUP_COLOR_SCHEMA,
@@ -206,11 +207,13 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_switch_tab',
-    description: 'Activate a tab owned by the current session.',
+    description: 'Retarget the session active tab to an owned tab. Defaults to session-only (no Chrome focus). Pass activate:true to select the tab inside its window without stealing OS focus; pass allowForeground:true with activate:true only when Robert explicitly allows Chrome to come forward.',
     inputSchema: {
       type: 'object',
       properties: {
-        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to activate.' }
+        tabId: { type: 'integer', minimum: 1, description: 'Owned tab ID to make the session active tab.' },
+        activate: { type: 'boolean', description: 'Whether to select the tab inside its Chrome window. Defaults to false so the session can retarget without touching Chrome focus.' },
+        allowForeground: { type: 'boolean', description: 'When true with activate:true, Chrome may come to the foreground. Defaults to false. Requires an explicit Robert allow.' }
       },
       required: ['tabId']
     }
@@ -284,7 +287,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'browser_screenshot',
-    description: 'Capture a screenshot of a session-owned tab, optionally saving the image to a local path. The default path activates the tab so the visible viewport can be captured. Set silent to true to capture without activating the tab.',
+    description: 'Capture a screenshot of a session-owned tab, optionally saving the image to a local path. Defaults to silent background capture (no Chrome focus). Set silent:false or activate:true only when a visible capture is required.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -303,7 +306,8 @@ export const TOOL_DEFINITIONS = [
           description: 'Image format. Defaults to png.'
         },
         zoom: { type: 'number', description: 'Optional zoom factor applied to a region or ref crop. Defaults to 1. Values above 1 return a tighter crop of that rect.' },
-        silent: { type: 'boolean', description: 'When true, capture without activating the tab. Fails if background capture is unavailable.' }
+        silent: { type: 'boolean', description: 'When true (default), capture without activating the tab via debugger Page.captureScreenshot. Set false only for a visible captureVisibleTab path. Fails if background capture is unavailable.' },
+        activate: { type: 'boolean', description: 'Whether to activate the tab before capture. Defaults to false. Forces a non-silent path when true.' }
       }
     }
   },
