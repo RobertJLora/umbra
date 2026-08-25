@@ -444,7 +444,8 @@ export const TOOL_DEFINITIONS = [
         },
         params: { type: 'object', description: 'Action-specific JSON parameters.' },
         timeoutMs: { type: 'number', description: 'Maximum wait time in milliseconds. Defaults to 10000.' },
-        activate: { type: 'boolean', description: 'Whether to activate the tab before running the action. Defaults to false.' }
+        activate: { type: 'boolean', description: 'Whether to activate the tab before running the action. Defaults to false.' },
+        allowForeground: { type: 'boolean', description: 'When true, Chrome may come to the foreground. Defaults to false. Requires an explicit foreground allow (FOREGROUND RULE).' }
       },
       required: ['action']
     }

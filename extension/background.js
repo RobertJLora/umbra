@@ -6,6 +6,13 @@ const GROUP_COLORS = ['blue', 'green', 'yellow', 'pink', 'purple', 'cyan', 'oran
 const DEFAULT_GROUP_COLOR = 'cyan';
 const BRIDGE_WAKE_ALARM_NAME = 'umbra_bridge_wake';
 const BRIDGE_WAKE_PERIOD_MINUTES = 1;
+const DOWNLOAD_FOCUS_GUARD_ALARM_PREFIX = 'umbra_download_focus_';
+const DOWNLOAD_FOCUS_GUARD_MINUTES = 2;
+const FOCUS_APP_STORAGE_KEY = 'umbraFocusApp';
+const DOWNLOAD_FOCUS_STORAGE_KEY = 'downloadFocusGuardsByTab';
+// chrome.windows.WINDOW_ID_NONE. Named here so focus-steal helpers stay
+// testable without the chrome namespace.
+const CHROME_WINDOW_ID_NONE = -1;
 const DEDICATED_WINDOW_STORAGE_KEY = 'bridgeDedicatedWindowId';
 const TAB_COMPLETE_POLL_INTERVAL_MS = 750;
 const CONTENT_AGENT_PORT_NAME = 'cic-content-agent';
@@ -102,6 +109,16 @@ const contentAgents = new Map();
 // tabId -> { refCount, attachPromise }. Chrome allows one debugger client per
 // target, so every Umbra call on a tab shares a single attachment.
 const tabDebuggerAttachments = new Map();
+// tabId -> { windowId, wasFocused, pinHandle }. Armed after a background CSV
+// export click so Chrome's download bubble cannot keep OS focus. Released on
+// download complete, on detach, or when the alarm fires.
+const downloadFocusGuards = new Map();
+// Last OS-focus event for this Chrome install, not per session. unknown means
+// the worker just started and nothing was persisted; that must not authorize a
+// download undo. none is WINDOW_ID_NONE: Chrome is not the focused app, and
+// that is the steal trigger. window is a Chrome window id; a switch between
+// Chrome windows is not a steal.
+let lastFocus = { kind: 'unknown' };
 // tabId -> recorder state for an in-flight GIF recording. The frames themselves
 // are not here: they live in the offscreen document, which is a real page and is
 // never evicted, while this worker is torn down after about thirty seconds idle.
@@ -161,7 +178,13 @@ function buildGroupUpdate(sessionId, params = {}, { includeDefaults = false } = 
 async function updateTabGroup(sessionId, groupId, params = {}, options = {}) {
   const update = buildGroupUpdate(sessionId, params, options);
   if (Object.keys(update).length > 0) {
-    await chrome.tabGroups.update(groupId, update);
+    const group = await chrome.tabGroups.get(groupId).catch(() => null);
+    const snapshot = await snapshotWindowChromeState(group?.windowId);
+    try {
+      await chrome.tabGroups.update(groupId, update);
+    } finally {
+      await restoreWindowChromeStateIfStolen(snapshot, { restoreActiveTab: true });
+    }
   }
 }
 
@@ -1063,6 +1086,7 @@ async function groupTabsInNormalWindow(tabIds, { groupId = null } = {}) {
     throw new Error(`Tabs can only be grouped in a normal Chrome window. Window ${homeWindowId} is Meet, app, or popup.`);
   }
 
+  const snapshot = await snapshotWindowChromeState(homeWindowId);
   try {
     if (targetGroupId !== null) {
       return await chrome.tabs.group({ tabIds: liveIds, groupId: targetGroupId });
@@ -1086,6 +1110,8 @@ async function groupTabsInNormalWindow(tabIds, { groupId = null } = {}) {
       tabIds: sameWindowIds,
       createProperties: { windowId: fallbackWindow.id },
     });
+  } finally {
+    await restoreWindowChromeStateIfStolen(snapshot, { restoreActiveTab: true });
   }
 }
 
@@ -1194,14 +1220,23 @@ async function cleanupGroups(sessionId, params = {}) {
     }
 
     if (!dryRun && tabIds.length > 0) {
-      if (mode === 'ungroupOnly') {
-        await chrome.tabs.ungroup(tabIds);
-      } else {
-        for (const tabId of tabIds) {
-          invalidateContentAgent(tabId, 'tab_closed');
+      const windowIds = [...new Set(
+        tabs.map((tab) => tab.windowId).filter((id) => Number.isInteger(id)),
+      )];
+      const mutate = async () => {
+        if (mode === 'ungroupOnly') {
+          await chrome.tabs.ungroup(tabIds);
+        } else {
+          for (const tabId of tabIds) {
+            invalidateContentAgent(tabId, 'tab_closed');
+          }
+          await chrome.tabs.remove(tabIds);
         }
-        await chrome.tabs.remove(tabIds);
-      }
+      };
+      await windowIds.reduceRight(
+        (action, windowId) => () => withWindowFocusContract(windowId, action, { restoreActiveTab: true }),
+        mutate,
+      )();
     }
 
     if (!dryRun) {
@@ -1288,7 +1323,9 @@ async function closeOwnedSessionWindows(sessionId, tabIds) {
         continue;
       }
       invalidateContentAgent(tab.id, 'tab_closed');
+      const snapshot = await snapshotWindowChromeState(tab.windowId);
       await chrome.tabs.remove(tab.id);
+      await restoreWindowChromeStateIfStolen(snapshot, { restoreActiveTab: false });
       sessionStore.releaseTab(tab.id);
       closedTabIds.push(tab.id);
     }
@@ -1459,22 +1496,192 @@ async function findAttachableWindowId() {
   return Number.isInteger(windows[0]?.id) ? windows[0].id : null;
 }
 
+function shouldUnfocusStolenWindow(snapshot, afterFocused, allowForeground = false) {
+  return allowForeground !== true
+    && snapshot
+    && snapshot.focused !== true
+    && afterFocused === true;
+}
+
+function shouldRestoreStolenActiveTab(snapshot, currentActiveTabId, allowForeground = false, restoreActiveTab = false) {
+  return restoreActiveTab === true
+    && allowForeground !== true
+    && snapshot
+    && snapshot.focused === true
+    && Number.isInteger(snapshot.activeTabId)
+    && currentActiveTabId !== snapshot.activeTabId;
+}
+
+// Tab-scoped chrome.debugger never emits Page.downloadWillBegin, so the 0.6.5
+// CDP listener cannot see the download bubble. The signal that does fire is
+// chrome.windows.onFocusChanged when Chrome takes OS focus. Undo only when
+// Chrome was not the focused app (previous LastFocus is none) and the window
+// that just became focused is the one that was unfocused at click time.
+// unknown is not none: after a worker restart we do not know who focused
+// Chrome, so we must not unfocus a window a human or another session just
+// took. A window switch inside Chrome, or a window that was already focused,
+// is left alone. One undo; never a restore loop.
+function shouldUndoDownloadFocusSteal(guard, windowId, previousFocusedWindowId, windowIdNone = -1) {
+  if (!guard || guard.undone === true) {
+    return false;
+  }
+  const snapshot = guard.snapshot;
+  if (!snapshot || snapshot.focused === true) {
+    return false;
+  }
+  if (!Number.isInteger(windowId) || windowId === windowIdNone || windowId < 0) {
+    return false;
+  }
+  if (snapshot.windowId !== windowId) {
+    return false;
+  }
+  const previous = normalizeLastFocus(previousFocusedWindowId, windowIdNone);
+  if (previous.kind === 'unknown' || previous.kind === 'window') {
+    return false;
+  }
+  return true;
+}
+
+function normalizeLastFocus(previous, windowIdNone = -1) {
+  if (previous != null && typeof previous === 'object' && typeof previous.kind === 'string') {
+    if (previous.kind === 'unknown' || previous.kind === 'none') {
+      return { kind: previous.kind };
+    }
+    if (previous.kind === 'window' && Number.isInteger(previous.id) && previous.id >= 0 && previous.id !== windowIdNone) {
+      return { kind: 'window', id: previous.id };
+    }
+    return { kind: 'unknown' };
+  }
+  if (previous == null) {
+    return { kind: 'unknown' };
+  }
+  if (Number.isInteger(previous)) {
+    if (previous === windowIdNone) {
+      return { kind: 'none' };
+    }
+    if (previous >= 0) {
+      return { kind: 'window', id: previous };
+    }
+  }
+  return { kind: 'unknown' };
+}
+
+function serializeLastFocus(focus) {
+  const normalized = normalizeLastFocus(focus);
+  if (normalized.kind === 'window') {
+    return { kind: 'window', id: normalized.id };
+  }
+  return { kind: normalized.kind };
+}
+
+function deserializeLastFocus(record) {
+  return normalizeLastFocus(record);
+}
+
+function serializeDownloadFocusGuards(guards) {
+  const snapshot = {};
+  for (const [tabId, guard] of guards.entries()) {
+    snapshot[String(tabId)] = {
+      windowId: Number.isInteger(guard.snapshot?.windowId) ? guard.snapshot.windowId : null,
+      focused: guard.snapshot?.focused === true,
+      activeTabId: Number.isInteger(guard.snapshot?.activeTabId) ? guard.snapshot.activeTabId : null,
+      downloadPath: typeof guard.downloadPath === 'string' ? guard.downloadPath : '',
+      armedAt: Number(guard.armedAt) || 0,
+      undone: guard.undone === true,
+    };
+  }
+  return snapshot;
+}
+
+function deserializeDownloadFocusGuard(record) {
+  const windowId = Number(record?.windowId);
+  if (!record || !Number.isInteger(windowId)) {
+    return null;
+  }
+  return {
+    snapshot: {
+      windowId,
+      focused: record.focused === true,
+      activeTabId: Number.isInteger(Number(record.activeTabId)) ? Number(record.activeTabId) : null,
+    },
+    pinHandle: null,
+    downloadPath: typeof record.downloadPath === 'string' ? record.downloadPath : '',
+    armedAt: Number(record.armedAt) || Date.now(),
+    undone: record.undone === true,
+  };
+}
+
+async function snapshotWindowChromeState(windowId) {
+  if (windowId == null) {
+    return null;
+  }
+  const window = await getNormalWindow(windowId);
+  if (!window) {
+    return null;
+  }
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId }).catch(() => []);
+  return {
+    windowId,
+    focused: window.focused === true,
+    activeTabId: Number.isInteger(activeTab?.id) ? activeTab.id : null,
+  };
+}
+
+async function restoreWindowChromeStateIfStolen(snapshot, { allowForeground = false, restoreActiveTab = false } = {}) {
+  if (allowForeground === true || !snapshot || snapshot.windowId == null) {
+    return { windowUnfocused: false, activeTabRestored: false };
+  }
+
+  let activeTabRestored = false;
+  if (restoreActiveTab) {
+    const [current] = await chrome.tabs.query({ active: true, windowId: snapshot.windowId }).catch(() => []);
+    if (shouldRestoreStolenActiveTab(snapshot, current?.id, allowForeground, restoreActiveTab)) {
+      const live = await safeGetTab(snapshot.activeTabId);
+      if (live && live.windowId === snapshot.windowId) {
+        await chrome.tabs.update(snapshot.activeTabId, { active: true }).catch(() => {});
+        activeTabRestored = true;
+      }
+    }
+  }
+
+  const after = await getNormalWindow(snapshot.windowId);
+  let windowUnfocused = false;
+  if (shouldUnfocusStolenWindow(snapshot, after?.focused === true, allowForeground)) {
+    await chrome.windows.update(snapshot.windowId, { focused: false }).catch(() => {});
+    windowUnfocused = true;
+  }
+  return { windowUnfocused, activeTabRestored };
+}
+
+// Snapshot, run, restore in finally. Per call so concurrent sessions are not
+// queued behind each other; the worker already serializes JS turns.
+async function withWindowFocusContract(windowId, action, { restoreActiveTab = false, allowForeground = false } = {}) {
+  const snapshot = await snapshotWindowChromeState(windowId);
+  try {
+    return await action();
+  } finally {
+    await restoreWindowChromeStateIfStolen(snapshot, { restoreActiveTab, allowForeground });
+  }
+}
+
 
 // Bring a tab to the front of its own window without stealing OS focus.
-// On macOS, chrome.tabs.update({active:true}) often focuses the window; we
-// immediately push focused:false unless the caller opted into allowForeground.
+// On macOS, chrome.tabs.update({active:true}) often focuses the window. Undo
+// that raise only when the window was not already focused: unfocusing a window
+// that was already focused backgrounds Chrome while it is in use.
 async function activateOwnedTab(tabOrId, { allowForeground = false } = {}) {
   const tab = typeof tabOrId === 'number' ? await chrome.tabs.get(tabOrId) : tabOrId;
   if (!tab?.id) {
     throw new Error('activateOwnedTab requires a live tab.');
   }
+  const snapshot = await snapshotWindowChromeState(tab.windowId);
   if (tab.active !== true) {
     await chrome.tabs.update(tab.id, { active: true });
   }
-  if (!allowForeground && tab.windowId != null) {
-    await chrome.windows.update(tab.windowId, { focused: false }).catch(() => {});
-  } else if (allowForeground && tab.windowId != null) {
+  if (allowForeground && tab.windowId != null) {
     await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  } else {
+    await restoreWindowChromeStateIfStolen(snapshot, { allowForeground: false, restoreActiveTab: false });
   }
   return await safeGetTab(tab.id);
 }
@@ -1529,23 +1736,27 @@ async function createSessionTab(_sessionId, { url = 'about:blank', activate = fa
   }
   const windowId = await findAttachableWindowId();
   if (windowId !== null) {
-    const before = await getNormalWindow(windowId);
-    const wasFocused = before?.focused === true;
+    const snapshot = await snapshotWindowChromeState(windowId);
     const tab = await chrome.tabs.create({ url, active: Boolean(activate), windowId });
     if (!(await getNormalWindow(tab.windowId))) {
       await chrome.tabs.remove(tab.id).catch(() => {});
       const remaining = (await listNormalWindows()).find((window) => window.id !== tab.windowId);
       if (remaining?.id != null) {
-        return await chrome.tabs.create({ url, active: Boolean(activate), windowId: remaining.id });
+        const remainingSnapshot = await snapshotWindowChromeState(remaining.id);
+        const created = await chrome.tabs.create({ url, active: Boolean(activate), windowId: remaining.id });
+        if (!allowForeground) {
+          await restoreWindowChromeStateIfStolen(remainingSnapshot, { restoreActiveTab: activate !== true });
+        }
+        return created;
       }
       assertChromeWindowCreateAllowed({ newWindow: false, allowForeground });
       return await createDedicatedWindowWithTab({ url, activate, allowForeground });
     }
-    if (activate && !allowForeground && !wasFocused) {
-      // activate on create means "selected in its window"; never steal OS focus
-      // at the session-create edge. Do not unfocus a window that was already
-      // focused: that backgrounds Chrome while it is already in use.
-      await chrome.windows.update(windowId, { focused: false }).catch(() => {});
+    if (!allowForeground) {
+      // tabs.create({active:false}) still raises Chrome on macOS. Undo that
+      // raise. Do not unfocus a window that was already focused, and do not
+      // restore the previous active tab when this create asked to activate.
+      await restoreWindowChromeStateIfStolen(snapshot, { restoreActiveTab: activate !== true });
     }
     return tab;
   }
@@ -1611,7 +1822,7 @@ async function getOrCreateSessionTab(sessionId, options = {}) {
       }
 
       if (activate && !tab.active) {
-        await chrome.tabs.update(tab.id, { active: true });
+        await activateOwnedTab(tab, { allowForeground });
       }
       if (updateActive) {
         sessionStore.setActiveTab(sessionId, tab.id);
@@ -1872,11 +2083,13 @@ async function markDebugGroup(sessionId, params = {}) {
   const group = await chrome.tabGroups.get(groupId);
   const baseTitle = String(params.title || group.title || sessionLabel(sessionId)).replace(/\s+Debug$/i, '').trim();
   const title = `${baseTitle || sessionLabel(sessionId)} Debug`.slice(0, 80);
-  await chrome.tabGroups.update(groupId, {
-    title,
-    color: GROUP_COLORS.includes(params.groupColor) ? params.groupColor : group.color || DEFAULT_GROUP_COLOR,
-    collapsed: params.collapsed === true ? true : group.collapsed === true,
-  });
+  await withWindowFocusContract(group.windowId, async () => {
+    await chrome.tabGroups.update(groupId, {
+      title,
+      color: GROUP_COLORS.includes(params.groupColor) ? params.groupColor : group.color || DEFAULT_GROUP_COLOR,
+      collapsed: params.collapsed === true ? true : group.collapsed === true,
+    });
+  }, { restoreActiveTab: true });
   sessionStore.setGroup(sessionId, groupId);
   await sessionStore.persist();
   return {
@@ -2477,7 +2690,7 @@ async function claimTabDebugger(target) {
   }
 }
 
-async function withOwnedTabDebugger(tabId, fn) {
+async function withOwnedTabDebugger(tabId, fn, { allowForeground = false } = {}) {
   if (!chrome.debugger || typeof chrome.debugger.attach !== 'function') {
     const error = new Error('Debugger API is missing.');
     error.code = 'debugger_unavailable';
@@ -2485,6 +2698,8 @@ async function withOwnedTabDebugger(tabId, fn) {
   }
 
   const target = { tabId };
+  const liveTab = await safeGetTab(tabId);
+  const snapshot = allowForeground ? null : await snapshotWindowChromeState(liveTab?.windowId);
   let entry = tabDebuggerAttachments.get(tabId);
   if (!entry) {
     entry = { refCount: 0, attachPromise: claimTabDebugger(target) };
@@ -2512,11 +2727,13 @@ async function withOwnedTabDebugger(tabId, fn) {
   try {
     return await fn(target);
   } finally {
+    await restoreWindowChromeStateIfStolen(snapshot, { allowForeground, restoreActiveTab: true });
     // Concurrent calls share one attachment, so only the last one out detaches.
     // Detaching while another call was still issuing commands used to make every
     // remaining chrome.debugger.sendCommand on that tab fail.
     if (release()) {
       await chrome.debugger.detach(target).catch(() => {});
+      await restoreWindowChromeStateIfStolen(snapshot, { allowForeground, restoreActiveTab: true });
     }
   }
 }
@@ -2534,7 +2751,7 @@ async function withOwnedTabDebugger(tabId, fn) {
 // automation banner makes onDetach drop entry A while a log still believes it is
 // pinned, a recording then pins entry B, and the log's stop decremented B to
 // zero and detached the recording's attachment out from under it.
-async function pinTabDebugger(tabId) {
+async function pinTabDebugger(tabId, { allowForeground = false } = {}) {
   if (!chrome.debugger || typeof chrome.debugger.attach !== 'function') {
     const error = new Error('Debugger API is missing.');
     error.code = 'debugger_unavailable';
@@ -2542,6 +2759,8 @@ async function pinTabDebugger(tabId) {
   }
 
   const target = { tabId };
+  const liveTab = await safeGetTab(tabId);
+  const snapshot = allowForeground ? null : await snapshotWindowChromeState(liveTab?.windowId);
   let entry = tabDebuggerAttachments.get(tabId);
   if (!entry) {
     entry = { refCount: 0, detached: false, attachPromise: claimTabDebugger(target) };
@@ -2557,6 +2776,7 @@ async function pinTabDebugger(tabId) {
     throw error;
   }
 
+  await restoreWindowChromeStateIfStolen(snapshot, { allowForeground, restoreActiveTab: true });
   return { target, handle: entry };
 }
 
@@ -2594,6 +2814,14 @@ chrome.debugger?.onDetach?.addListener((source) => {
       entry.detached = true;
     }
     tabDebuggerAttachments.delete(source.tabId);
+    const guard = downloadFocusGuards.get(source.tabId);
+    if (guard) {
+      // Detach must not drop the focus guard. The download bubble can raise
+      // Chrome after the debugger session is gone, and that undo is the
+      // whole point of the guard. The pin is already dead.
+      guard.pinHandle = null;
+      void persistDownloadFocusGuards();
+    }
   }
 });
 
@@ -2654,6 +2882,23 @@ const NETWORK_LOG_METHODS = new Set([
   'Network.responseReceived',
   'Network.loadingFailed',
 ]);
+
+const DOWNLOAD_FOCUS_METHODS = new Set([
+  'Page.downloadWillBegin',
+  'Page.downloadProgress',
+  'Browser.downloadWillBegin',
+  'Browser.downloadProgress',
+]);
+
+chrome.debugger?.onEvent?.addListener((source, method, event) => {
+  if (!DOWNLOAD_FOCUS_METHODS.has(method) || !Number.isInteger(source?.tabId)) {
+    return;
+  }
+  if (!downloadFocusGuards.has(source.tabId)) {
+    return;
+  }
+  void handleDownloadFocusEvent(source.tabId, method, event);
+});
 
 chrome.debugger?.onEvent?.addListener((source, method, event) => {
   if (!Number.isInteger(source?.tabId) || !NETWORK_LOG_METHODS.has(method)) {
@@ -2870,10 +3115,180 @@ async function setOwnedTabFileInput(tabId, selector, filePath) {
   });
 }
 
+function downloadFocusGuardAlarmName(tabId) {
+  return `${DOWNLOAD_FOCUS_GUARD_ALARM_PREFIX}${tabId}`;
+}
+
+function forgetSilentDownloadGuard(tabId) {
+  downloadFocusGuards.delete(tabId);
+  void chrome.alarms?.clear?.(downloadFocusGuardAlarmName(tabId));
+  void persistDownloadFocusGuards();
+}
+
+function releaseSilentDownloadGuard(tabId) {
+  const guard = downloadFocusGuards.get(tabId);
+  forgetSilentDownloadGuard(tabId);
+  if (guard?.pinHandle) {
+    unpinTabDebugger(tabId, guard.pinHandle);
+  }
+}
+
+async function persistDownloadFocusGuards() {
+  try {
+    await chrome.storage.session.set({
+      [FOCUS_APP_STORAGE_KEY]: {
+        lastFocus: serializeLastFocus(lastFocus),
+        guards: serializeDownloadFocusGuards(downloadFocusGuards),
+      },
+    });
+  } catch {
+    // Same bargain as GIF recordings: a failed write costs recovery after
+    // eviction, not the undo that is running now.
+  }
+}
+
+async function rehydrateDownloadFocusGuards() {
+  let stored = null;
+  let legacyGuards = null;
+  try {
+    const read = await chrome.storage.session.get([FOCUS_APP_STORAGE_KEY, DOWNLOAD_FOCUS_STORAGE_KEY]);
+    stored = read?.[FOCUS_APP_STORAGE_KEY] || null;
+    legacyGuards = read?.[DOWNLOAD_FOCUS_STORAGE_KEY] || null;
+  } catch {
+    return;
+  }
+  const focusApp = stored && typeof stored === 'object' ? stored : null;
+  // Missing LastFocus is unknown, never none. none would authorize a download
+  // undo against a window we did not see Chrome lose.
+  if (lastFocus.kind === 'unknown') {
+    lastFocus = deserializeLastFocus(focusApp?.lastFocus);
+  }
+  const guardsBlob = focusApp
+    ? (focusApp.guards && typeof focusApp.guards === 'object' ? focusApp.guards : null)
+    : (legacyGuards && typeof legacyGuards === 'object' ? legacyGuards : null);
+  if (!guardsBlob) {
+    return;
+  }
+  for (const [key, record] of Object.entries(guardsBlob)) {
+    const tabId = Number(key);
+    if (!Number.isInteger(tabId) || downloadFocusGuards.has(tabId)) {
+      continue;
+    }
+    const guard = deserializeDownloadFocusGuard(record);
+    if (!guard) {
+      continue;
+    }
+    downloadFocusGuards.set(tabId, guard);
+  }
+}
+
+async function handleDownloadFocusWindowChanged(windowId) {
+  await rehydrateDownloadFocusGuards();
+  const previous = lastFocus;
+  if (windowId === CHROME_WINDOW_ID_NONE) {
+    lastFocus = { kind: 'none' };
+  } else if (Number.isInteger(windowId) && windowId >= 0) {
+    lastFocus = { kind: 'window', id: windowId };
+  }
+  try {
+    if (!Number.isInteger(windowId) || windowId === CHROME_WINDOW_ID_NONE) {
+      return;
+    }
+    for (const guard of downloadFocusGuards.values()) {
+      if (!shouldUndoDownloadFocusSteal(guard, windowId, previous, CHROME_WINDOW_ID_NONE)) {
+        continue;
+      }
+      await restoreWindowChromeStateIfStolen(guard.snapshot, {
+        allowForeground: false,
+        restoreActiveTab: false,
+      });
+      guard.undone = true;
+    }
+  } finally {
+    await persistDownloadFocusGuards();
+  }
+}
+
+chrome.windows?.onFocusChanged?.addListener((windowId) => {
+  void handleDownloadFocusWindowChanged(windowId);
+});
+
+async function applySilentDownloadBehavior(target, downloadPath) {
+  if (!downloadPath.startsWith('/')) {
+    return { ok: false, protocol: null, error: null };
+  }
+  try {
+    await chrome.debugger.sendCommand(target, 'Page.setDownloadBehavior', {
+      behavior: 'allow',
+      downloadPath,
+    });
+    return { ok: true, protocol: 'Page.setDownloadBehavior' };
+  } catch (pageError) {
+    try {
+      await chrome.debugger.sendCommand(target, 'Browser.setDownloadBehavior', {
+        behavior: 'allow',
+        downloadPath,
+        eventsEnabled: true,
+      });
+      return { ok: true, protocol: 'Browser.setDownloadBehavior' };
+    } catch (browserError) {
+      return {
+        ok: false,
+        protocol: null,
+        error: `${pageError?.message || pageError} | ${browserError?.message || browserError}`,
+      };
+    }
+  }
+}
+
+async function armSilentDownloadGuard(tabId, snapshot, pinHandle, downloadPath) {
+  downloadFocusGuards.set(tabId, {
+    snapshot,
+    pinHandle,
+    downloadPath,
+    armedAt: Date.now(),
+  });
+  await persistDownloadFocusGuards();
+  await chrome.debugger.sendCommand({ tabId }, 'Page.enable').catch(() => {});
+  await applySilentDownloadBehavior({ tabId }, downloadPath);
+  if (chrome.alarms?.create) {
+    await chrome.alarms.create(downloadFocusGuardAlarmName(tabId), {
+      delayInMinutes: DOWNLOAD_FOCUS_GUARD_MINUTES,
+    });
+  }
+}
+
+async function handleDownloadFocusEvent(tabId, method, event) {
+  const guard = downloadFocusGuards.get(tabId);
+  if (!guard) {
+    return;
+  }
+  if (guard.undone !== true) {
+    await restoreWindowChromeStateIfStolen(guard.snapshot, {
+      allowForeground: false,
+      restoreActiveTab: false,
+    });
+    guard.undone = true;
+    await persistDownloadFocusGuards();
+  }
+  const state = String(event?.state || '').toLowerCase();
+  const finished = /downloadProgress$/i.test(method) && (state === 'completed' || state === 'canceled');
+  if (finished) {
+    releaseSilentDownloadGuard(tabId);
+  }
+}
+
 // Chrome treats content-script element.click() and dispatched MouseEvents as
 // untrusted. A page that gates a download on a user gesture ignores those and
 // leaves the control looking clicked while no file lands. Debugger
 // Input.dispatchMouseEvent is a trusted gesture and does not activate the tab.
+// Page.bringToFront would steal macOS focus even with activate:false; only the
+// explicit allowForeground path may call it. Focus emulation keeps the renderer
+// receptive in a background tab. CSV downloads still steal later via the
+// Downloads bubble. Tab-scoped debugger cannot enable download CDP events, so
+// the bubble undo is chrome.windows.onFocusChanged: one unfocus if Chrome was
+// not the focused app and this window just became focused. The debugger pin
+// is leftover coverage if a CDP event ever does fire.
 async function dispatchTrustedMouseClick(tabId, x, y, options = {}) {
   const fallbackX = Number(x);
   const fallbackY = Number(y);
@@ -2881,44 +3296,34 @@ async function dispatchTrustedMouseClick(tabId, x, y, options = {}) {
     throw new Error('Trusted click requires finite x and y CSS pixels.');
   }
   const downloadPath = typeof options.downloadPath === 'string' ? options.downloadPath.trim() : '';
+  const allowForeground = options.allowForeground === true;
 
   const tab = await chrome.tabs.get(tabId);
+  const snapshot = allowForeground ? null : await snapshotWindowChromeState(tab?.windowId);
   if (options.activate === true) {
-    await activateOwnedTab(tab || tabId, { allowForeground: options.allowForeground === true });
+    await activateOwnedTab(tab || tabId, { allowForeground });
   }
 
-  return await withOwnedTabDebugger(tabId, async (target) => {
+  let downloadGuardPin = null;
+  if (downloadPath.startsWith('/') && !allowForeground) {
+    downloadGuardPin = await pinTabDebugger(tabId, { allowForeground: false });
+  }
+
+  try {
+    const result = await withOwnedTabDebugger(tabId, async (target) => {
     await chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', {
       enabled: true,
     }).catch(() => {});
-    let downloadBehavior = { ok: false, protocol: null, error: null };
     if (downloadPath.startsWith('/')) {
-      try {
-        await chrome.debugger.sendCommand(target, 'Page.setDownloadBehavior', {
-          behavior: 'allow',
-          downloadPath,
-        });
-        downloadBehavior = { ok: true, protocol: 'Page.setDownloadBehavior' };
-      } catch (pageError) {
-        try {
-          await chrome.debugger.sendCommand(target, 'Browser.setDownloadBehavior', {
-            behavior: 'allow',
-            downloadPath,
-            eventsEnabled: true,
-          });
-          downloadBehavior = { ok: true, protocol: 'Browser.setDownloadBehavior' };
-        } catch (browserError) {
-          downloadBehavior = {
-            ok: false,
-            protocol: null,
-            error: `${pageError?.message || pageError} | ${browserError?.message || browserError}`,
-          };
-        }
-      }
+      await chrome.debugger.sendCommand(target, 'Page.enable').catch(() => {});
     }
-    await chrome.debugger.sendCommand(target, 'Page.bringToFront').catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    const downloadBehavior = await applySilentDownloadBehavior(target, downloadPath);
+    if (allowForeground) {
+      await chrome.debugger.sendCommand(target, 'Page.bringToFront').catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
 
+    const hit = options.hit === 'radio' ? 'radio' : 'center';
     let clickX = fallbackX;
     let clickY = fallbackY;
     let fromQuads = false;
@@ -2935,9 +3340,10 @@ async function dispatchTrustedMouseClick(tabId, x, y, options = {}) {
             nodeId: queryResult.nodeId,
           });
           const quad = quadsResult?.quads?.[0];
-          if (Array.isArray(quad) && quad.length >= 8) {
-            clickX = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
-            clickY = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
+          const live = trustedClickPointFromQuads(quad, hit);
+          if (live) {
+            clickX = live.x;
+            clickY = live.y;
             fromQuads = true;
           }
         }
@@ -2983,13 +3389,55 @@ async function dispatchTrustedMouseClick(tabId, x, y, options = {}) {
       x: clickX,
       y: clickY,
       fromQuads,
+      hit,
+      broughtToFront: allowForeground,
       downloadPath: downloadPath.startsWith('/') ? downloadPath : null,
       downloadBehavior,
     };
-  });
+    }, { allowForeground });
+    if (downloadGuardPin && snapshot) {
+      await armSilentDownloadGuard(tabId, snapshot, downloadGuardPin.handle, downloadPath);
+      downloadGuardPin = null;
+    }
+    return result;
+  } finally {
+    if (downloadGuardPin) {
+      unpinTabDebugger(tabId, downloadGuardPin.handle);
+    }
+  }
 }
 
-function trustedClickPointFromRect(rect) {
+function trustedClickPointFromQuads(quad, hit = 'center') {
+  if (!Array.isArray(quad) || quad.length < 8) {
+    return null;
+  }
+  const xs = [Number(quad[0]), Number(quad[2]), Number(quad[4]), Number(quad[6])];
+  const ys = [Number(quad[1]), Number(quad[3]), Number(quad[5]), Number(quad[7])];
+  if (xs.some((value) => !Number.isFinite(value)) || ys.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const width = maxX - minX;
+  const height = maxY - minY;
+  if (hit === 'radio') {
+    // Native radios and Radix circles sit on the first line, left side. The
+    // centroid of a wrapping "Google Sheets: email" label is 60px+ below that
+    // control, which is a miss (2026-08-25: y=698 vs label y=633).
+    return {
+      x: minX + Math.min(16, Math.max(8, width > 0 ? width * 0.08 : 8)),
+      y: minY + Math.min(14, Math.max(8, height > 0 ? Math.min(height * 0.5, 14) : 8)),
+    };
+  }
+  return {
+    x: (xs[0] + xs[1] + xs[2] + xs[3]) / 4,
+    y: (ys[0] + ys[1] + ys[2] + ys[3]) / 4,
+  };
+}
+
+function trustedClickPointFromRect(rect, hit = 'center') {
   if (!rect || typeof rect !== 'object') {
     return null;
   }
@@ -3000,6 +3448,18 @@ function trustedClickPointFromRect(rect) {
   }
   const width = Number(rect.width);
   const height = Number(rect.height);
+  if (hit === 'radio') {
+    return trustedClickPointFromQuads([
+      x,
+      y,
+      x + (Number.isFinite(width) && width > 0 ? width : 0),
+      y,
+      x + (Number.isFinite(width) && width > 0 ? width : 0),
+      y + (Number.isFinite(height) && height > 0 ? height : 0),
+      x,
+      y + (Number.isFinite(height) && height > 0 ? height : 0),
+    ], 'radio');
+  }
   return {
     x: x + (Number.isFinite(width) && width > 0 ? width / 2 : 0),
     y: y + (Number.isFinite(height) && height > 0 ? height / 2 : 0),
@@ -3019,12 +3479,13 @@ function pendingTrustedClickInner(payload) {
   return inner;
 }
 
-async function maybeDispatchPendingTrustedClick(tabId, payload) {
+async function maybeDispatchPendingTrustedClick(tabId, payload, options = {}) {
   const inner = pendingTrustedClickInner(payload);
   if (!inner) {
     return payload;
   }
-  const point = trustedClickPointFromRect(inner.submitRect || inner.rect);
+  const hit = inner.hit === 'radio' ? 'radio' : 'center';
+  const point = trustedClickPointFromRect(inner.submitRect || inner.rect, hit);
   if (!point) {
     throw new Error('Page action requested a trusted click without a submit rect.');
   }
@@ -3040,7 +3501,12 @@ async function maybeDispatchPendingTrustedClick(tabId, payload) {
   // avoid. The recorder still marks the click, because that costs one Map
   // lookup and nothing on the dispatch path.
   pumpGifActionFrame(tabId, { kind: 'click_before', label: 'Submit', x: point.x, y: point.y });
-  const trusted = await dispatchTrustedMouseClick(tabId, point.x, point.y, { downloadPath });
+  const trusted = await dispatchTrustedMouseClick(tabId, point.x, point.y, {
+    downloadPath,
+    activate: options.activate === true,
+    allowForeground: options.allowForeground === true,
+    hit,
+  });
   pumpGifActionFrame(tabId, { kind: 'click', label: 'Submit', x: point.x, y: point.y });
   const waitAfter = Math.max(0, Math.min(Number(inner.waitMsAfterClick) || 150, 2_000));
   if (waitAfter > 0) {
@@ -7145,7 +7611,9 @@ async function handleBridgeCommand(message) {
   if (tool === 'browser_close_tab') {
     const tab = await getOwnedTab(sessionId, params.tabId);
     invalidateContentAgent(tab.id, 'tab_closed');
-    await chrome.tabs.remove(tab.id);
+    await withWindowFocusContract(tab.windowId, async () => {
+      await chrome.tabs.remove(tab.id);
+    }, { restoreActiveTab: true });
     sessionStore.releaseTab(tab.id);
     await sessionStore.persist();
     return { tabId: tab.id, closed: true };
@@ -7427,12 +7895,44 @@ async function handleBridgeCommand(message) {
     // different fixes, and the reason was being computed and then discarded, so
     // both reported "not installed in this build".
     const recipe = await ensurePageRecipe(tab.id, params.action);
-    const result = await executeInTabWithRetry(tab.id, runPageAction, [
+    const actionParams = params.params && typeof params.params === 'object' ? params.params : {};
+    const runOnce = (pageParams) => executeInTabWithRetry(tab.id, runPageAction, [
       params.action,
-      params.params && typeof params.params === 'object' ? params.params : {},
+      pageParams,
       { timeoutMs: params.timeoutMs, recipeFailure: recipe.installed ? '' : (recipe.reason || '') },
     ]);
-    return await maybeDispatchPendingTrustedClick(tab.id, result);
+    let result = await runOnce(actionParams);
+    result = await maybeDispatchPendingTrustedClick(tab.id, result, {
+      activate: params.activate === true,
+      allowForeground: params.allowForeground === true,
+    });
+    // Range / Add domain mark a control and return nextStep. Re-enter the
+    // recipe after the trusted click so a one-shot plugin call still finishes.
+    for (let step = 0; step < 10; step += 1) {
+      const inner = result && typeof result === 'object' && result.result && typeof result.result === 'object'
+        ? result.result
+        : result;
+      const nextStep = inner && typeof inner === 'object' ? inner.nextStep : '';
+      const prep = inner && typeof inner === 'object'
+        && /position_history_range_open|position_history_range_reopen|position_history_range_pick|position_history_add_open|position_history_add_suggest|position_history_add_enter/.test(String(inner.reason || ''));
+      if (!nextStep || inner?.exported === true) {
+        break;
+      }
+      if (!(inner?.clicked === true || inner?.pendingTrustedClick === false || prep)) {
+        break;
+      }
+      result = await runOnce({
+        ...actionParams,
+        step: nextStep,
+        rangeClicked: inner.rangeClicked || actionParams.rangeClicked || null,
+        openAttempts: inner.openAttempts || 0,
+      });
+      result = await maybeDispatchPendingTrustedClick(tab.id, result, {
+        activate: params.activate === true,
+        allowForeground: params.allowForeground === true,
+      });
+    }
+    return result;
   }
 
   if (tool === 'browser_javascript') {
@@ -8491,6 +8991,7 @@ async function initialize(reason = 'initialize') {
       // attachment left behind by the worker that died is detached, which is
       // what takes Chrome's automation banner back off the tab.
       await rehydrateGifRecordings();
+      await rehydrateDownloadFocusGuards();
       await releaseOrphanedTabDebuggers();
       bootstrapped = true;
     }
@@ -8506,6 +9007,13 @@ async function initialize(reason = 'initialize') {
 }
 
 chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (typeof alarm?.name === 'string' && alarm.name.startsWith(DOWNLOAD_FOCUS_GUARD_ALARM_PREFIX)) {
+    const tabId = Number(alarm.name.slice(DOWNLOAD_FOCUS_GUARD_ALARM_PREFIX.length));
+    if (Number.isInteger(tabId)) {
+      releaseSilentDownloadGuard(tabId);
+    }
+    return;
+  }
   if (alarm.name !== BRIDGE_WAKE_ALARM_NAME) {
     return;
   }
