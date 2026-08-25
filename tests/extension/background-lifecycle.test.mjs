@@ -161,18 +161,323 @@ describe('extension bridge lifecycle', () => {
     assert.doesNotMatch(background, /chrome\.tabs\.move\(/);
   });
 
-  it('does not refocus a previous Chrome window after creating an unfocused CiC window', () => {
+  it('refuses chrome.windows.create unless allowForeground is true', () => {
     const background = fs.readFileSync(backgroundPath, 'utf8');
-    const start = background.indexOf('async function createDedicatedWindowWithTab');
-    const end = background.indexOf('async function createSessionTab');
-    const block = background.slice(start, end);
+    const dedicatedStart = background.indexOf('async function createDedicatedWindowWithTab');
+    const dedicatedEnd = background.indexOf('async function createSessionTab');
+    const dedicatedBlock = background.slice(dedicatedStart, dedicatedEnd);
+    const createStart = background.indexOf('async function createSessionTab');
+    const createEnd = background.indexOf('async function getOrCreateSessionTab');
+    const createBlock = background.slice(createStart, createEnd);
 
-    assert.ok(start >= 0);
-    assert.ok(end > start);
-    assert.match(block, /chrome\.windows\.create\(\{/);
-    assert.match(block, /focused: Boolean\(activate\)/);
-    assert.doesNotMatch(block, /getLastFocused/);
-    assert.doesNotMatch(block, /windows\.update\([^)]*\{ focused: true \}/s);
+    assert.ok(dedicatedStart >= 0, 'createDedicatedWindowWithTab should exist');
+    assert.ok(createStart > dedicatedStart, 'createSessionTab should follow createDedicatedWindowWithTab');
+
+    const guardIdx = dedicatedBlock.indexOf('assertChromeWindowCreateAllowed');
+    const createIdx = dedicatedBlock.indexOf('await chrome.windows.create(');
+    assert.ok(guardIdx >= 0, 'createDedicatedWindowWithTab must call the allowForeground guard');
+    assert.ok(createIdx > guardIdx, 'windows.create must not run before the allowForeground guard');
+    assert.match(dedicatedBlock, /focused: false/);
+    assert.doesNotMatch(dedicatedBlock, /getLastFocused/);
+
+    const newWindowIdx = createBlock.indexOf('if (newWindow === true)');
+    const newWindowGuard = createBlock.indexOf('assertChromeWindowCreateAllowed({ newWindow: true, allowForeground })');
+    assert.ok(newWindowIdx >= 0, 'createSessionTab must branch on newWindow');
+    assert.ok(newWindowGuard > newWindowIdx, 'newWindow must assert before creating a window');
+    assert.doesNotMatch(createBlock, /chrome\.windows\.create\(/);
+    assert.equal([...background.matchAll(/chrome\.windows\.create\(/g)].length, 1, 'windows.create must exist in exactly one place');
+  });
+
+  it('throws a clear error for newWindow or a first Chrome window without allowForeground', () => {
+    const background = fs.readFileSync(backgroundPath, 'utf8');
+    const start = background.indexOf('const MACOS_NEW_WINDOW_FOCUS_STEAL');
+    const end = background.indexOf('async function createDedicatedWindowWithTab');
+    assert.ok(start >= 0, 'MACOS_NEW_WINDOW_FOCUS_STEAL should exist');
+    assert.ok(end > start, 'window-create guard should sit before createDedicatedWindowWithTab');
+    const fn = new Function(`${background.slice(start, end)}; return { assertChromeWindowCreateAllowed, MACOS_NEW_WINDOW_FOCUS_STEAL, MACOS_WINDOW_CREATE_FOCUS_STEAL };`)();
+
+    assert.throws(
+      () => fn.assertChromeWindowCreateAllowed({ newWindow: true, allowForeground: false }),
+      (error) => error.message === fn.MACOS_NEW_WINDOW_FOCUS_STEAL,
+    );
+    assert.throws(
+      () => fn.assertChromeWindowCreateAllowed({ newWindow: false, allowForeground: false }),
+      (error) => error.message === fn.MACOS_WINDOW_CREATE_FOCUS_STEAL,
+    );
+    assert.doesNotThrow(() => fn.assertChromeWindowCreateAllowed({ newWindow: true, allowForeground: true }));
+    assert.doesNotThrow(() => fn.assertChromeWindowCreateAllowed({ newWindow: false, allowForeground: true }));
+    assert.match(fn.MACOS_NEW_WINDOW_FOCUS_STEAL, /newWindow would steal OS focus on macOS/);
+    assert.match(fn.MACOS_NEW_WINDOW_FOCUS_STEAL, /allowForeground/);
+    assert.match(fn.MACOS_WINDOW_CREATE_FOCUS_STEAL, /Creating a Chrome window would steal OS focus on macOS/);
+    assert.doesNotMatch(fn.MACOS_NEW_WINDOW_FOCUS_STEAL, /\u2014|\u2013|--/);
+    assert.doesNotMatch(fn.MACOS_WINDOW_CREATE_FOCUS_STEAL, /\u2014|\u2013|--/);
+  });
+
+  it('undoes macOS focus steals from tab create, group, debugger attach, trusted click, and close', () => {
+    const background = fs.readFileSync(backgroundPath, 'utf8');
+    const helperStart = background.indexOf('function shouldUnfocusStolenWindow');
+    const helperEnd = background.indexOf('async function activateOwnedTab');
+    assert.ok(helperStart >= 0, 'shouldUnfocusStolenWindow should exist');
+    assert.ok(helperEnd > helperStart, 'focus-steal helpers should sit before activateOwnedTab');
+    const helpers = new Function(
+      `${background.slice(helperStart, helperEnd)}; return { shouldUnfocusStolenWindow, shouldRestoreStolenActiveTab, shouldUndoDownloadFocusSteal, serializeDownloadFocusGuards, deserializeDownloadFocusGuard, normalizeLastFocus, serializeLastFocus, deserializeLastFocus };`,
+    )();
+
+    assert.equal(
+      helpers.shouldUnfocusStolenWindow({ focused: false }, true, false),
+      true,
+      'a previously unfocused window that became focused must be unfocused',
+    );
+    assert.equal(
+      helpers.shouldUnfocusStolenWindow({ focused: true }, true, false),
+      false,
+      'do not background a window Robert was already using',
+    );
+    assert.equal(
+      helpers.shouldUnfocusStolenWindow({ focused: false }, true, true),
+      false,
+      'allowForeground may keep the raised window',
+    );
+    assert.equal(
+      helpers.shouldUnfocusStolenWindow({ focused: false }, false, false),
+      false,
+      'an unfocused window that stayed unfocused needs no undo',
+    );
+    assert.equal(
+      helpers.shouldRestoreStolenActiveTab({ focused: true, activeTabId: 3 }, 9, false, true),
+      true,
+      'grouping in Robert’s focused window must give him his tab back',
+    );
+    assert.equal(
+      helpers.shouldRestoreStolenActiveTab({ focused: false, activeTabId: 3 }, 9, false, true),
+      false,
+      'restoring an active tab in an unfocused window would itself raise Chrome',
+    );
+
+    const stealGuard = {
+      undone: false,
+      snapshot: { windowId: 7, focused: false, activeTabId: 3 },
+    };
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealGuard, 7, -1),
+      true,
+      'download bubble raising Chrome from another app must undo',
+    );
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealGuard, 7, 8),
+      false,
+      'switching between Chrome windows is not a download steal',
+    );
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal({ ...stealGuard, snapshot: { windowId: 7, focused: true, activeTabId: 3 } }, 7, -1),
+      false,
+      'do not unfocus a window Robert was already using',
+    );
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal({ ...stealGuard, undone: true }, 7, -1),
+      false,
+      'one undo only',
+    );
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealGuard, -1, -1),
+      false,
+      'WINDOW_ID_NONE is Chrome losing focus, not a steal',
+    );
+    const serialized = helpers.serializeDownloadFocusGuards(new Map([[9, { ...stealGuard, downloadPath: '/tmp', armedAt: 1 }]]));
+    assert.deepEqual(serialized['9'], {
+      windowId: 7,
+      focused: false,
+      activeTabId: 3,
+      downloadPath: '/tmp',
+      armedAt: 1,
+      undone: false,
+    });
+    assert.equal(helpers.deserializeDownloadFocusGuard(serialized['9']).pinHandle, null);
+    assert.equal(helpers.deserializeDownloadFocusGuard(serialized['9']).snapshot.windowId, 7);
+
+    const createStart = background.indexOf('async function createSessionTab');
+    const createEnd = background.indexOf('async function getOrCreateSessionTab');
+    const createBlock = background.slice(createStart, createEnd);
+    assert.match(createBlock, /snapshotWindowChromeState\(windowId\)/);
+    assert.match(createBlock, /restoreWindowChromeStateIfStolen\(snapshot/);
+    assert.match(createBlock, /restoreActiveTab: activate !== true/);
+    assert.doesNotMatch(createBlock, /if \(activate && !allowForeground && !wasFocused\)/);
+
+    const trustedClickStart = background.indexOf('async function dispatchTrustedMouseClick');
+    const trustedClickEnd = background.indexOf('function trustedClickPointFromRect');
+    const trustedClick = background.slice(trustedClickStart, trustedClickEnd);
+    const allowIdx = trustedClick.indexOf('if (allowForeground)');
+    const bringIdx = trustedClick.indexOf('Page.bringToFront');
+    assert.ok(allowIdx >= 0 && bringIdx > allowIdx, 'Page.bringToFront is allowForeground-only');
+    assert.match(trustedClick, /Emulation\.setFocusEmulationEnabled/);
+    assert.match(trustedClick, /withOwnedTabDebugger\(tabId, async \(target\) => \{/);
+    assert.match(trustedClick, /, \{ allowForeground \}\);/);
+    assert.match(trustedClick, /trustedClickPointFromQuads\(quad, hit\)/);
+    assert.match(trustedClick, /options\.hit === 'radio'/);
+
+    const debuggerStart = background.indexOf('async function withOwnedTabDebugger');
+    const debuggerEnd = background.indexOf('async function pinTabDebugger');
+    const debuggerBlock = background.slice(debuggerStart, debuggerEnd);
+    assert.match(debuggerBlock, /snapshotWindowChromeState\(liveTab\?\.windowId\)/);
+    assert.match(debuggerBlock, /restoreWindowChromeStateIfStolen\(snapshot/);
+
+    const groupStart = background.indexOf('async function groupTabsInNormalWindow');
+    const groupEnd = background.indexOf('async function groupSessionTabs');
+    assert.match(background.slice(groupStart, groupEnd), /restoreWindowChromeStateIfStolen\(snapshot, \{ restoreActiveTab: true \}\)/);
+
+    const closeStart = background.indexOf('async function closeOwnedSessionWindows');
+    const closeEnd = background.indexOf('async function closeSessionTabs');
+    assert.match(background.slice(closeStart, closeEnd), /restoreWindowChromeStateIfStolen\(snapshot, \{ restoreActiveTab: false \}\)/);
+
+    const downloadGuard = background.slice(
+      background.indexOf('async function handleDownloadFocusEvent'),
+      background.indexOf('async function dispatchTrustedMouseClick'),
+    );
+    assert.match(downloadGuard, /guard\.undone !== true/);
+    assert.doesNotMatch(downloadGuard, /setTimeout/);
+    assert.match(background, /DOWNLOAD_FOCUS_GUARD_ALARM_PREFIX/);
+    assert.match(background, /releaseSilentDownloadGuard\(tabId\)/);
+    assert.match(background, /chrome\.windows\?\.onFocusChanged\?\.addListener/);
+    assert.match(background, /handleDownloadFocusWindowChanged/);
+    assert.match(background, /DOWNLOAD_FOCUS_STORAGE_KEY/);
+    assert.match(background, /await rehydrateDownloadFocusGuards\(\)/);
+    const detachStart = background.indexOf('chrome.debugger?.onDetach?.addListener');
+    const detachEnd = background.indexOf('const CDP_CONSOLE_LEVELS');
+    const detachBlock = background.slice(detachStart, detachEnd);
+    assert.match(detachBlock, /guard\.pinHandle = null/);
+    assert.doesNotMatch(detachBlock, /forgetSilentDownloadGuard\(source\.tabId\)/);
+
+    const activateStart = background.indexOf('async function activateOwnedTab');
+    const activateEnd = background.indexOf('const MACOS_NEW_WINDOW_FOCUS_STEAL');
+    const activateBlock = background.slice(activateStart, activateEnd);
+    assert.match(activateBlock, /snapshotWindowChromeState\(tab\.windowId\)/);
+    assert.doesNotMatch(activateBlock, /if \(!allowForeground && tab\.windowId != null\) \{\n    await chrome\.windows\.update\(tab\.windowId, \{ focused: false \}\)/);
+  });
+
+  it('does not undo a download-bubble steal when LastFocus provenance is unknown', () => {
+    const background = fs.readFileSync(backgroundPath, 'utf8');
+    const helperStart = background.indexOf('function shouldUnfocusStolenWindow');
+    const helperEnd = background.indexOf('async function activateOwnedTab');
+    const helpers = new Function(
+      `${background.slice(helperStart, helperEnd)}; return { shouldUndoDownloadFocusSteal };`,
+    )();
+    const stealGuard = {
+      undone: false,
+      snapshot: { windowId: 7, focused: false, activeTabId: 3 },
+    };
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealGuard, 7, { kind: 'unknown' }),
+      false,
+      'unknown provenance must not unfocus a window a human or another session just focused after worker restart',
+    );
+  });
+
+  it('treats LastFocus none as the steal trigger and window as an in-Chrome switch', () => {
+    const background = fs.readFileSync(backgroundPath, 'utf8');
+    const helperStart = background.indexOf('function shouldUnfocusStolenWindow');
+    const helperEnd = background.indexOf('async function activateOwnedTab');
+    const helpers = new Function(
+      `${background.slice(helperStart, helperEnd)}; return { shouldUndoDownloadFocusSteal };`,
+    )();
+    const stealGuard = {
+      undone: false,
+      snapshot: { windowId: 7, focused: false, activeTabId: 3 },
+    };
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealGuard, 7, { kind: 'none' }),
+      true,
+      'none means Chrome was not the focused app and the download bubble steal must undo',
+    );
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealGuard, 7, { kind: 'window', id: 8 }),
+      false,
+      'a focused Chrome window is not a download steal',
+    );
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealGuard, 7, -1),
+      true,
+      'numeric WINDOW_ID_NONE must still undo',
+    );
+  });
+
+  it('keeps download-focus guards per-tab across concurrent windows', () => {
+    const background = fs.readFileSync(backgroundPath, 'utf8');
+    const helperStart = background.indexOf('function shouldUnfocusStolenWindow');
+    const helperEnd = background.indexOf('async function activateOwnedTab');
+    const helpers = new Function(
+      `${background.slice(helperStart, helperEnd)}; return { shouldUndoDownloadFocusSteal };`,
+    )();
+    const stealOnSeven = {
+      undone: false,
+      snapshot: { windowId: 7, focused: false, activeTabId: 3 },
+    };
+    const stealOnNine = {
+      undone: false,
+      snapshot: { windowId: 9, focused: false, activeTabId: 4 },
+    };
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealOnSeven, 7, { kind: 'none' }),
+      true,
+      'the session whose unfocused window was raised may undo',
+    );
+    assert.equal(
+      helpers.shouldUndoDownloadFocusSteal(stealOnNine, 7, { kind: 'none' }),
+      false,
+      'a concurrent session in another window must not unfocus this steal',
+    );
+  });
+
+  it('round-trips LastFocus through serialize and deserialize including unknown', () => {
+    const background = fs.readFileSync(backgroundPath, 'utf8');
+    const helperStart = background.indexOf('function shouldUnfocusStolenWindow');
+    const helperEnd = background.indexOf('async function activateOwnedTab');
+    const helpers = new Function(
+      `${background.slice(helperStart, helperEnd)}; return { normalizeLastFocus, serializeLastFocus, deserializeLastFocus };`,
+    )();
+    assert.deepEqual(helpers.normalizeLastFocus(-1), { kind: 'none' });
+    assert.deepEqual(helpers.normalizeLastFocus(8), { kind: 'window', id: 8 });
+    assert.deepEqual(helpers.normalizeLastFocus(null), { kind: 'unknown' });
+    assert.deepEqual(helpers.normalizeLastFocus(undefined), { kind: 'unknown' });
+    for (const focus of [{ kind: 'unknown' }, { kind: 'none' }, { kind: 'window', id: 7 }]) {
+      assert.deepEqual(helpers.deserializeLastFocus(helpers.serializeLastFocus(focus)), focus);
+    }
+    assert.deepEqual(helpers.deserializeLastFocus(null), { kind: 'unknown' });
+    assert.deepEqual(helpers.deserializeLastFocus(undefined), { kind: 'unknown' });
+  });
+
+  it('restores window chrome after close_tab, cleanupGroups, and markDebugGroup', () => {
+    const background = fs.readFileSync(backgroundPath, 'utf8');
+    const usesFocusContract = (block, label) => {
+      const ok = /withWindowFocusContract/.test(block)
+        || (/snapshotWindowChromeState/.test(block) && /restoreWindowChromeStateIfStolen/.test(block));
+      assert.ok(ok, `${label} must restore window focus after the mutation`);
+    };
+
+    const closeStart = background.indexOf("if (tool === 'browser_close_tab')");
+    const closeNext = background.indexOf('\n  if (tool ===', closeStart + 1);
+    usesFocusContract(background.slice(closeStart, closeNext), 'browser_close_tab');
+
+    const cleanupStart = background.indexOf('async function cleanupGroups');
+    const cleanupEnd = background.indexOf('async function closeOwnedSessionWindows');
+    usesFocusContract(background.slice(cleanupStart, cleanupEnd), 'cleanupGroups');
+
+    const markStart = background.indexOf('async function markDebugGroup');
+    const markEnd = background.indexOf('async function executeInTab');
+    usesFocusContract(background.slice(markStart, markEnd), 'markDebugGroup');
+  });
+
+  it('persists LastFocus on every focus-changed event including WINDOW_ID_NONE', () => {
+    const background = fs.readFileSync(backgroundPath, 'utf8');
+    const start = background.indexOf('async function handleDownloadFocusWindowChanged');
+    const end = background.indexOf('async function applySilentDownloadBehavior');
+    const changed = background.slice(start, end);
+    assert.ok(start >= 0 && end > start, 'handleDownloadFocusWindowChanged should sit before applySilentDownloadBehavior');
+    assert.match(changed, /lastFocus = \{ kind: 'none' \}/);
+    assert.match(changed, /await persistDownloadFocusGuards\(\)/);
+    assert.match(changed, /finally \{/);
+    assert.doesNotMatch(changed, /if \(undid\)/);
+    assert.match(background, /FOCUS_APP_STORAGE_KEY = 'umbraFocusApp'/);
+    assert.match(background, /DOWNLOAD_FOCUS_STORAGE_KEY = 'downloadFocusGuardsByTab'/);
   });
 
   it('keeps DOM interaction tools background-first unless activation is explicit', () => {
